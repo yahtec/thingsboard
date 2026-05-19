@@ -24,6 +24,7 @@ import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.thingsboard.common.util.SsrfProtectionValidator;
 import org.thingsboard.server.common.data.oauth2.OAuth2MapperConfig;
 import org.thingsboard.server.common.data.oauth2.OAuth2Client;
 import org.thingsboard.server.dao.oauth2.OAuth2Configuration;
@@ -31,6 +32,7 @@ import org.thingsboard.server.dao.oauth2.OAuth2User;
 import org.thingsboard.server.queue.util.TbCoreComponent;
 import org.thingsboard.server.service.security.model.SecurityUser;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +61,10 @@ public class GithubOAuth2ClientMapper extends AbstractOAuth2ClientMapper impleme
     }
 
     private synchronized String getEmail(String emailUrl, String oauth2Token) {
+        if (emailUrl == null || emailUrl.isBlank()) {
+            throw new RuntimeException("GitHub OAuth2 mapper emailUrl is not configured");
+        }
+        SsrfProtectionValidator.validateUri(URI.create(emailUrl));
         restTemplateBuilder = restTemplateBuilder.defaultHeader(AUTHORIZATION, "token " + oauth2Token);
 
         RestTemplate restTemplate = restTemplateBuilder.build();

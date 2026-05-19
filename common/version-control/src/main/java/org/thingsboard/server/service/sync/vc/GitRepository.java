@@ -65,6 +65,7 @@ import org.eclipse.jgit.transport.sshd.SshdSessionFactoryBuilder;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.thingsboard.common.util.SsrfProtectionValidator;
 import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.page.PageLink;
 import org.thingsboard.server.common.data.page.SortOrder;
@@ -120,6 +121,33 @@ public class GitRepository {
         this.directory = directory;
     }
 
+    private static void validateRepositoryUri(String uri) {
+        if (uri == null || uri.isBlank()) {
+            throw new IllegalArgumentException("Repository URI is required");
+        }
+        URIish parsed;
+        try {
+            parsed = new URIish(uri);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid repository URI: " + e.getMessage());
+        }
+        String scheme = parsed.getScheme();
+        if (scheme != null && scheme.equalsIgnoreCase("file")) {
+            throw new IllegalArgumentException("'file://' repository URIs are not allowed");
+        }
+        String host = parsed.getHost();
+        if (host == null || host.isBlank()) {
+            // scp-style git@host:path or relative paths — also accept short SSH form
+            String userInfo = parsed.getUser();
+            if (userInfo == null) {
+                return;
+            }
+        }
+        if (host != null && !host.isBlank()) {
+            SsrfProtectionValidator.validateHost(host);
+        }
+    }
+
     public static GitRepository create(RepositorySettings settings, File directory) throws GitAPIException {
         log.debug("Executing create [{}]", directory);
         Git git = Git.init()
@@ -130,6 +158,7 @@ public class GitRepository {
 
     public static GitRepository clone(RepositorySettings settings, File directory) throws GitAPIException {
         log.debug("Executing clone [{}]", settings.getRepositoryUri());
+        validateRepositoryUri(settings.getRepositoryUri());
         CloneCommand cloneCommand = Git.cloneRepository()
                 .setURI(settings.getRepositoryUri())
                 .setDirectory(directory)
@@ -180,6 +209,7 @@ public class GitRepository {
             return;
         }
         log.debug("Executing test [{}]", settings.getRepositoryUri());
+        validateRepositoryUri(settings.getRepositoryUri());
         AuthHandler authHandler = AuthHandler.createFor(settings, directory);
         if (settings.isReadOnly()) {
             LsRemoteCommand lsRemoteCommand = Git.lsRemoteRepository().setRemote(settings.getRepositoryUri());

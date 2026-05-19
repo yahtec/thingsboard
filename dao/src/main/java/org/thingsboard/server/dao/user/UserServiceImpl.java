@@ -265,7 +265,7 @@ public class UserServiceImpl extends AbstractCachedEntityService<UserCacheKey, U
 
     @Override
     public UserCredentials activateUserCredentials(TenantId tenantId, String activateToken, String password) {
-        log.trace("Executing activateUserCredentials activateToken [{}], password [{}]", activateToken, password);
+        log.trace("Executing activateUserCredentials activateToken [{}]", activateToken);
         validateString(activateToken, t -> "Incorrect activateToken " + t);
         validateString(password, p -> "Incorrect password " + p);
         UserCredentials userCredentials = userCredentialsDao.findByActivateToken(tenantId, activateToken);

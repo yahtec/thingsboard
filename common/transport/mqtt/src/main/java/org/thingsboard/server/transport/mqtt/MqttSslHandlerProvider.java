@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2016-2026 The Thingsboard Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,7 +71,8 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
 
     @Override
     public void afterSingletonsInstantiated() {
-        // Eagerly build the initial context so the handshake path is a lock-free volatile read.
+        // Eagerly build the initial context so the handshake path is a lock-free
+        // volatile read.
         this.sslContext = createSslContext();
         mqttSslCredentialsConfig.registerReloadCallback(() -> {
             log.info("MQTT SSL certificates reloaded. Rebuilding SSL context...");
@@ -84,7 +85,8 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
 
     public SslHandler getSslHandler() {
         SSLContext ctx = sslContext;
-        // Defensive lazy init in case afterSingletonsInstantiated hasn't run yet (e.g., test wiring).
+        // Defensive lazy init in case afterSingletonsInstantiated hasn't run yet (e.g.,
+        // test wiring).
         // In normal operation ctx is non-null here, so the handshake path is lock-free.
         if (ctx == null) {
             synchronized (this) {
@@ -99,8 +101,8 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
         sslEngine.setUseClientMode(false);
         sslEngine.setNeedClientAuth(false);
         sslEngine.setWantClientAuth(true);
-        sslEngine.setEnabledProtocols(sslEngine.getSupportedProtocols());
-        sslEngine.setEnabledCipherSuites(sslEngine.getSupportedCipherSuites());
+        sslEngine.setEnabledProtocols(filterEnabledProtocols(sslEngine.getSupportedProtocols()));
+        sslEngine.setEnabledCipherSuites(filterEnabledCipherSuites(sslEngine.getSupportedCipherSuites()));
         sslEngine.setEnableSessionCreation(true);
         return new SslHandler(sslEngine);
     }
@@ -113,9 +115,9 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
 
             KeyManager[] km = kmf.getKeyManagers();
             TrustManager x509wrapped = getX509TrustManager(tmFactory);
-            TrustManager[] tm = {x509wrapped};
+            TrustManager[] tm = { x509wrapped };
             if (StringUtils.isEmpty(sslProtocol)) {
-                sslProtocol = "TLS";
+                sslProtocol = "TLSv1.3";
             }
             SSLContext sslContext = SSLContext.getInstance(sslProtocol);
             sslContext.init(km, tm, null);
@@ -124,6 +126,30 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
             log.error("Unable to set up SSL context. Reason: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to get SSL context", e);
         }
+    }
+
+    static String[] filterEnabledProtocols(String[] supported) {
+        java.util.List<String> kept = new java.util.ArrayList<>(supported.length);
+        for (String p : supported) {
+            if ("TLSv1.2".equals(p) || "TLSv1.3".equals(p)) {
+                kept.add(p);
+            }
+        }
+        return kept.toArray(new String[0]);
+    }
+
+    static String[] filterEnabledCipherSuites(String[] supported) {
+        java.util.List<String> kept = new java.util.ArrayList<>(supported.length);
+        for (String c : supported) {
+            String upper = c.toUpperCase();
+            if (upper.contains("_NULL_") || upper.contains("_ANON_") || upper.contains("_EXPORT_")
+                    || upper.contains("_RC4_") || upper.contains("_DES_") || upper.contains("_3DES_")
+                    || upper.contains("_MD5") || upper.contains("_IDEA_")) {
+                continue;
+            }
+            kept.add(c);
+        }
+        return kept.toArray(new String[0]);
     }
 
     private TrustManager getX509TrustManager(TrustManagerFactory tmf) throws Exception {
@@ -154,7 +180,7 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
 
         @Override
         public void checkServerTrusted(X509Certificate[] chain,
-                                       String authType) throws CertificateException {
+                String authType) throws CertificateException {
             trustManager.checkServerTrusted(chain, authType);
         }
 
@@ -168,7 +194,8 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
             CountDownLatch latch = new CountDownLatch(1);
             try {
                 String certificateChain = SslUtil.getCertificateChainString(chain);
-                transportService.process(DeviceTransportType.MQTT, TransportProtos.ValidateOrCreateDeviceX509CertRequestMsg
+                transportService.process(DeviceTransportType.MQTT,
+                        TransportProtos.ValidateOrCreateDeviceX509CertRequestMsg
                                 .newBuilder().setCertificateChain(certificateChain).build(),
                         new TransportServiceCallback<>() {
                             @Override

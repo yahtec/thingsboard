@@ -22,8 +22,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import org.thingsboard.common.util.SsrfProtectionValidator;
 import org.thingsboard.monitoring.notification.channels.NotificationChannel;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
 
@@ -39,6 +41,9 @@ public class SlackNotificationChannel implements NotificationChannel {
 
     @PostConstruct
     private void init() {
+        if (webhookUrl != null && !webhookUrl.isBlank()) {
+            SsrfProtectionValidator.validateUri(URI.create(webhookUrl));
+        }
         restTemplate = new RestTemplateBuilder()
                 .setConnectTimeout(Duration.ofSeconds(5))
                 .setReadTimeout(Duration.ofSeconds(2))
@@ -47,6 +52,7 @@ public class SlackNotificationChannel implements NotificationChannel {
 
     @Override
     public void sendNotification(String message) {
+        SsrfProtectionValidator.validateUri(URI.create(webhookUrl));
         restTemplate.postForObject(webhookUrl, Map.of("text", message), String.class);
     }
 

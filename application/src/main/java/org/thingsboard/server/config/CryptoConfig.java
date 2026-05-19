@@ -24,7 +24,7 @@ public class CryptoConfig {
 
     @Bean
     protected BCryptPasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(12);
     }
 
 }

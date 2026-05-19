@@ -90,7 +90,12 @@ public class Oauth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
             baseUrl = this.systemSecurityService.getBaseUrl(TenantId.SYS_TENANT_ID, new CustomerId(EntityId.NULL_UUID), request);
             Optional<Cookie> prevUrlOpt = CookieUtils.getCookie(request, PREV_URI_COOKIE_NAME);
             if (prevUrlOpt.isPresent()) {
-                baseUrl += prevUrlOpt.get().getValue();
+                String prev = prevUrlOpt.get().getValue();
+                if (isSafeRelativePath(prev)) {
+                    baseUrl += prev;
+                } else {
+                    log.warn("Discarding unsafe prev_uri cookie value: {}", prev);
+                }
                 CookieUtils.deleteCookie(request, response, PREV_URI_COOKIE_NAME);
             }
         }
@@ -128,6 +133,23 @@ public class Oauth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
     protected void clearAuthenticationAttributes(HttpServletRequest request, HttpServletResponse response) {
         super.clearAuthenticationAttributes(request);
         httpCookieOAuth2AuthorizationRequestRepository.removeAuthorizationRequestCookies(request, response);
+    }
+
+    static boolean isSafeRelativePath(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        // Reject absolute URLs, protocol-relative URLs, backslashes, encoded variants and CR/LF.
+        if (value.contains("://") || value.startsWith("//") || value.startsWith("\\\\")
+                || value.contains("\r") || value.contains("\n")) {
+            return false;
+        }
+        String lower = value.toLowerCase();
+        if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) {
+            return false;
+        }
+        // Must begin with '/' to be appended to baseUrl as a relative path.
+        return value.startsWith("/") && !value.startsWith("//");
     }
 
     String getRedirectUrl(String baseUrl, JwtPair tokenPair) {
