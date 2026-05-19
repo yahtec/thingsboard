@@ -44,7 +44,7 @@ public class DefaultDeviceAuthService implements DeviceAuthService {
         log.trace("Lookup device credentials using filter {}", credentialsFilter);
         DeviceCredentials credentials = deviceCredentialsService.findDeviceCredentialsByCredentialsId(credentialsFilter.getCredentialsId());
         if (credentials != null) {
-            log.trace("Credentials found {}", credentials);
+            log.trace("Credentials found for deviceId={} type={}", credentials.getDeviceId(), credentials.getCredentialsType());
             if (credentials.getCredentialsType() == credentialsFilter.getCredentialsType()) {
                 switch (credentials.getCredentialsType()) {
                     case ACCESS_TOKEN:

@@ -157,7 +157,7 @@ plugins:
 security:
   # JWT Token parameters
   jwt: # Since 3.4.2 values are persisted in the database during installation or upgrade. On Install, the key will be generated randomly if no custom value set. You can change it later from Web UI under SYS_ADMIN
-    tokenExpirationTime: "${JWT_TOKEN_EXPIRATION_TIME:9000}" # Number of seconds (2.5 hours)
+    tokenExpirationTime: "${JWT_TOKEN_EXPIRATION_TIME:1800}" # Number of seconds (30 minutes). Reduced from 9000 to align with OWASP recommendation.
     refreshTokenExpTime: "${JWT_REFRESH_TOKEN_EXPIRATION_TIME:604800}" # Number of seconds (1 week).
     tokenIssuer: "${JWT_TOKEN_ISSUER:thingsboard.io}" # User JWT Token issuer
     tokenSigningKey: "${JWT_TOKEN_SIGNING_KEY:thingsboardDefaultSigningKey}" # Base64 encoded
@@ -900,15 +900,16 @@ spring.mvc.cors:
     # Intercept path
     "[/api/**]":
       #Comma-separated list of origins to allow. '*' allows all origins. When not set, CORS support is disabled.
-      allowed-origin-patterns: "${TB_CORS_ALLOWED_ORIGIN_PATTERNS:*}"
+      # Default 'self' only — operators MUST set TB_CORS_ALLOWED_ORIGIN_PATTERNS to their domain(s).
+      allowed-origin-patterns: "${TB_CORS_ALLOWED_ORIGIN_PATTERNS:}"
       #Comma-separated list of methods to allow. '*' allows all methods.
-      allowed-methods: "${TB_CORS_ALLOWED_METHODS:*}"
+      allowed-methods: "${TB_CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS,PATCH}"
       #Comma-separated list of headers to allow in a request. '*' allows all headers.
-      allowed-headers: "${TB_CORS_ALLOWED_HEADERS:*}"
+      allowed-headers: "${TB_CORS_ALLOWED_HEADERS:Authorization,X-Authorization,Content-Type,X-Requested-With}"
       #How long, in seconds, the response from a pre-flight request can be cached by clients.
       max-age: "${TB_CORS_MAX_AGE:1800}"
-      #Set whether credentials are supported. When not set, credentials are not supported.
-      allow-credentials: "${TB_CORS_ALLOW_CREDENTIALS:true}"
+      #Set whether credentials are supported. Default false; explicit opt-in via env required when origin allowlist is configured.
+      allow-credentials: "${TB_CORS_ALLOW_CREDENTIALS:false}"
 
 # General spring parameters
 spring.main.allow-circular-references: "true" # Spring Boot configuration property that controls whether circular dependencies between beans are allowed.

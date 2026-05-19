@@ -281,11 +281,24 @@ public class DefaultGitRepositoryService implements GitRepositoryService {
 
     private GitRepository openOrCloneRepository(TenantId tenantId, RepositorySettings settings, boolean fetch) throws Exception {
         log.debug("[{}] Init tenant repository started.", tenantId);
-        Path repositoryDirectory = Path.of(repositoriesFolder, settings.isLocalOnly() ? "local_" + settings.getRepositoryUri() : tenantId.getId().toString());
+        String childName = settings.isLocalOnly() ? "local_" + sanitizeDirSegment(settings.getRepositoryUri()) : tenantId.getId().toString();
+        Path base = Path.of(repositoriesFolder).toAbsolutePath().normalize();
+        Path repositoryDirectory = base.resolve(childName).normalize();
+        if (!repositoryDirectory.startsWith(base)) {
+            throw new IllegalArgumentException("Repository directory escapes the configured repositoriesFolder");
+        }
         GitRepository repository = GitRepository.openOrClone(repositoryDirectory, settings, fetch);
         repositories.put(tenantId, repository);
         log.debug("[{}] Init tenant repository completed.", tenantId);
         return repository;
+    }
+
+    private static String sanitizeDirSegment(String input) {
+        if (input == null) {
+            return "";
+        }
+        // Strip path separators and traversal sequences; keep alphanumerics, dot, dash, underscore.
+        return input.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
 }

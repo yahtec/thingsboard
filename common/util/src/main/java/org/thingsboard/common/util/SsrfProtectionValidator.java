@@ -186,6 +186,32 @@ public class SsrfProtectionValidator {
         return allowedHosts.hostnames.contains(hostname.toLowerCase());
     }
 
+    public static void validateHost(String host) {
+        if (!enabled) {
+            return;
+        }
+        if (host == null || host.isEmpty()) {
+            throw new RuntimeException("URI is invalid: hostname is missing");
+        }
+        String hostLower = host.toLowerCase();
+        AllowedHosts currentAllowed = allowedHosts;
+        if (currentAllowed.hostnames.contains(hostLower)) {
+            return;
+        }
+        if (BLOCKED_HOSTNAMES.contains(hostLower) || additionalBlocked.hostnames.contains(hostLower)) {
+            throwBlockedHost(host);
+        }
+        for (String suffix : BLOCKED_HOSTNAME_SUFFIXES) {
+            if (hostLower.endsWith(suffix)) {
+                throwBlockedHost(host);
+            }
+        }
+        if ("[::1]".equals(host) || "::1".equals(host)) {
+            throwBlockedHost(host);
+        }
+        validateResolvedAddresses(host);
+    }
+
     private static ParsedHostEntries parseHostEntries(List<String> entries) {
         if (entries == null || entries.isEmpty()) {
             return ParsedHostEntries.EMPTY;
