@@ -17,6 +17,7 @@ package org.thingsboard.server.common.data.sms.config;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import lombok.ToString;
 
 @Schema
 @Data
@@ -31,7 +32,9 @@ public class SmppSmsProviderConfiguration implements SmsProviderConfiguration {
 
     @Schema(description = "System ID", requiredMode = Schema.RequiredMode.REQUIRED)
     private String systemId;
+    // Excluded from toString — SMPP provider password leak would allow SMS spoofing on tenant's account.
     @Schema(description = "Password", requiredMode = Schema.RequiredMode.REQUIRED)
+    @ToString.Exclude
     private String password;
 
     @Schema(description = "System type", requiredMode = Schema.RequiredMode.NOT_REQUIRED)

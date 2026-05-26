@@ -56,8 +56,11 @@ public class Edge extends BaseDataWithAdditionalInfo<EdgeId> implements HasLabel
     @NoXss
     @Length(fieldName = "routingKey")
     private String routingKey;
+    // Edge secret == the password the edge uses to authenticate to the cloud.
+    // Excluded from toString to prevent leakage via `log.x("{}", edge)`.
     @NoXss
     @Length(fieldName = "secret")
+    @ToString.Exclude
     private String secret;
 
     @Getter

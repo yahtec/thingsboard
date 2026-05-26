@@ -35,9 +35,16 @@ public class UserCredentials extends BaseDataWithAdditionalInfo<UserCredentialsI
 
     private UserId userId;
     private boolean enabled;
+    // Sensitive fields excluded from toString — they leak into TRACE/DEBUG logs through
+    // statements like `log.trace("...{}", userCredentials)`. activateToken and resetToken
+    // are bearer secrets granting direct account takeover; password is bcrypt-hashed but
+    // still PII that should not appear in plaintext logs.
+    @ToString.Exclude
     private String password;
+    @ToString.Exclude
     private String activateToken;
     private Long activateTokenExpTime;
+    @ToString.Exclude
     private String resetToken;
     private Long resetTokenExpTime;
     private Long lastLoginTs;

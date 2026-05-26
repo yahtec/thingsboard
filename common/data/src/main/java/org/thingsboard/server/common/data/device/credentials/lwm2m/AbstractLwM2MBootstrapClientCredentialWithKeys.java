@@ -19,13 +19,17 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.SneakyThrows;
+import lombok.ToString;
 import org.apache.commons.codec.binary.Base64;
 
 @Getter
 @Setter
+@ToString
 public abstract class AbstractLwM2MBootstrapClientCredentialWithKeys implements LwM2MBootstrapClientCredential {
 
     private String clientPublicKeyOrId;
+    // LwM2M bootstrap PSK/RPK — possession allows impersonation of the bootstrap session.
+    @ToString.Exclude
     private String clientSecretKey;
 
     @JsonIgnore

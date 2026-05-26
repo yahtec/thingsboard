@@ -46,9 +46,11 @@ public class MobileApp extends BaseData<MobileAppId> implements HasTenantId, Has
     @Schema(description = "Application title")
     @Length(fieldName = "title")
     private String title;
+    // Excluded from toString — appSecret signs the mobile login flow and must not appear in logs.
     @Schema(description = "Application secret. The length must be at least 16 characters", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotEmpty
     @Length(fieldName = "appSecret", min = 16, max = 2048, message = "must be at least 16 and max 2048 characters")
+    @ToString.Exclude
     private String appSecret;
     @Schema(description = "Application platform type: ANDROID or IOS", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotNull

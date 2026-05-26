@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2016-2026 The Thingsboard Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,7 @@ import org.thingsboard.server.common.transport.config.ssl.SslCredentialsConfig;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
@@ -39,7 +40,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,6 +56,15 @@ public class MqttSslHandlerProviderTest {
     @Mock
     private TransportService mockTransportService;
 
+    @Mock
+    private KeyManagerFactory mockKmf;
+
+    @Mock
+    private TrustManagerFactory mockTmf;
+
+    @Mock
+    private X509TrustManager mockTrustManager;
+
     private MqttSslHandlerProvider sslHandlerProvider;
 
     @BeforeEach
@@ -64,15 +74,11 @@ public class MqttSslHandlerProviderTest {
         ReflectionTestUtils.setField(sslHandlerProvider, "transportService", mockTransportService);
         ReflectionTestUtils.setField(sslHandlerProvider, "sslProtocol", "TLSv1.2");
 
-        KeyManagerFactory mockKmf = mock(KeyManagerFactory.class);
-        TrustManagerFactory mockTmf = mock(TrustManagerFactory.class);
-        X509TrustManager mockTrustManager = mock(X509TrustManager.class);
-
         when(mockCredentialsConfig.getCredentials()).thenReturn(mockCredentials);
         when(mockCredentials.createKeyManagerFactory()).thenReturn(mockKmf);
         when(mockCredentials.createTrustManagerFactory()).thenReturn(mockTmf);
         when(mockKmf.getKeyManagers()).thenReturn(new KeyManager[0]);
-        when(mockTmf.getTrustManagers()).thenReturn(new TrustManager[]{mockTrustManager});
+        when(mockTmf.getTrustManagers()).thenReturn(new TrustManager[] { mockTrustManager });
     }
 
     @Test
@@ -103,7 +109,8 @@ public class MqttSslHandlerProviderTest {
 
         reloadCallback.run();
 
-        // After reload the context is rebuilt eagerly (no null-invalidation), so handshakes stay lock-free.
+        // After reload the context is rebuilt eagerly (no null-invalidation), so
+        // handshakes stay lock-free.
         SSLContext contextAfterReload = (SSLContext) ReflectionTestUtils.getField(sslHandlerProvider, "sslContext");
         assertThat(contextAfterReload).isNotNull();
         assertThat(contextAfterReload).isNotSameAs(initialContext);
@@ -113,7 +120,8 @@ public class MqttSslHandlerProviderTest {
     }
 
     @Test
-    public void givenConcurrentGetSslHandlerCalls_whenContextAlreadyBuilt_thenAllReadsReturnSameContext() throws Exception {
+    public void givenConcurrentGetSslHandlerCalls_whenContextAlreadyBuilt_thenAllReadsReturnSameContext()
+            throws Exception {
         sslHandlerProvider.afterSingletonsInstantiated();
 
         SSLContext contextBefore = (SSLContext) ReflectionTestUtils.getField(sslHandlerProvider, "sslContext");
@@ -141,7 +149,8 @@ public class MqttSslHandlerProviderTest {
 
         assertThat(completed).isTrue();
         assertThat(handlers).hasSize(5).allSatisfy(h -> assertThat(h).isNotNull());
-        // Concurrent handshakes read the same pre-built context without the old sync bottleneck.
+        // Concurrent handshakes read the same pre-built context without the old sync
+        // bottleneck.
         SSLContext contextAfter = (SSLContext) ReflectionTestUtils.getField(sslHandlerProvider, "sslContext");
         assertThat(contextAfter).isSameAs(contextBefore);
     }
@@ -162,6 +171,31 @@ public class MqttSslHandlerProviderTest {
         SSLContext contextAfterReload = (SSLContext) ReflectionTestUtils.getField(sslHandlerProvider, "sslContext");
         assertThat(contextAfterReload).isNotNull();
         assertThat(contextAfterReload).isNotSameAs(initialContext);
+    }
+
+    @Test
+    public void givenNoX509TrustManager_whenAfterSingletonsInstantiated_thenShouldThrow() {
+        // F-4: if the TrustManagerFactory returns no X509TrustManager the provider must
+        // fail fast rather than silently constructing a broken ThingsboardMqttX509TrustManager
+        // with a null inner delegate (NPE on first handshake).
+        when(mockTmf.getTrustManagers()).thenReturn(new TrustManager[0]);
+
+        assertThatThrownBy(() -> sslHandlerProvider.afterSingletonsInstantiated())
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to get SSL context");
+    }
+
+    @Test
+    public void givenInitialized_whenGetSslHandler_thenClientAuthIsWanted() {
+        // Verify the SSL engine requests (wantClientAuth) a client certificate so that
+        // checkClientTrusted is invoked for clients that present one, while still
+        // allowing MQTT username/password auth for clients that do not.
+        sslHandlerProvider.afterSingletonsInstantiated();
+
+        SSLEngine engine = sslHandlerProvider.getSslHandler().engine();
+
+        assertThat(engine.getWantClientAuth()).isTrue();
+        assertThat(engine.getNeedClientAuth()).isFalse();
     }
 
     @Test

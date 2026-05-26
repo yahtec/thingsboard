@@ -112,7 +112,10 @@ public class DefaultClusterVersionControlService extends TbApplicationEventListe
     private final TopicService topicService;
 
     private final ConcurrentMap<TenantId, Lock> tenantRepoLocks = new ConcurrentHashMap<>();
-    private final Map<TenantId, PendingCommit> pendingCommitMap = new HashMap<>();
+    // Was a plain HashMap, but the surrounding lock (getRepoLock) is per-tenant, so two
+    // tenants commit in parallel and race on this shared structure. Concurrent put() with
+    // resize() on a HashMap can corrupt the table (lost entries or infinite loop in get).
+    private final ConcurrentMap<TenantId, PendingCommit> pendingCommitMap = new ConcurrentHashMap<>();
 
     private volatile ExecutorService consumerExecutor;
     private volatile QueueConsumerManager<TbProtoQueueMsg<ToVersionControlServiceMsg>> consumer;

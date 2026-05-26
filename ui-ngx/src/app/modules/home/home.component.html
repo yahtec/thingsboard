@@ -61,19 +61,21 @@
                    placeholder="{{ 'common.enter-search' | translate }}"/>
           </mat-form-field>
         </div>
-        <tb-github-badge class="lt-md:!hidden"></tb-github-badge>
+        <!-- Yahtec: github badge gardé uniquement pour les administrateurs (navbar native TB). -->
+        <tb-github-badge *ngIf="isAdmin" class="lt-md:!hidden"></tb-github-badge>
         <button [class.!hidden]="!searchEnabled"
                 mat-icon-button (click)="openSearch()">
           <mat-icon class="material-icons">search</mat-icon>
         </button>
-        <button *ngIf="fullscreenEnabled"
+        <!-- Yahtec: fullscreen toggle gardé uniquement pour les administrateurs. -->
+        <button *ngIf="isAdmin && fullscreenEnabled"
                 [class.!hidden]="displaySearchMode()"
                 class="lt-md:!hidden"
                 mat-icon-button (click)="toggleFullscreen()">
           <mat-icon class="material-icons">{{ isFullscreen() ? 'fullscreen_exit' : 'fullscreen' }}</mat-icon>
         </button>
         <tb-notification-bell></tb-notification-bell>
-        <tb-user-menu [displayUserInfo]="!displaySearchMode()"></tb-user-menu>
+        <tb-user-menu [displayUserInfo]="!displaySearchMode()" [adminMode]="isAdmin"></tb-user-menu>
       </mat-toolbar>
       <mat-progress-bar color="warn" style="z-index: 10; margin-bottom: -4px; width: 100%;" mode="indeterminate"
                         *ngIf="!hideLoadingBar && (isLoading$ | async)">

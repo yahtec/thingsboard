@@ -68,19 +68,32 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
     private SslCredentialsConfig mqttSslCredentialsConfig;
 
     private volatile SSLContext sslContext;
+    private volatile String[] enabledProtocols;
+    private volatile String[] enabledCipherSuites;
 
     @Override
     public void afterSingletonsInstantiated() {
         // Eagerly build the initial context so the handshake path is a lock-free
         // volatile read.
         this.sslContext = createSslContext();
+        cacheEnabledProtocolsAndCiphers(this.sslContext);
         mqttSslCredentialsConfig.registerReloadCallback(() -> {
             log.info("MQTT SSL certificates reloaded. Rebuilding SSL context...");
             // Build the new context first; if it fails, the old one stays in place, and
             // the exception propagates to CertificateReloadManager's retry/backoff logic.
-            this.sslContext = createSslContext();
+            SSLContext rebuilt = createSslContext();
+            cacheEnabledProtocolsAndCiphers(rebuilt);
+            this.sslContext = rebuilt;
             log.info("MQTT SSL context rebuilt. New connections will use the new certificate.");
         });
+    }
+
+    private void cacheEnabledProtocolsAndCiphers(SSLContext ctx) {
+        // Compute once: supported protocols/ciphers don't vary at runtime, so allocating
+        // a fresh ArrayList per handshake (thousands/sec on a busy broker) is pure waste.
+        SSLEngine probe = ctx.createSSLEngine();
+        this.enabledProtocols = filterEnabledProtocols(probe.getSupportedProtocols());
+        this.enabledCipherSuites = filterEnabledCipherSuites(probe.getSupportedCipherSuites());
     }
 
     public SslHandler getSslHandler() {
@@ -93,6 +106,7 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
                 ctx = sslContext;
                 if (ctx == null) {
                     ctx = createSslContext();
+                    cacheEnabledProtocolsAndCiphers(ctx);
                     sslContext = ctx;
                 }
             }
@@ -101,8 +115,8 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
         sslEngine.setUseClientMode(false);
         sslEngine.setNeedClientAuth(false);
         sslEngine.setWantClientAuth(true);
-        sslEngine.setEnabledProtocols(filterEnabledProtocols(sslEngine.getSupportedProtocols()));
-        sslEngine.setEnabledCipherSuites(filterEnabledCipherSuites(sslEngine.getSupportedCipherSuites()));
+        sslEngine.setEnabledProtocols(enabledProtocols);
+        sslEngine.setEnabledCipherSuites(enabledCipherSuites);
         sslEngine.setEnableSessionCreation(true);
         return new SslHandler(sslEngine);
     }
@@ -116,10 +130,8 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
             KeyManager[] km = kmf.getKeyManagers();
             TrustManager x509wrapped = getX509TrustManager(tmFactory);
             TrustManager[] tm = { x509wrapped };
-            if (StringUtils.isEmpty(sslProtocol)) {
-                sslProtocol = "TLSv1.3";
-            }
-            SSLContext sslContext = SSLContext.getInstance(sslProtocol);
+            String protocol = StringUtils.isEmpty(sslProtocol) ? "TLSv1.3" : sslProtocol;
+            SSLContext sslContext = SSLContext.getInstance(protocol);
             sslContext.init(km, tm, null);
             return sslContext;
         } catch (Exception e) {
@@ -159,6 +171,9 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
                 x509Tm = x509TrustManager;
                 break;
             }
+        }
+        if (x509Tm == null) {
+            throw new IllegalStateException("TrustManagerFactory returned no X509TrustManager — check SSL credentials configuration");
         }
         return new ThingsboardMqttX509TrustManager(x509Tm, transportService);
     }
@@ -208,26 +223,40 @@ public class MqttSslHandlerProvider implements SmartInitializingSingleton {
 
                             @Override
                             public void onError(Throwable e) {
-                                log.trace("Failed to process certificate chain: {}", certificateChain, e);
+                                log.trace("Failed to process certificate chain", e);
                                 latch.countDown();
                             }
                         });
-                latch.await(10, TimeUnit.SECONDS);
+                // F-5: transport service timeout is an explicit auth failure, not a pass.
+                if (!latch.await(10, TimeUnit.SECONDS)) {
+                    throw new CertificateException("Certificate validation timed out — transport service unavailable");
+                }
                 if (!clientDeviceCertValue.equals(credentialsBodyHolder[0])) {
-                    log.debug("Failed to find credentials for device certificate chain: {}", chain);
+                    log.debug("Failed to find credentials for device certificate");
                     if (chain.length == 1) {
                         throw new CertificateException("Invalid Device Certificate");
                     } else {
                         throw new CertificateException("Invalid Chain of X509 Certificates");
                     }
                 }
+            } catch (CertificateException ce) {
+                // F-1: re-throw so the SSL layer rejects the handshake.
+                throw ce;
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new CertificateException("Certificate validation interrupted");
             } catch (Exception e) {
-                log.error(e.getMessage(), e);
+                log.error("Unexpected error during certificate validation: {}", e.getMessage(), e);
+                throw new CertificateException("Certificate validation failed", e);
             }
         }
 
         private boolean validateCertificateChain(X509Certificate[] chain) {
             try {
+                // F-3: verify validity period for every cert in the chain.
+                for (X509Certificate cert : chain) {
+                    cert.checkValidity();
+                }
                 if (chain.length > 1) {
                     X509Certificate leafCert = chain[0];
                     for (int i = 1; i < chain.length; i++) {

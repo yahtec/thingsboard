@@ -57,6 +57,8 @@ import static org.thingsboard.server.dao.service.Validator.validateString;
 @RequiredArgsConstructor
 public class DeviceCredentialsServiceImpl extends AbstractCachedEntityService<String, DeviceCredentials, DeviceCredentialsEvictEvent> implements DeviceCredentialsService {
 
+    private static final java.util.regex.Pattern HEX_PSK_KEY_PATTERN = java.util.regex.Pattern.compile("-?[0-9a-fA-F]+");
+
     private final DeviceCredentialsDao deviceCredentialsDao;
     private final DeviceCredentialsDataValidator credentialsValidator;
 
@@ -272,7 +274,7 @@ public class DeviceCredentialsServiceImpl extends AbstractCachedEntityService<St
                     throw new DeviceCredentialsValidationException("LwM2M client PSK key must be specified!");
                 }
 
-                if (!pskKey.matches("-?[0-9a-fA-F]+")) {
+                if (!HEX_PSK_KEY_PATTERN.matcher(pskKey).matches()) {
                     throw new DeviceCredentialsValidationException("LwM2M client PSK key must be random sequence in hex encoding!");
                 }
 
@@ -330,7 +332,7 @@ public class DeviceCredentialsServiceImpl extends AbstractCachedEntityService<St
                     throw new DeviceCredentialsValidationException(server + " client PSK key must be specified!");
                 }
 
-                if (!pskKey.matches("-?[0-9a-fA-F]+")) {
+                if (!HEX_PSK_KEY_PATTERN.matcher(pskKey).matches()) {
                     throw new DeviceCredentialsValidationException(server + " client PSK key must be random sequence in hex encoding!");
                 }
 

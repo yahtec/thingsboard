@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 @Schema(description = "JWT Settings")
 @AllArgsConstructor
@@ -46,8 +47,11 @@ public class JwtSettings {
 
     /**
      * Key is used to sign {@link JwtToken}.
-     * Base64 encoded
+     * Base64 encoded.
+     * Excluded from toString — leaking the signing key allows forging arbitrary JWTs
+     * (full authentication bypass for any tenant/user).
      */
+    @ToString.Exclude
     @Schema(description = "The JWT key is used to sing token. Base64 encoded.", example = "dkVTUzU2M2VMWUNwVVltTUhQU2o5SUM0Tkc3M0k2Ykdwcm85QTl6R0RaQ252OFlmVDk2OEptZXBNcndGeExFZg==")
     private String tokenSigningKey;
 

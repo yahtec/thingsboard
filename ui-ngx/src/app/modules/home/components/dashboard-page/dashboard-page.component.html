@@ -369,9 +369,8 @@
                   matTooltipPosition="below">
             <mat-icon>close</mat-icon></button>
         </section>
-        <section *ngIf="!embedded" data-html2canvas-ignore class="tb-powered-by-footer" [style.color]="dashboard.configuration.settings.titleColor">
-          <span>Powered by <a href="https://thingsboard.io" target="_blank">ThingsBoard v.{{ thingsboardVersion }}</a></span>
-        </section>
+        <!-- Yahtec: footer "Powered by ThingsBoard" retiré (white-label TSmart). -->
+
       </mat-drawer-content>
       <mat-drawer class="tb-details-drawer"
                   [opened]="isEditingWidget || isAddingWidget"

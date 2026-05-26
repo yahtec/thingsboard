@@ -176,7 +176,9 @@ public abstract class TBRedisCacheConfiguration {
 
     protected SSLSocketFactory createSslSocketFactory() {
         try {
-            SSLContext sslContext = SSLContext.getInstance("TLS");
+            // Pin to TLSv1.3 by default — protocol-string "TLS" historically accepts older versions and
+            // depends on JDK security properties; explicit pinning keeps Redis-side hardening predictable.
+            SSLContext sslContext = SSLContext.getInstance("TLSv1.3");
             KeyManagerFactory keyManagerFactory = createAndInitKeyManagerFactory();
             TrustManagerFactory trustManagerFactory = createAndInitTrustManagerFactory();
             sslContext.init(keyManagerFactory == null ? null : keyManagerFactory.getKeyManagers(), trustManagerFactory.getTrustManagers(), null);

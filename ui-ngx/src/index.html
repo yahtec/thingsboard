@@ -52,7 +52,10 @@
       width: 30px;
       height: 30px;
       margin-right: 10px;
-      background-color: rgb(43,160,199);
+      /* Yahtec / TSmart: rouge profond Terris (#c92929) au lieu du bleu TB d'origine.
+         Hardcodé ici car ce CSS est inline dans index.html — il s'applique AVANT
+         que le bundle Angular (où vivent les vars de thème) ne soit chargé. */
+      background-color: #c92929;
 
       border-radius: 100%;
       display: inline-block;

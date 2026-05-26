@@ -19,6 +19,127 @@
   @include _mat-form-field-overwrites($primary, $config-or-theme);
   @include _mat-button-overwrites($primary, $config-or-theme);
   @include _mat-icon-overwrites();
+  @include _square-corners-overwrites();
+  @include _airy-spacing-overwrites();
+}
+
+// Yahtec / Terris : look aéré. On donne plus d'air entre les éléments
+// (padding cards / dialogs / form-fields, hauteur min lignes de tables,
+// line-height plus généreux sur le texte courant). Aucun changement de
+// taille de police — uniquement de l'espace.
+@mixin _airy-spacing-overwrites() {
+  body {
+    line-height: 1.6;
+  }
+
+  // Cards : padding intérieur plus généreux + espace vertical entre cards
+  .mat-mdc-card {
+    margin-bottom: 16px;
+  }
+  .mat-mdc-card-content {
+    padding: 24px;
+  }
+  .mat-mdc-card-header {
+    padding: 20px 24px 8px;
+  }
+  .mat-mdc-card-actions {
+    padding: 12px 16px;
+    gap: 8px;
+  }
+
+  // Dialogs : on respire
+  .mat-mdc-dialog-title {
+    padding: 24px 24px 8px !important;
+  }
+  .mat-mdc-dialog-content {
+    padding: 16px 24px !important;
+  }
+  .mat-mdc-dialog-actions {
+    padding: 16px 24px !important;
+    gap: 8px;
+  }
+
+  // Form fields : un peu d'espace en dessous pour ne pas coller les
+  // helper-texts au prochain champ.
+  .mat-mdc-form-field {
+    .mat-mdc-form-field-subscript-wrapper {
+      padding-bottom: 4px;
+    }
+  }
+
+  // Lignes de tables / listes plus hautes (TB par défaut tasse beaucoup).
+  .mat-mdc-row, .mat-mdc-header-row {
+    min-height: 52px;
+  }
+  .mat-mdc-cell, .mat-mdc-header-cell {
+    padding: 12px 16px;
+  }
+  .mat-mdc-list-item {
+    min-height: 52px;
+  }
+
+  // Tabs : padding latéral + label respiré
+  .mat-mdc-tab {
+    padding: 0 24px !important;
+    min-width: 90px;
+  }
+
+  // Expansion panels
+  .mat-expansion-panel-header {
+    padding: 0 24px;
+  }
+  .mat-expansion-panel-body {
+    padding: 0 24px 16px;
+  }
+
+  // Toolbars : un peu plus hautes pour respirer
+  .mat-toolbar.mat-toolbar-single-row {
+    min-height: 56px;
+  }
+}
+
+// Terris / Yahtec : look industriel, angles carrés.
+// On force toutes les surfaces Material à un radius nul. La règle :
+//   - Buttons / cards / form-fields / dialogs / tabs / chips → 0
+//   - On garde les `border-radius: 50%` (avatars, FABs ronds) — c'est de l'identité
+//     visuelle, pas un radius générique. Ils ne dépendent pas des tokens MDC.
+@mixin _square-corners-overwrites() {
+  :root {
+    --mdc-filled-button-container-shape: 0;
+    --mdc-outlined-button-container-shape: 0;
+    --mdc-protected-button-container-shape: 0;
+    --mdc-text-button-container-shape: 0;
+    --mdc-filled-text-field-container-shape: 0;
+    --mdc-outlined-text-field-container-shape: 0;
+    --mdc-elevated-card-container-shape: 0;
+    --mdc-outlined-card-container-shape: 0;
+    --mdc-dialog-container-shape: 0;
+    --mdc-chip-container-shape: 0;
+    --mdc-snackbar-container-shape: 0;
+    --mdc-list-list-item-container-shape: 0;
+    --mat-table-row-item-container-shape: 0;
+    --mat-tab-header-with-background-container-shape: 0;
+    --mat-expansion-container-shape: 0;
+    --mat-stepper-container-shape: 0;
+    --mdc-shape-small: 0;
+    --mdc-shape-medium: 0;
+    --mdc-shape-large: 0;
+  }
+
+  // Fallback for components that hardcode border-radius (a handful of TB
+  // custom components do so without going through MDC tokens).
+  .mat-mdc-card,
+  .mat-mdc-dialog-container,
+  .mat-mdc-form-field .mdc-text-field,
+  .mat-mdc-button-base:not(.mat-mdc-icon-button):not(.mat-mdc-fab):not(.mat-mdc-mini-fab),
+  .mat-mdc-chip,
+  .mat-mdc-snack-bar-container,
+  .mat-mdc-tab-header,
+  .mat-mdc-tab-body,
+  .mat-mdc-menu-panel,
+  .mat-expansion-panel {
+    border-radius: 0 !important;
+  }
 }
 
 @mixin _mat-form-field-overwrites($primary, $config-or-theme) {

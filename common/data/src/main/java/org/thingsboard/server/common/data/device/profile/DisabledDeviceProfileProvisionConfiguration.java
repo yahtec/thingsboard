@@ -17,12 +17,14 @@ package org.thingsboard.server.common.data.device.profile;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import lombok.ToString;
 import org.thingsboard.server.common.data.DeviceProfileProvisionType;
 
 @Data
 @Schema
 public class DisabledDeviceProfileProvisionConfiguration implements DeviceProfileProvisionConfiguration {
 
+    @ToString.Exclude
     private final String provisionDeviceSecret;
 
     @Override

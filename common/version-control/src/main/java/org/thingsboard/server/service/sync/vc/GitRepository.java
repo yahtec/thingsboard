@@ -15,8 +15,6 @@
  */
 package org.thingsboard.server.service.sync.vc;
 
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Ordering;
 import com.google.common.collect.Streams;
 import lombok.Data;
 import lombok.Getter;
@@ -85,6 +83,7 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -121,9 +120,16 @@ public class GitRepository {
         this.directory = directory;
     }
 
+    private static final Set<String> ALLOWED_REPO_SCHEMES = Set.of("http", "https", "ssh", "git");
+
     private static void validateRepositoryUri(String uri) {
         if (uri == null || uri.isBlank()) {
             throw new IllegalArgumentException("Repository URI is required");
+        }
+        // Reject Windows UNC and any backslash sequences before URIish parsing —
+        // JGit treats these as local repos and SMB lookups can leak NTLM hashes.
+        if (uri.startsWith("\\\\") || uri.contains("\\")) {
+            throw new IllegalArgumentException("Repository URI must not contain backslashes");
         }
         URIish parsed;
         try {
@@ -132,20 +138,24 @@ public class GitRepository {
             throw new IllegalArgumentException("Invalid repository URI: " + e.getMessage());
         }
         String scheme = parsed.getScheme();
-        if (scheme != null && scheme.equalsIgnoreCase("file")) {
-            throw new IllegalArgumentException("'file://' repository URIs are not allowed");
-        }
         String host = parsed.getHost();
-        if (host == null || host.isBlank()) {
-            // scp-style git@host:path or relative paths — also accept short SSH form
-            String userInfo = parsed.getUser();
-            if (userInfo == null) {
-                return;
+        if (scheme != null) {
+            String schemeLower = scheme.toLowerCase(java.util.Locale.ROOT);
+            if (!ALLOWED_REPO_SCHEMES.contains(schemeLower)) {
+                throw new IllegalArgumentException("Repository URI scheme is not allowed: " + scheme);
+            }
+            // Every recognized remote scheme must carry a host.
+            if (host == null || host.isBlank()) {
+                throw new IllegalArgumentException("Repository URI is missing a host");
+            }
+        } else {
+            // No scheme — only acceptable shape is scp-style "user@host:path",
+            // which URIish parses with user!=null and host!=null.
+            if (parsed.getUser() == null || host == null || host.isBlank()) {
+                throw new IllegalArgumentException("Repository URI must specify a remote (scheme://host or user@host:path)");
             }
         }
-        if (host != null && !host.isBlank()) {
-            SsrfProtectionValidator.validateHost(host);
-        }
+        SsrfProtectionValidator.validateHost(host);
     }
 
     public static GitRepository create(RepositorySettings settings, File directory) throws GitAPIException {
@@ -531,26 +541,33 @@ public class GitRepository {
                                                          Function<? super T, ? extends R> mapper,
                                                          PageLink pageLink,
                                                          Function<PageLink, Comparator<T>> comparatorFunction) {
-        iterable = Streams.stream(iterable).collect(Collectors.toList());
-        int totalElements = Iterables.size(iterable);
-        int totalPages = pageLink.getPageSize() > 0 ? (int) Math.ceil((float) totalElements / pageLink.getPageSize()) : 1;
-        int startIndex = pageLink.getPageSize() * pageLink.getPage();
-        int limit = startIndex + pageLink.getPageSize();
-        if (comparatorFunction != null) {
-            Comparator<T> comparator = comparatorFunction.apply(pageLink);
-            if (comparator != null) {
-                iterable = Ordering.from(comparator).immutableSortedCopy(iterable);
-            }
+        // Materialize once into an ArrayList so size(), sort, and sublist are all O(1) / O(n log n).
+        // Previously this method called Streams.stream().collect() then Iterables.size() then
+        // immutableSortedCopy() then Iterables.limit() + Iterables.skip() — that's 3-4
+        // full materializations of the commit list for a single page. On a 50k-commit repo
+        // returning page 0, the old code allocated ~200k commit references.
+        List<T> all = (iterable instanceof Collection)
+                ? new ArrayList<>((Collection<T>) iterable)
+                : Streams.stream(iterable).collect(Collectors.toCollection(ArrayList::new));
+        int totalElements = all.size();
+        int pageSize = pageLink.getPageSize();
+        int totalPages = pageSize > 0 ? (int) Math.ceil((float) totalElements / pageSize) : 1;
+        int startIndex = pageSize * pageLink.getPage();
+
+        Comparator<T> comparator = comparatorFunction != null ? comparatorFunction.apply(pageLink) : null;
+        if (comparator != null) {
+            all.sort(comparator);
         }
-        iterable = Iterables.limit(iterable, limit);
-        if (startIndex < totalElements) {
-            iterable = Iterables.skip(iterable, startIndex);
-        } else {
-            iterable = Collections.emptyList();
+
+        if (startIndex >= totalElements) {
+            return new PageData<>(Collections.emptyList(), totalPages, totalElements, false);
         }
-        List<R> data = Streams.stream(iterable).map(mapper)
+        int endIndex = pageSize > 0 ? Math.min(startIndex + pageSize, totalElements) : totalElements;
+        // subList is a view, no copy. The map+collect below builds the only result list.
+        List<R> data = all.subList(startIndex, endIndex).stream()
+                .map(mapper)
                 .collect(Collectors.toList());
-        boolean hasNext = pageLink.getPageSize() > 0 && totalElements > startIndex + data.size();
+        boolean hasNext = pageSize > 0 && totalElements > startIndex + data.size();
         return new PageData<>(data, totalPages, totalElements, hasNext);
     }
 
@@ -624,7 +641,11 @@ public class GitRepository {
             try {
                 keyPairs = SecurityUtils.loadKeyPairIdentities(null,
                         null, new ByteArrayInputStream(privateKeyContent.getBytes()), (session, resourceKey, retryIndex) -> password);
-            } catch (Exception e) {}
+            } catch (Exception e) {
+                // Log the underlying cause at DEBUG so operators can diagnose malformed keys / wrong passphrase
+                // without leaking the key body itself.
+                log.debug("Failed to load ssh private key: {}", e.getMessage());
+            }
             if (keyPairs == null) {
                 throw new IllegalArgumentException("Failed to load ssh private key");
             }
