@@ -19,6 +19,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.thingsboard.server.common.data.security.Authority;
 
 import java.io.Serializable;
@@ -29,8 +30,12 @@ import java.io.Serializable;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class JwtPair implements Serializable {
 
+    // Both fields are bearer secrets — any `log.x("{}", jwtPair)` leaks
+    // tokens that grant immediate API access (token) and indefinite renewal (refreshToken).
+    @ToString.Exclude
     @Schema(description = "The JWT Access Token. Used to perform API calls.", example = "AAB254FF67D..")
     private String token;
+    @ToString.Exclude
     @Schema(description = "The JWT Refresh Token. Used to get new JWT Access Token if old one has expired.", example = "AAB254FF67D..")
     private String refreshToken;
 

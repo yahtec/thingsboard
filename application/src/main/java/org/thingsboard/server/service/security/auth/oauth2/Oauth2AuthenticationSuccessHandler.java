@@ -45,6 +45,7 @@ import org.thingsboard.server.service.security.system.SystemSecurityService;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -139,12 +140,14 @@ public class Oauth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
         if (value == null || value.isBlank()) {
             return false;
         }
-        // Reject absolute URLs, protocol-relative URLs, backslashes, encoded variants and CR/LF.
-        if (value.contains("://") || value.startsWith("//") || value.startsWith("\\\\")
+        // Reject absolute URLs, protocol-relative URLs, any backslash, CR/LF.
+        // Single backslashes are forbidden because some browsers normalize them to '/'
+        // which can flip a path-relative URL into a host-relative one.
+        if (value.contains("://") || value.startsWith("//") || value.contains("\\")
                 || value.contains("\r") || value.contains("\n")) {
             return false;
         }
-        String lower = value.toLowerCase();
+        String lower = value.toLowerCase(Locale.ROOT);
         if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) {
             return false;
         }

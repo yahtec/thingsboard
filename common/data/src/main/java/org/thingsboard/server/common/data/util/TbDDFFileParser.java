@@ -51,7 +51,15 @@ public class TbDDFFileParser {
             // Parse XML file
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(true);
+            // Primary XXE defense: reject DOCTYPE declarations entirely. With no DOCTYPE,
+            // no entities can be defined, so classic XXE and Billion Laughs are unreachable.
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            // Defense in depth — belt and braces, in case a future change relaxes the above.
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
 
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document document = builder.parse(inputStream);

@@ -17,6 +17,7 @@ package org.thingsboard.rule.engine.rabbitmq;
 
 import com.rabbitmq.client.ConnectionFactory;
 import lombok.Data;
+import lombok.ToString;
 import org.thingsboard.rule.engine.api.NodeConfiguration;
 
 import java.util.Collections;
@@ -32,6 +33,7 @@ public class TbRabbitMqNodeConfiguration implements NodeConfiguration<TbRabbitMq
     private int port;
     private String virtualHost;
     private String username;
+    @ToString.Exclude
     private String password;
     private boolean automaticRecoveryEnabled;
     private int connectionTimeout;

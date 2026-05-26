@@ -17,6 +17,7 @@ package org.thingsboard.rule.engine.rest;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
+import lombok.ToString;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.thingsboard.rule.engine.api.NodeConfiguration;
@@ -42,6 +43,7 @@ public class TbRestApiCallNodeConfiguration implements NodeConfiguration<TbRestA
     private String proxyHost;
     private int proxyPort;
     private String proxyUser;
+    @ToString.Exclude
     private String proxyPassword;
     private String proxyScheme;
     private ClientCredentials credentials;

@@ -19,6 +19,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import lombok.Data;
+import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 import org.thingsboard.common.util.SslUtil;
 import org.thingsboard.server.common.data.StringUtils;
@@ -46,7 +47,11 @@ public class CertPemCredentials implements ClientCredentials {
 
     protected String caCert;
     private String cert;
+    // Private key and the password that decrypts it must never leak via toString —
+    // any rule node config dump (DEBUG log of the credentials object) would expose them.
+    @ToString.Exclude
     private String privateKey;
+    @ToString.Exclude
     private String password;
 
     @Override
@@ -66,7 +71,9 @@ public class CertPemCredentials implements ClientCredentials {
             }
             return builder.build();
         } catch (Exception e) {
-            log.error("[{}:{}] Creating TLS factory failed!", caCert, cert, e);
+            // Don't dump caCert/cert PEM bodies — they bloat logs and risk leaking
+            // private chain material via mis-pasted credentials. The stack trace alone is enough.
+            log.error("Creating TLS factory failed!", e);
             throw new RuntimeException("Creating TLS factory failed!", e);
         }
     }

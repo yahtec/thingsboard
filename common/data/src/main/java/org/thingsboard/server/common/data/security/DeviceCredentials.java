@@ -118,9 +118,11 @@ public class DeviceCredentials extends BaseData<DeviceCredentialsId> implements 
 
     @Override
     public String toString() {
-        return "DeviceCredentials [deviceId=" + deviceId + ", credentialsType=" + credentialsType + ", credentialsId="
-                + credentialsId + ", credentialsValue=" + credentialsValue + ", createdTime=" + createdTime + ", id="
-                + id + "]";
+        // credentialsId is the access token for ACCESS_TOKEN type (a bearer secret), and
+        // credentialsValue holds X509 cert bodies / MQTT passwords / LwM2M PSK material.
+        // Neither must appear in TRACE/DEBUG logs.
+        return "DeviceCredentials [deviceId=" + deviceId + ", credentialsType=" + credentialsType
+                + ", createdTime=" + createdTime + ", id=" + id + "]";
     }
 
 }

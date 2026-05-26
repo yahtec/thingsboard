@@ -34,6 +34,7 @@ import { RouterTabsComponent } from '@home/components/router-tabs.component';
 import { FormBuilder } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { isDefined, isDefinedAndNotNull } from '@core/utils';
+import { Authority } from '@shared/models/authority.enum';
 
 @Component({
     selector: 'tb-home',
@@ -45,7 +46,15 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
 
   authState: AuthState = getCurrentAuthState(this.store);
 
-  forceFullscreen = this.authState.forceFullscreen;
+  // Yahtec: distinction entre la navbar "native ThingsBoard" (pour les
+  // admins, conserve tout — github badge, fullscreen, rôle, menu 3 points,
+  // sidebar) et la navbar "custom TSmart" (pour les Customer Users et liens
+  // publics — simplifiée, profil cliquable, pas de sidebar).
+  isAdmin = this.authState.authUser?.authority === Authority.SYS_ADMIN
+    || this.authState.authUser?.authority === Authority.TENANT_ADMIN;
+
+  // La sidebar latérale est masquée pour les non-admins (= mode TSmart custom).
+  forceFullscreen = !this.isAdmin;
 
   activeComponent: any;
   searchableComponent: ISearchableComponent;
@@ -53,7 +62,10 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
   sidenavMode: 'over' | 'push' | 'side' = 'side';
   sidenavOpened = true;
 
-  logo = 'assets/logo_title_white.svg';
+  // Yahtec / Terris Energy branding: flame mark + "TSmart" wordmark.
+  // Original ThingsBoard logo is kept at assets/logo_title_white.svg for reference;
+  // switch the path back if you need to revert without rebuilding the navbar.
+  logo = 'assets/yahtec/logo_tsmart_white.svg';
 
   @ViewChild('sidenav')
   sidenav: MatSidenav;

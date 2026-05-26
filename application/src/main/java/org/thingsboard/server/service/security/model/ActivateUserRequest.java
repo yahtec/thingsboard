@@ -17,13 +17,16 @@ package org.thingsboard.server.service.security.model;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import lombok.ToString;
 
 @Schema
 @Data
 public class ActivateUserRequest {
 
+    @ToString.Exclude
     @Schema(description = "The activate token to verify", example = "AAB254FF67D..")
     private String activateToken;
+    @ToString.Exclude
     @Schema(description = "The new password to set", example = "secret")
     private String password;
 }

@@ -17,11 +17,13 @@ package org.thingsboard.rule.engine.credentials;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
+import lombok.ToString;
 
 @Data
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class BasicCredentials implements ClientCredentials {
     private String username;
+    @ToString.Exclude
     private String password;
 
     @Override

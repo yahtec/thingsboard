@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 :host {
-  div.tb-user-info {
+  // Yahtec: .tb-user-info peut être soit un <div> (mode admin natif : juste
+  // un libellé statique) soit un <button> (mode customer TSmart : trigger du
+  // menu). Les styles "interactifs" (cursor pointer, hover, focus, padding)
+  // ne s'appliquent qu'à l'élément button — sinon on suggère faussement à
+  // l'utilisateur admin que son nom est cliquable.
+  .tb-user-info {
     line-height: 1.5;
 
     span {
@@ -33,7 +38,27 @@
       letter-spacing: .005em;
       opacity: .8;
     }
+  }
 
+  // Mode customer : .tb-user-info est un <button>. On le force à ressembler
+  // à un libellé tout en signalant son interactivité (hover + focus visible).
+  button.tb-user-info {
+    background: transparent;
+    border: 0;
+    padding: 4px 8px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+    }
+    &:focus-visible {
+      outline: 2px solid rgba(255, 255, 255, 0.5);
+      outline-offset: -2px;
+    }
   }
 
   .mat-icon.tb-mini-avatar {
@@ -42,6 +67,12 @@
     margin: auto 8px;
     font-size: 36px;
     cursor: default;
+  }
+
+  // Quand l'avatar est à l'intérieur d'un button (mode customer), le curseur
+  // pointer doit lui s'appliquer pour que toute la surface soit cliquable.
+  button.tb-user-info .mat-icon.tb-mini-avatar {
+    cursor: pointer;
   }
 }
 

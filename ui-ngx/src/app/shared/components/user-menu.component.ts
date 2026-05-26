@@ -35,6 +35,10 @@ export class UserMenuComponent implements OnInit, OnDestroy {
 
   @Input() displayUserInfo: boolean;
 
+  // Yahtec: adminMode=true → rendu natif ThingsBoard (3 points = trigger, rôle affiché).
+  //         adminMode=false → rendu custom TSmart (profil cliquable, rôle masqué).
+  @Input() adminMode = false;
+
   authorities = Authority;
 
   authority$ = this.store.pipe(

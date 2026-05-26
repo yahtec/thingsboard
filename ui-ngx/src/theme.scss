@@ -23,23 +23,28 @@
 @include mat.elevation-classes();
 @include mat.app-background();
 
+// Yahtec / Terris deep red palette — replaces the original indigo palette.
+// The variable name is kept as $tb-mat-indigo to avoid touching every
+// downstream reference; only the colour values have changed.
+// Primary is deep red (#c92929 — industrial Terris look).
+// Bright flame red (Material warn) signals errors/alarms.
 $tb-mat-indigo: (
-  50: #e8eaf6,
-  100: #c5cae9,
-  200: #9fa8da,
-  300: $tb-primary-color-light,
-  400: #5c6bc0,
-  500: $tb-primary-color,
-  600: $tb-secondary-color,
-  700: #303f9f,
-  800: #283593,
-  900: #1a237e,
-  A100: $tb-hue3-color,
-  A200: #536dfe,
-  A400: #3d5afe,
-  A700: #304ffe,
+  50:  #fdeae8,
+  100: #f5b6b1,
+  200: #eb867f,
+  300: $tb-primary-color-light, // #d4453f
+  400: #ce372f,
+  500: $tb-primary-color,       // #c92929 — primary surface
+  600: $tb-secondary-color,     // #a02020 — hover
+  700: #7a1818,
+  800: #5a1212,
+  900: #3d0d0d,
+  A100: $tb-hue3-color,         // #f5b6b1
+  A200: #e0625b,
+  A400: #ce372f,
+  A700: #7a1818,
   contrast: (
-    50: rgba(black, 0.87),
+    50:  rgba(black, 0.87),
     100: rgba(black, 0.87),
     200: rgba(black, 0.87),
     300: white,
@@ -50,7 +55,7 @@ $tb-mat-indigo: (
     800: white,
     900: white,
     A100: rgba(black, 0.87),
-    A200: white,
+    A200: rgba(black, 0.87),
     A400: white,
     A700: white,
   )
@@ -59,13 +64,23 @@ $tb-mat-indigo: (
 $tb-primary: mat.m2-define-palette($tb-mat-indigo);
 $tb-accent: mat.m2-define-palette(mat.$m2-deep-orange-palette);
 
+// Typography aerée façon Terris : line-heights généreux, letter-spacing
+// légèrement étendu sur les labels/captions pour donner de l'air. Tailles
+// restent celles d'origine (le but n'est pas d'agrandir, c'est de respirer).
 $tb-mat-theme: mat.m2-define-light-theme((
   color: (
     primary: $tb-primary,
     accent: $tb-accent
   ),
   typography: mat.m2-define-typography-config(
-    $button: mat.m2-define-typography-level(14px, 36px, 500, $letter-spacing: 0.03125em)
+    $body-1:   mat.m2-define-typography-level(14px, 24px, 400, $letter-spacing: 0.01em),
+    $body-2:   mat.m2-define-typography-level(14px, 24px, 500, $letter-spacing: 0.01em),
+    $subtitle-1: mat.m2-define-typography-level(16px, 26px, 500, $letter-spacing: 0.01em),
+    $subtitle-2: mat.m2-define-typography-level(14px, 24px, 500, $letter-spacing: 0.01em),
+    $headline-6: mat.m2-define-typography-level(20px, 32px, 500, $letter-spacing: 0.005em),
+    $headline-5: mat.m2-define-typography-level(24px, 36px, 400, $letter-spacing: 0em),
+    $caption:  mat.m2-define-typography-level(12px, 20px, 400, $letter-spacing: 0.04em),
+    $button:   mat.m2-define-typography-level(14px, 36px, 500, $letter-spacing: 0.03125em)
   ),
   density: 0
 ));
@@ -77,21 +92,23 @@ $tb-theme: map_merge($tb-mat-theme, (_mat-system: $tb-theme-system));
 $primary: mat.m2-get-color-from-palette($tb-primary);
 $accent: mat.m2-get-color-from-palette($tb-accent);
 
+// Yahtec / Terris deep red — dark theme variant.
+// On dark theme, "primary" is a brighter red for readability over dark surfaces.
 $tb-dark-mat-indigo: (
-  50: #e8eaf6,
-  100: #c5cae9,
-  200: #9fa8da,
-  300: #7986cb,
-  400: #5c6bc0,
-  500: $tb-dark-primary-color,
-  600: $tb-secondary-color,
-  700: #303f9f,
-  800: $tb-primary-color,
-  900: #1a237e,
+  50:  #fdeae8,
+  100: #f5b6b1,
+  200: #eb867f,
+  300: #e87a73,
+  400: #e46962,
+  500: $tb-dark-primary-color,  // #e0625b — primary on dark surfaces
+  600: $tb-secondary-color,     // #a02020
+  700: #7a1818,
+  800: $tb-primary-color,       // #c92929
+  900: #3d0d0d,
   A100: $tb-hue3-color,
-  A200: #536dfe,
-  A400: #3d5afe,
-  A700: #304ffe,
+  A200: #e0625b,
+  A400: #ce372f,
+  A700: #7a1818,
   contrast: (
     50: rgba(black, 0.87),
     100: rgba(black, 0.87),

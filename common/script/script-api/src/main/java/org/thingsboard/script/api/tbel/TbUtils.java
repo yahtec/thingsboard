@@ -1299,32 +1299,40 @@ public class TbUtils {
         }
     }
 
+    // Hot path: TBel scripts in rule chains call these on every message-as-string conversion.
+    // String.matches(literal) recompiles the regex on every call (~5-15 µs each) — pre-compiling
+    // collapses that to ~50 ns for the matcher() + matches() pair.
+    private static final java.util.regex.Pattern BINARY_PATTERN = java.util.regex.Pattern.compile("[01]+");
+    private static final java.util.regex.Pattern OCTAL_PATTERN = java.util.regex.Pattern.compile("[0-7]+");
+    private static final java.util.regex.Pattern DECIMAL_PATTERN = java.util.regex.Pattern.compile("[+-]?\\d+(\\.\\d+)?([eE][+-]?\\d+)?");
+    private static final java.util.regex.Pattern HEX_PATTERN = java.util.regex.Pattern.compile("^-?(0[xX])?[0-9a-fA-F]+$");
+
     public static int isBinary(String str) {
         if (str == null || str.isEmpty()) {
             return -1;
         }
-        return str.matches("[01]+") ? MIN_RADIX : -1;
+        return BINARY_PATTERN.matcher(str).matches() ? MIN_RADIX : -1;
     }
 
     public static int isOctal(String str) {
         if (str == null || str.isEmpty()) {
             return -1;
         }
-        return str.matches("[0-7]+") ? OCTAL_RADIX : -1;
+        return OCTAL_PATTERN.matcher(str).matches() ? OCTAL_RADIX : -1;
     }
 
     public static int isDecimal(String str) {
         if (str == null || str.isEmpty()) {
             return -1;
         }
-        return str.matches("[+-]?\\d+(\\.\\d+)?([eE][+-]?\\d+)?") ? DEC_RADIX : -1;
+        return DECIMAL_PATTERN.matcher(str).matches() ? DEC_RADIX : -1;
     }
 
     public static int isHexadecimal(String str) {
         if (str == null || str.isEmpty()) {
             return -1;
         }
-        return str.matches("^-?(0[xX])?[0-9a-fA-F]+$") ? HEX_RADIX : -1;
+        return HEX_PATTERN.matcher(str).matches() ? HEX_RADIX : -1;
     }
 
     public static ExecutionArrayList<Byte> bytesToExecutionArrayList(ExecutionContext ctx, byte[] byteArray) {

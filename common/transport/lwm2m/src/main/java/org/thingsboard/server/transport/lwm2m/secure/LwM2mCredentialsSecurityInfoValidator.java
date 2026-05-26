@@ -67,7 +67,9 @@ public class LwM2mCredentialsSecurityInfoValidator {
                 new TransportServiceCallback<>() {
                     @Override
                     public void onSuccess(ValidateDeviceCredentialsResponse msg) {
-                        log.trace("Validated credentials: [{}] [{}]", credentialsId, msg);
+                        // Don't log full ValidateDeviceCredentialsResponse — it carries the device's
+                        // PSK / X509 / access token material.
+                        log.trace("Validated credentials for credentialsId=[{}]", credentialsId);
                         resultSecurityStore[0] = createSecurityInfo(credentialsId, msg, keyValue);
                         latch.countDown();
                     }

@@ -2193,3 +2193,21 @@ mqtt:
       # The actual delay is randomized within a range defined by multiplying the base delay by a factor between (1 - jitter_factor) and (1 + jitter_factor).
       # For example, a jitter_factor of 0.15 means the actual delay may vary by up to ±15% of the base delay.
       jitter_factor: "${TB_MQTT_CLIENT_RETRANSMISSION_JITTER_FACTOR:0.15}"
+
+# ============================================================================
+# Yahtec / TSmart additions
+# ============================================================================
+tb:
+  web:
+    # User-editable static files served from disk under /static/**.
+    # Drop any HTML / SVG / PNG / CSS / JS in this directory and reference it
+    # from a dashboard widget (iframe / HTML / markdown) as `/static/<name>`.
+    # Changes are visible without recompiling, repackaging, or restarting the
+    # server — Spring re-reads the file on the next request (browser cache
+    # may still hold the old copy: use Ctrl+F5 to bypass).
+    #
+    # If you store sensitive content here, route it behind /api/ (auth-gated)
+    # or wrap the handler with @PreAuthorize in StaticResourcesConfig.java.
+    static-files-enabled: "${TB_STATIC_FILES_ENABLED:true}"
+    static-files-dir: "${TB_STATIC_FILES_DIR:/usr/share/thingsboard/static/}"
+    static-files-url-pattern: "${TB_STATIC_FILES_URL_PATTERN:/static/**}"

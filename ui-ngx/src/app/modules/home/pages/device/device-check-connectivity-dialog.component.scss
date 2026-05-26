@@ -1,5 +1,5 @@
 /**
- * Copyright © 2016-2026 The Thingsboard Authors
+ * Copyright Â© 2016-2026 The Thingsboard Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,7 +122,7 @@
         pre[class*=language-] {
           margin: 0;
           background: #F3F6FA;
-          border-color: #305680;
+          border-color: #c92929;
           padding-right: 38px;
           padding-bottom: 4px;
           min-height: 42px;
@@ -137,7 +137,7 @@
       button.clipboard-btn {
         right: -2px;
         p {
-          color: #305680;
+          color: #c92929;
         }
         p, div {
           background-color: #F3F6FA;
@@ -152,7 +152,7 @@
             display: block;
             width: 18px;
             height: 18px;
-            background: #305680;
+            background: #c92929;
             mask-image: url(/assets/copy-code-icon.svg);
             -webkit-mask-image: url(/assets/copy-code-icon.svg);
             mask-repeat: no-repeat;

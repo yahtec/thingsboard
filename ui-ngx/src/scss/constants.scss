@@ -29,11 +29,28 @@ $mat-gt-xmd: "screen and (min-width: 1600px)";
 $mat-gt-xl: "screen and (min-width: 1920px)";
 $mat-md-lg: "screen and (min-width: 960px) and (max-width: 1819px)";
 
-$primary-hue-3: rgb(207, 216, 220) !default;
+$primary-hue-3: rgb(220, 200, 200) !default;
 
-$tb-primary-color: #305680;
-$tb-secondary-color: #527dad;
-$tb-hue3-color: #a7c1de;
+// Yahtec / Terris Energy palette — replaces the upstream indigo branding.
+// Source : portal Terris (https://bootloader.tsmart.fr/tsmart/portal/assets/tokens.css).
+//
+// Design philosophy:
+//   - Primary = dark red (#c92929). Used on toolbars, primary buttons, sidebar,
+//     active tabs, form-field focus underlines. Industrial, signature Terris.
+//   - Content surfaces = white / pale grey.
+//   - Text = ink/black/grey, never coloured.
+//   - Bright flame red (#ED1C24) is RESERVED for fault signalling: alarm badges,
+//     error states, "warn" Material palette only. The contrast between dark
+//     red primary and flame red warn keeps "errors" visually distinct from
+//     "everyday brand" elements.
+$tb-primary-color: #c92929;            // deep red — Material 500 slot (primary surface colour)
+$tb-secondary-color: #a02020;          // darker red — hover / 600
+$tb-hue3-color: #f5b6b1;               // pale pink — A100 / soft accents
 
-$tb-dark-primary-color: #9fa8da;
-$tb-primary-color-light: #7986cb;
+$tb-dark-primary-color: #e0625b;       // brighter red for primary on dark theme
+$tb-primary-color-light: #d4453f;      // mid red — Material 300
+
+// Signal colour kept as a global so warn buttons, alarm chips, error
+// validators can reference it without re-hardcoding the hex value.
+// Material's `warn` palette defaults to red — leave that to Material.
+$tb-signal-red: #ED1C24;
