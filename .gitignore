@@ -40,3 +40,4 @@ rebuild-docker.sh
 .claude
 .planning
 yahtec-ota.ppk
+deploy.ps1
