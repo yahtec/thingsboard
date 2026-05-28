@@ -65,12 +65,14 @@ Ce document spécifie **le contrat firmware → TB**, **le routing rule chain**,
 
 ### Endpoint
 
+L'automate POSTe vers le proxy ; le proxy forwarde à TB sans modification d'URL :
+
 ```
-POST /api/v1/{deviceAccessToken}/telemetry?withSharedKeys=live
+POST <proxy_host>/api/v1/{deviceAccessToken}/telemetry
 Content-Type: application/json
 ```
 
-Le paramètre `withSharedKeys` est **une extension TB ajoutée par ce projet** (Section 11). Quand présent, TB retourne dans le body de la réponse les valeurs courantes des shared attributes listés. Permet à l'automate d'obtenir `live` en un seul aller-retour HTTP au lieu de POST + GET séparés.
+**Pas de query param spécial sur TB.** Le proxy gère `live` lui-même (Section 9.2) et l'injecte dans la réponse retournée à l'automate. Pour TB, c'est une requête `POST /telemetry` standard.
 
 Le body est wrappé pour permettre l'envoi d'un `ts` explicite (essentiel pour le rejeu après buffer) :
 
@@ -232,9 +234,9 @@ Total des champs routés en attribut par device :
 | Type module (root) | `type` (mot réservé dans certains langages/gen OpenAPI) | `modType` |
 | Nombre HP | `nHp` explicite | **gardé** ; HPs[] toujours de longueur 4, slots inutilisés à 0 |
 | Vanne expansion | `dpf` (peu clair) | `eevPos` |
-| Wrapper TB | body direct | `{ "ts": ..., "values": { ... } }` (permet rejeu après buffer middleware) |
+| Wrapper TB | body direct | `{ "ts": ..., "values": { ... } }` (permet rejeu après buffer du proxy) |
 | Routing | tout en ts_kv flat | nested, rule chain extrait 33 paths en SERVER_SCOPE |
-| Réponse POST | 200 body vide | 200 avec body `{ "shared": { "live": <bool> } }` quand `?withSharedKeys=live` |
+| Réponse POST | 200 body vide | 200 avec body `{ "shared": { "live": <bool> } }` injecté par le proxy |
 
 ### Format `dateTime`
 
@@ -369,12 +371,12 @@ Un utilisateur ouvre le state `default` (Unité) ou `donnees_HP1` (Données dét
 2. Démarre un setInterval 60 s qui rewrite `liveTs=Date.now()` tant que `document.visibilityState === 'visible'`
 3. Au unmount / blur / visibilitychange→hidden / beforeunload : écrit `SHARED_SCOPE live=false`
 
-### Côté automate middleware
+### Côté automate
 
-L'automate lit `live` **dans la réponse même du POST telemetry**, via l'extension d'endpoint TB (`?withSharedKeys=live`, voir Section 11). Pas de GET séparé :
+L'automate lit `live` **dans la réponse de son POST telemetry au proxy**. Le proxy a forwardé la requête à TB (sans rien de spécial) puis a injecté `live` dans la réponse à partir de sa connaissance locale :
 
 ```
-POST /api/v1/{token}/telemetry?withSharedKeys=live
+POST <proxy_host>/api/v1/{token}/telemetry
   body : { "ts": <ms>, "values": { ... payload v2 ... } }
   → 200 OK
   → response body : { "shared": { "live": true | false } }
@@ -383,7 +385,7 @@ POST /api/v1/{token}/telemetry?withSharedKeys=live
 - Si `shared.live === true` : cadence = 20 s
 - Si `shared.live === false`, absent, ou body de réponse vide : cadence = 60 s
 
-Coût : aucune requête supplémentaire vs un POST telemetry classique. Latence ajoutée côté TB : 1 lookup attribute en mémoire (~ms).
+Le proxy maintient sa connaissance de `live` via un canal séparé vers TB (Section 9.2 P7). L'automate ne voit jamais la mécanique de discovery.
 
 ### Sécurité timeout (côté TB)
 
@@ -406,12 +408,14 @@ Garantit que `live` retombe à false même si le client a fermé brutalement son
 
 ### Coût réseau
 
-| Mode | POST telemetry (avec `?withSharedKeys=live` embarqué) | Total req/min |
-|---|---|---|
-| Normal (1 client absent ou liveTs > 3 min) | 1/min | **1** |
-| Live (1 client sur state `default` ou `donnees_HP1`) | 3/min (cadence 20 s) | **3** |
+Côté **automate ↔ proxy** :
 
-Pas de GET attributes séparé : `live` est embarqué dans la réponse du POST telemetry. Le body de réponse ajoute ~25 octets quand `?withSharedKeys=live` est passé. Coût négligeable.
+| Mode | POSTs/min | Notes |
+|---|---|---|
+| Normal | 1 | réponse proxy contient `{"shared":{"live":false}}` |
+| Live | 3 (cadence 20 s) | réponse proxy contient `{"shared":{"live":true}}` |
+
+Côté **proxy ↔ TB** (option P7-a) : pour chaque POST forwardé, 1 GET attributes en parallèle. Soit 2× le trafic vers TB par rapport au seul POST. Reste sur le canal cloud, ne touche pas le LAN automate.
 
 ### Attributs SHARED_SCOPE introduits
 
@@ -420,11 +424,30 @@ Pas de GET attributes séparé : `live` est embarqué dans la réponse du POST t
 
 **Seuls** attributs SHARED_SCOPE du projet. Aucun setpoint en SHARED.
 
-## 6. Migration : cutover par device via OTA
+## 6. Migration : proxy d'abord, puis cutover payload v2 par device via OTA
 
-Pas de shadow write. La rule chain gère simultanément les deux formats (nested v2 et flat ancien) via le `Switch` sur `msg.HPs`. Chaque device flippe au gré de son OTA.
+### Phasage
 
-### Ordre de déploiement
+Deux phases distinctes :
+
+**Phase 0 — Proxy** (avant tout autre changement). Mise en place du proxy en mode pur passthrough pour le **format flat actuel**. À la fin de la phase, tous les devices passent par le proxy mais envoient toujours du flat ; TB reçoit exactement la même chose qu'aujourd'hui. Le proxy n'a pas encore besoin de gérer `live` puisque le firmware actuel ne fait pas de mode live.
+
+**Phase 1+ — Payload v2** (rule chain + widgets + automate v2). Une fois Phase 0 stable, on déploie tout le reste (Sections 3-5, 7, 8). Le proxy se met à gérer `live` quand le premier automate v2 entre en service.
+
+### Phase 0 — Proxy
+
+| Étape | Action | Validation |
+|---|---|---|
+| P0.1 | Développer le proxy (P1-P5, passthrough + buffer). P6/P7 (live discovery) peuvent être stubés : retourner toujours `{"shared":{"live":false}}` | Tests unitaires proxy |
+| P0.2 | Déployer le proxy sur infra cible (mini-PC LAN, raspberry, container cloud — TBD selon archi) | Health check proxy OK |
+| P0.3 | Reconfigurer 1 device pilote pour pointer vers `<proxy_host>` au lieu de TB direct | Lignes `ts_kv` arrivent toujours (format flat) sur ce device dans TB |
+| P0.4 | Tester scénario buffer : couper TB ~5 min, vérifier que les POST sont bufferisés côté proxy puis rejoués à la reconnexion | Lignes `ts_kv` apparaissent avec `ts` d'origine |
+| P0.5 | Rollout reconfiguration sur tous les devices du parc | Volume `ts_kv` quotidien inchangé vs avant proxy |
+| P0.6 | Activer P6/P7 (live discovery) dans le code proxy. Pas d'impact tant que les automates v2 n'existent pas. | GET attributes proxy→TB fonctionnel |
+
+### Phase 1+ — Cutover payload v2 (par device via OTA)
+
+Pas de shadow write. La rule chain gère simultanément les deux formats (nested v2 et flat ancien) via le `Switch` sur `msg.HPs`. Chaque device flippe au gré de son OTA. Tous les devices passent déjà par le proxy depuis Phase 0.
 
 | Jour | Action | Risque rollback |
 |---|---|---|
@@ -432,9 +455,9 @@ Pas de shadow write. La rule chain gère simultanément les deux formats (nested
 | J0 | Deploy widgets TDUO refactorisés sur dashboard | Revert dashboard json |
 | J0 | Deploy rule chain "Live Timeout Sweep" (cron) | Désactiver le node |
 | J0 | Setup cron PG `tb-ts_kv-drop-old-year.sh` (Section 8) | Désactiver le cron |
-| J+1 | Pilot OTA sur 1 device test | Revert firmware sur ce device |
-| J+1 | Validation : ligne `pac_v2` apparaît dans `ts_kv`, attributs présents dans `attribute_kv` | n/a |
-| J+1 | Widget pilote sur le device test : Hub Info + Heating Loop + DHW + N×PAC affichent les bonnes valeurs | n/a |
+| J+1 | Pilot OTA automate v2 sur 1 device test | Revert firmware sur ce device |
+| J+1 | Validation : ligne `pac_v2` apparaît dans `ts_kv`, attributs présents dans `attribute_kv`, proxy retourne `live` correctement | n/a |
+| J+1 | Widget pilote sur le device test : Hub Info + Heating Loop + DHW + N×PAC affichent les bonnes valeurs ; ouverture du state `default` fait passer la cadence à 20 s | n/a |
 | J+2 | Rollout OTA progressif (10% → 50% → 100% du parc) | Revert firmware lot par lot |
 | J+7 | Cleanup device profile : suppression des 13 alarms orphelines | Recréer les alarms si besoin |
 
@@ -569,13 +592,11 @@ L'automate agrège les données firmware (Modbus local) et POSTe vers le proxy. 
 #### M1 — Endpoint et format
 
 ```
-POST https://<proxy_host>/api/v1/{token}/telemetry?withSharedKeys=live
+POST https://<proxy_host>/api/v1/{token}/telemetry
 Content-Type: application/json
 ```
 
-`<proxy_host>` est l'adresse du proxy (LAN local typiquement). Le proxy forwarde vers `thingsboard.tsmart.fr` sans modification.
-
-Le query param `?withSharedKeys=live` est essentiel : il déclenche le renvoi de `live` dans la réponse (Section 11). Le proxy le préserve tel quel.
+`<proxy_host>` est l'adresse du proxy (LAN local typiquement). Le proxy forwarde vers `thingsboard.tsmart.fr` sans modification d'URL. Pas de query param spécial : le proxy injecte `live` dans la réponse à partir de sa propre connaissance.
 
 Body : objet wrappé avec `ts` explicite :
 
@@ -615,9 +636,9 @@ Avantage : pas de gestion d'array dynamique côté automate, parsing trivial cô
 
 Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
 
-#### M6 — Mode live : embed dans la réponse POST
+#### M6 — Mode live : depuis la réponse du proxy
 
-À chaque POST telemetry avec `?withSharedKeys=live`, l'automate lit le body de réponse :
+À chaque POST telemetry, l'automate lit le body de réponse retourné par le proxy :
 
 ```json
 { "shared": { "live": true | false } }
@@ -626,7 +647,7 @@ Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
 - `live === true` → cadence prochain POST = 20 s
 - `live === false`, absent, body vide, ou erreur réseau → cadence 60 s par défaut
 
-**Pas de GET attributes séparé.**
+Le proxy est responsable du maintien de `live`. L'automate ne fait jamais d'appel séparé à TB pour ça.
 
 #### M7 — Encodage
 
@@ -699,9 +720,27 @@ Mitigation : le proxy maintient un compteur de séquence ou un hash du body pour
 
 #### P6 — Réponse `shared.live` quand TB est down
 
-Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côté TB. Deux options :
-- **Conservative** : répondre toujours `{"shared":{"live":false}}` → l'automate reste en cadence 60 s (mode normal) tant que la connexion TB n'est pas rétablie. Recommandé.
-- **Cache** : mémoriser la dernière valeur reçue de TB et la rejouer pendant le buffering. Permet le mode live à fonctionner brièvement après une déconnexion. Plus complexe, gain mineur.
+Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côté TB. Politique par défaut : répondre `{"shared":{"live":false}}` → l'automate reste en cadence 60 s (mode normal) tant que la connexion TB n'est pas rétablie. Garde le buffer plus contenu (60 s de cycle au lieu de 20 s).
+
+#### P7 — Discovery de `live` côté TB
+
+Le proxy maintient en mémoire, par device qu'il sert, la valeur courante de `shared.live`. Stratégies, par ordre de préférence :
+
+**(a) GET attributes piggyback sur chaque POST** : à chaque POST de l'automate qui est forwardé avec succès à TB, le proxy fire **en parallèle** un `GET /api/v1/{token}/attributes?sharedKeys=live` vers TB et stocke le résultat dans son cache local. La réponse au POST est constituée à partir de ce cache (valeur précédente). Latence = 0 pour l'automate (la réponse retourne quand TB répond au POST). Coût : double les requêtes proxy → TB (mais reste sur le canal cloud, l'automate ne le voit pas).
+
+```
+Automate POST ─► Proxy ─┬─► TB (POST telemetry)
+                        └─► TB (GET attributes?sharedKeys=live)  ─► cache[token].live
+Proxy ─► Automate { "shared": { "live": cache[token].live } }
+```
+
+**(b) Polling périodique** : le proxy fait un GET attributes toutes les N secondes (ex : 30 s) en arrière-plan, indépendamment des POSTs. Plus simple ; latence de propagation jusqu'à N secondes.
+
+**(c) WebSocket subscription** : le proxy ouvre une WS vers TB et s'abonne aux mises à jour d'attributs SHARED pour les devices servis. Push instantané. Plus complexe (gestion de la reconnexion WS), mais le plus efficace pour beaucoup de devices.
+
+**Recommandation** : option (a) pour la v1 du proxy — simple, sans timer séparé, propagation immédiate au prochain POST. Migration vers (c) si volume devient un problème.
+
+Au démarrage froid (cache vide) : `cache[token].live = false` par défaut, premier GET au prochain POST initialise.
 
 ## 10. Inventaire composants
 
@@ -709,7 +748,6 @@ Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côt�
 
 | Composant | Type | Action |
 |---|---|---|
-| `DeviceApiController.postTelemetry()` | TB Java (fork yahtec) | **Étendre** avec query param `?withSharedKeys` (Section 11) |
 | Rule chain "PAC Hybride Router" | TB rule chain | **Remplacer** (Section 4) |
 | Rule chain "Live Timeout Sweep" | TB rule chain | **Créer** (Section 5) |
 | Device profile "PAC Hybride" : default rule chain | TB device profile | Pointer vers "PAC Hybride Router v2" |
@@ -723,7 +761,7 @@ Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côt�
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
 | Automate (générateur payload v2) | Code automate, repo séparé | **Développer** (Section 9.1, M1-M10) |
-| Proxy / buffer | Code séparé (mini-PC LAN, raspberry, ou container) | **Développer** (Section 9.2, P1-P6) |
+| Proxy / buffer | Code séparé (mini-PC LAN, raspberry, ou container) | **Développer** (Section 9.2, P1-P7) |
 | Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (parle uniquement Modbus à l'automate maintenant) |
 
 ### Intouchés
@@ -738,95 +776,7 @@ Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côt�
 | Rule chain "Root Rule Chain" | Indépendante de "PAC Hybride Router" |
 | Branche `Switch=false` de "PAC Hybride Router v2" | Préserve le routage flat pour devices anciens et POST `evt_*` séparés |
 
-## 11. Modification TB : extension `postTelemetry` avec `withSharedKeys`
-
-Cette modification est portée par notre fork yahtec (branche `yahtec-main`). Elle ajoute un query param optionnel à l'endpoint POST telemetry HTTP.
-
-### Comportement
-
-- **Sans le param** : comportement TB standard inchangé, body de réponse vide. Aucune régression pour les autres clients HTTP.
-- **Avec `?withSharedKeys=k1,k2,...`** : après l'écriture du telemetry, TB lit les shared attributes listés et les inclut dans le body de réponse au format `{ "shared": { "k1": <val>, "k2": <val>, ... } }`.
-
-### Fichier impacté
-
-`common/transport/http/src/main/java/org/thingsboard/server/transport/http/DeviceApiController.java`
-
-Méthode `postTelemetry()` (actuellement [lignes 197-210](../../../common/transport/http/src/main/java/org/thingsboard/server/transport/http/DeviceApiController.java#L197-L210)).
-
-### Patch design
-
-Ajouter un param optionnel et chaîner deux appels `transportService.process()` quand il est présent :
-
-```java
-@RequestMapping(value = "/{deviceToken}/telemetry", method = RequestMethod.POST)
-public DeferredResult<ResponseEntity> postTelemetry(
-        @PathVariable("deviceToken") String deviceToken,
-        @RequestParam(value = "withSharedKeys", required = false) String withSharedKeys,
-        @RequestBody String json, HttpServletRequest request) {
-    DeferredResult<ResponseEntity> responseWriter = new DeferredResult<>();
-    transportContext.getTransportService().process(DeviceTransportType.DEFAULT,
-            ValidateDeviceTokenRequestMsg.newBuilder().setToken(deviceToken).build(),
-            new DeviceAuthCallback(transportContext, responseWriter, sessionInfo -> {
-                TransportService transportService = transportContext.getTransportService();
-                var telemetryMsg = JsonConverter.convertToTelemetryProto(JsonParser.parseString(json));
-
-                if (StringUtils.isEmpty(withSharedKeys)) {
-                    // Comportement standard : OK callback vide
-                    transportService.process(sessionInfo, telemetryMsg, new HttpOkCallback(responseWriter));
-                    return;
-                }
-
-                // Comportement étendu : process telemetry, puis fetch shared, puis répond
-                transportService.process(sessionInfo, telemetryMsg, new TransportServiceCallback<Void>() {
-                    @Override
-                    public void onSuccess(Void unused) {
-                        var sharedKeySet = Arrays.asList(withSharedKeys.split(","));
-                        var req = GetAttributeRequestMsg.newBuilder()
-                                .setRequestId(0)
-                                .addAllSharedAttributeNames(sharedKeySet)
-                                .build();
-                        transportService.registerSyncSession(sessionInfo,
-                                new HttpSessionListener(responseWriter, transportService, sessionInfo),
-                                transportContext.getDefaultTimeout());
-                        transportService.process(sessionInfo, req,
-                                new SessionCloseOnErrorCallback(transportService, sessionInfo));
-                    }
-                    @Override
-                    public void onError(Throwable e) {
-                        responseWriter.setResult(new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR));
-                    }
-                });
-            }));
-    return responseWriter;
-}
-```
-
-### Format réponse
-
-```json
-{ "shared": { "live": true } }
-```
-
-Forme strictement identique à celle déjà retournée par l'endpoint GET attributes existant (lignes 141-167 du même contrôleur). Permet aux clients de réutiliser leur parseur.
-
-Si la clé demandée n'a aucune valeur attribuée pour le device, elle est **omise** du body — comportement TB standard. L'automate doit traiter cette absence comme `live = false`.
-
-### Tests à ajouter
-
-`common/transport/http/src/test/java/org/thingsboard/server/transport/http/DeviceApiControllerTest.java` :
-
-1. POST telemetry sans `?withSharedKeys` → response body vide (régression test)
-2. POST telemetry `?withSharedKeys=live` quand `live` n'existe pas → response body vide ou `{"shared":{}}`
-3. POST telemetry `?withSharedKeys=live` quand `live=true` set → response body `{"shared":{"live":true}}`
-4. POST telemetry `?withSharedKeys=live,foo` avec `live=true` et `foo=42` → response body `{"shared":{"live":true,"foo":42}}`
-
-### Considérations merge LTS
-
-Le fichier `DeviceApiController.java` est touché ailleurs côté upstream à chaque LTS. Notre patch ajoute un param + un callback, modifications localisées dans une seule méthode. Conflit possible mais résolution mécanique.
-
-Marquer le diff avec un commentaire `// yahtec:withSharedKeys` au-dessus de la méthode pour faciliter le repérage lors des merges futurs.
-
-## 12. Décisions différées
+## 11. Décisions différées
 
 Hors scope de cette spec, à trancher au moment où le palier se pose :
 
@@ -835,8 +785,9 @@ Hors scope de cette spec, à trancher au moment où le palier se pose :
 - **Nouvelles alarmes** sur le payload v2 : ex `pac_v2.HPs[*].HP.status` en code erreur, `pac_v2.press` hors plage, "Offline" basée sur absence de POST > 5×cadence courante. À spécifier après cutover.
 - **Migration cleanup historique flat** : à T+1 an du cutover, décider si on DROP les partitions `ts_kv_2026_*` antérieures au cutover (libère ~50% du volume actuel) ou si on les garde pour comparaisons.
 - **6e TDUO `TDUO Tile`** : usage exact à déterminer (probablement template inclus par les 5 autres, à confirmer en lisant le descriptor).
+- **Extension TB `postTelemetry?withSharedKeys=live`** : initialement prévue (patch sur `DeviceApiController.java` côté fork yahtec) pour éviter au client un GET attributes séparé. Décision actuelle : c'est le **proxy** qui gère cette injection (Section 9.2 P7), pas TB. Avantage : aucune modification de code TB, pas de risque de conflit merge LTS. Inconvénient : 1 GET attributes supplémentaire proxy→TB par POST. Si la charge cloud devient problématique, réintroduire l'extension TB devient une option (le code design reste valable, archivé dans l'historique git de cette spec).
 
-## 13. Risques et mitigations
+## 12. Risques et mitigations
 
 | Risque | Détection | Mitigation |
 |---|---|---|
@@ -847,15 +798,15 @@ Hors scope de cette spec, à trancher au moment où le palier se pose :
 | Live Timeout Sweep manque de tourner | Devices restent en cadence 20 s sans client | Surveillance via log de la rule chain ; option (c) firmware-side check `liveTs` < 3 min comme ceinture+bretelles |
 | Cron DROP PARTITION échoue (verrou, espace) | `/var/log/tb-ts_kv-drop.log` | Alerte log + tentative manuelle ; impact = on garde 1 année de plus, pas critique |
 
-## 14. Acceptance criteria
+## 13. Acceptance criteria
 
 Le projet est considéré terminé quand :
 
 - 100% des devices PAC Hybride du parc envoient en format nested v2 (vérifiable via `SELECT count(*) FROM ts_kv WHERE key = 'pac_v2' GROUP BY entity_id`)
 - Aucune ligne `ts_kv` flat n'est plus écrite (hors `evt_*`) après J+30 du dernier OTA
 - Les 33 attributs SERVER_SCOPE sont présents sur chaque device : 6 (métadonnées root, incluant nHp) + 9 (consignes heat) + 1 (dhw.tSet) + 5 (unités calo) + 12 (versions par HP × 4 fixe)
-- L'endpoint étendu `POST /api/v1/{token}/telemetry?withSharedKeys=live` retourne `{"shared":{"live":<bool>}}` ; sans le query param, retourne body vide (régression nulle)
-- L'automate middleware POSTe avec `ts` explicite ; les samples rejoués après buffer apparaissent dans `ts_kv` à leur `ts` d'origine et non au timestamp de réception
+- Le proxy retourne dans la réponse à l'automate `{"shared":{"live":<bool>}}` reflétant l'état courant en TB ; pendant une indisponibilité TB, retourne `{"shared":{"live":false}}` (mode normal)
+- L'automate POSTe avec `ts` explicite vers le proxy ; les samples rejoués par le proxy après reconnexion TB apparaissent dans `ts_kv` à leur `ts` d'origine et non au timestamp de réception
 - Le state `default` et `donnees_HP1` affichent correctement les valeurs depuis `pac_v2` sur les 6 widgets TDUO refactorisés
 - Le mode live est observable : cadence passe à 20 s quand un client ouvre `default` ou `donnees_HP1`, retombe à 60 s 3 min après la fermeture
 - Le state `historique` affiche un chart 1 an en < 3 s
