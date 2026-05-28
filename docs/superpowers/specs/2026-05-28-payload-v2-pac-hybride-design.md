@@ -7,6 +7,26 @@
 
 ## 1. Contexte
 
+### Architecture cible
+
+```
+[Firmware PAC]  ──Modbus / lien local──►  [Automate middleware]  ──HTTPS──►  [ThingsBoard]
+                                                  │
+                                                  └─ Buffer local si TB indisponible
+                                                     (les samples sont rejoués avec leur ts d'origine
+                                                      à la reconnexion)
+```
+
+Une nouvelle couche **automate middleware** s'intercale entre les PAC et TB. Son rôle :
+- agréger les données firmware (Modbus probablement)
+- construire le JSON nested v2 ci-dessous
+- POST vers TB en ajoutant explicitement `ts` (epoch ms) pour que TB attribue le bon timestamp même en rejeu après buffer
+- bufferiser localement si TB est down
+
+L'**automate** est donc le client HTTP de TB pour ce projet. Le firmware PAC lui-même ne parle plus HTTP.
+
+### Mesures historiques
+
 ThingsBoard reçoit aujourd'hui des POST de télémétrie **flat** (~275 keys par message) de la part des PAC Hybrides. Mesures du 21-22 mai 2026 :
 
 - 158.7 octets par ligne `ts_kv` (heap + PK btree)
@@ -44,13 +64,31 @@ Ce document spécifie **le contrat firmware → TB**, **le routing rule chain**,
 ### Endpoint
 
 ```
-POST /api/v1/{deviceAccessToken}/telemetry
+POST /api/v1/{deviceAccessToken}/telemetry?withSharedKeys=live
 Content-Type: application/json
 ```
 
-Un seul body JSON, structure nested décrite ci-dessous. Pas de pretty-print.
+Le paramètre `withSharedKeys` est **une extension TB ajoutée par ce projet** (Section 11). Quand présent, TB retourne dans le body de la réponse les valeurs courantes des shared attributes listés. Permet à l'automate d'obtenir `live` en un seul aller-retour HTTP au lieu de POST + GET séparés.
 
-### Structure nested
+Le body est wrappé pour permettre l'envoi d'un `ts` explicite (essentiel pour le rejeu après buffer) :
+
+```json
+{
+  "ts": 1716902040000,
+  "values": {
+    "dateTime": "20/01/26 16:34:00",
+    "id": "2503200123",
+    "...": "structure nested ci-dessous"
+  }
+}
+```
+
+- `ts` : epoch ms du moment de l'acquisition côté firmware/automate (pas le moment de l'envoi à TB). Permet à TB d'attribuer le bon timestamp même quand l'automate rejoue des samples bufferisés.
+- `values` : le payload nested complet décrit ci-dessous.
+
+Pas de pretty-print. Body UTF-8.
+
+### Structure nested (`values`)
 
 ```yaml
 Chaufferie:
@@ -59,6 +97,8 @@ Chaufferie:
   rel:       "1.04"               # [ATTR] version programme CPU principal
   modType:   3                     # [ATTR] enum 0..3
                                    #   0 = no module, 1 = heating, 2 = dhw, 3 = heating + dhw
+  nHp:       2                     # [ATTR] nombre de HPs réellement présents (1..4)
+                                   #   HPs[] est toujours de longueur 4, les indices >= nHp ont des slots à 0 / "" / "0.00"
   tExt:      5.7                   # °C température extérieure
   tInM:      60.1                  # °C température collecteur primaire
   press:     1.7                   # bar pression hydraulique primaire
@@ -113,7 +153,9 @@ Chaufferie:
       cKwh:   654321                # énergie froid (unité = cKwhU)
       cKwhU:  3079                  # [ATTR] code unité
 
-  HPs:                              # array de longueur = nb HP réellement présents (0..4)
+  HPs:                              # array de longueur FIXE = 4. Les indices >= nHp sont des slots "vides"
+                                    # (numerics à 0, strings de version à "", autres strings à "0.00" si applicable).
+                                    # Avantages : pas de gestion d'array dynamique côté automate, parsing widget simplifié.
     - comm:   1                     # enum 0..1
       relStm: "1.23"                # [ATTR] version STM32
       relEsp: "2.45"                # [ATTR] version ESP
@@ -169,23 +211,24 @@ Total des champs routés en attribut par device :
 
 | Catégorie | Nb champs | Notes |
 |---|---|---|
-| Métadonnées (id, rel, modType, commCm2, relCm2) | 5 | au root |
+| Métadonnées (id, rel, modType, nHp, commCm2, relCm2) | 6 | au root |
 | Consignes heat (slope, foot, tMax, jours/mois été ×4, tCut, tRes) | 9 | sous `heat` |
 | Consigne dhw (tSet) | 1 | sous `dhw` |
 | Unités calo (qeU, qeTotU, pwrU, hKwhU, cKwhU) | 5 | sous `heat.calo` |
-| Versions par HP (relStm, relEsp, relScr) × N HPs (max 4) | 3..12 | sous `HPs[].` |
-| **Total max** | **32** | pour 4 HPs |
+| Versions par HP (relStm, relEsp, relScr) × 4 HPs (fixe) | 12 | sous `HPs[].` |
+| **Total** | **33** | constant quel que soit le nb de HPs réellement actifs |
 
-### Modifications vs schéma initial (mémoire utilisateur)
+### Modifications vs schéma initial
 
 | Changement | Avant | Après |
 |---|---|---|
 | Date+heure | 2 strings `date` + `time` | 1 string combiné `dateTime` |
-| Type module (root) | `type` (mot réservé certains langages) | `modType` |
-| Nombre HP | `nHp` explicite | supprimé, déduit de `HPs.length` |
+| Type module (root) | `type` (mot réservé dans certains langages/gen OpenAPI) | `modType` |
+| Nombre HP | `nHp` explicite | **gardé** ; HPs[] toujours de longueur 4, slots inutilisés à 0 |
 | Vanne expansion | `dpf` (peu clair) | `eevPos` |
-| Bugs YAML | tabs au lieu d'espaces sur `posV3V` (dhw), `pump3` (dhw) | espaces |
-| Routing | tout en ts_kv flat | nested, rule chain extrait 32 paths en SERVER_SCOPE |
+| Wrapper TB | body direct | `{ "ts": ..., "values": { ... } }` (permet rejeu après buffer middleware) |
+| Routing | tout en ts_kv flat | nested, rule chain extrait 33 paths en SERVER_SCOPE |
+| Réponse POST | 200 body vide | 200 avec body `{ "shared": { "live": <bool> } }` quand `?withSharedKeys=live` |
 
 ### Format `dateTime`
 
@@ -239,9 +282,9 @@ Device telemetry POST
 ### Script TBEL "split-attributes-from-payload"
 
 ```javascript
-// Paths à router en SERVER_SCOPE. Sup HPs.* applique sur chaque élément.
+// Paths à router en SERVER_SCOPE. Préfixe HPs.* applique sur chaque élément de l'array (longueur fixe 4).
 var ATTR_PATHS = [
-  "id", "rel", "modType", "commCm2", "relCm2",
+  "id", "rel", "modType", "nHp", "commCm2", "relCm2",
   "dhw.tSet",
   "heat.slope", "heat.foot", "heat.tMax",
   "heat.dayBgEte", "heat.monthBgEte",
@@ -320,17 +363,21 @@ Un utilisateur ouvre le state `default` (Unité) ou `donnees_HP1` (Données dét
 2. Démarre un setInterval 60 s qui rewrite `liveTs=Date.now()` tant que `document.visibilityState === 'visible'`
 3. Au unmount / blur / visibilitychange→hidden / beforeunload : écrit `SHARED_SCOPE live=false`
 
-### Côté firmware
+### Côté automate middleware
 
-À chaque cycle (cadence courante), avant le POST telemetry, le firmware fait :
+L'automate lit `live` **dans la réponse même du POST telemetry**, via l'extension d'endpoint TB (`?withSharedKeys=live`, voir Section 11). Pas de GET séparé :
 
 ```
-GET /api/v1/{token}/attributes?sharedKeys=live
-    → réponse JSON { "shared": { "live": true | false } }
+POST /api/v1/{token}/telemetry?withSharedKeys=live
+  body : { "ts": <ms>, "values": { ... payload v2 ... } }
+  → 200 OK
+  → response body : { "shared": { "live": true | false } }
 ```
 
 - Si `shared.live === true` : cadence = 20 s
-- Si `shared.live === false` ou absent : cadence = 60 s
+- Si `shared.live === false`, absent, ou body de réponse vide : cadence = 60 s
+
+Coût : aucune requête supplémentaire vs un POST telemetry classique. Latence ajoutée côté TB : 1 lookup attribute en mémoire (~ms).
 
 ### Sécurité timeout (côté TB)
 
@@ -353,12 +400,12 @@ Garantit que `live` retombe à false même si le client a fermé brutalement son
 
 ### Coût réseau
 
-| Mode | POST telemetry | GET attributes | Total |
-|---|---|---|---|
-| Normal (1 client absent ou liveTs > 3 min) | 1/min | 1/min | 2 req/min |
-| Live (1 client sur state default ou donnees_HP1) | 3/min (20 s) | 3/min | 6 req/min |
+| Mode | POST telemetry (avec `?withSharedKeys=live` embarqué) | Total req/min |
+|---|---|---|
+| Normal (1 client absent ou liveTs > 3 min) | 1/min | **1** |
+| Live (1 client sur state `default` ou `donnees_HP1`) | 3/min (cadence 20 s) | **3** |
 
-Le GET attributes a une réponse minuscule (~25 octets). Coût négligeable.
+Pas de GET attributes séparé : `live` est embarqué dans la réponse du POST telemetry. Le body de réponse ajoute ~25 octets quand `?withSharedKeys=live` est passé. Coût négligeable.
 
 ### Attributs SHARED_SCOPE introduits
 
@@ -507,44 +554,71 @@ echo "$(date -Iseconds) — done" >> "${LOG}"
 
 Pour 60 PACs il faudra envisager le SBS resize Scaleway (voir [project-thingsboard-storage-optim]).
 
-## 9. Exigences firmware
+## 9. Exigences automate middleware
 
-### F1 — Endpoint et format
+L'automate middleware est le composant client HTTP de TB pour ce projet. Il agrège les données firmware (Modbus local typiquement) et POST vers TB.
 
-POST `https://thingsboard.tsmart.fr/api/v1/{token}/telemetry`
-Content-Type: `application/json`
-Body : JSON conforme Section 3, non pretty-printed
+### M1 — Endpoint et format
 
-### F2 — Cadence
+```
+POST https://thingsboard.tsmart.fr/api/v1/{token}/telemetry?withSharedKeys=live
+Content-Type: application/json
+```
+
+Le query param `?withSharedKeys=live` est essentiel : il déclenche le renvoi de `live` dans la réponse (Section 11).
+
+Body : objet wrappé avec `ts` explicite :
+
+```json
+{ "ts": 1716902040000, "values": { "...nested payload v2..." } }
+```
+
+### M2 — Cadence
 
 - **Mode normal** : 1 POST / 60 s
 - **Mode live** : 1 POST / 20 s
-- Cadence est lue à chaque cycle via GET attributes (F6)
+- Cadence ajustée à chaque cycle à partir du `shared.live` lu dans la réponse du POST précédent
 
-### F3 — Format `dateTime`
+### M3 — Format `dateTime`
 
-String `"JJ/MM/AA HH:MM:SS"` formatée par RTC local. Pas d'offset timezone.
+Field `values.dateTime` = string `"JJ/MM/AA HH:MM:SS"` formatée à partir du RTC local de l'automate ou du firmware (24h, slash, espace, deux-points, année sur 2 chiffres). Pas d'offset timezone.
 
-### F4 — Bloc HPs
-
-`HPs` est un array, longueur = nombre de HP physiquement présents (max 4). Pas d'élément placeholder. Si 0 HP, array vide.
-
-### F5 — Blocs `heat` et `dhw`
-
-Toujours présents dans le JSON. Valeurs à `0` si non applicables au modType (typiquement pas de bloc absent).
-
-### F6 — GET attributes pour mode live
-
-À chaque cycle (juste avant le POST telemetry) :
-
-```
-GET /api/v1/{token}/attributes?sharedKeys=live
+Construction typique en C :
+```c
+char dateTime[20];
+sprintf(dateTime, "%02d/%02d/%02d %02d:%02d:%02d",
+        rtc.day, rtc.month, rtc.year % 100,
+        rtc.hour, rtc.minute, rtc.second);
 ```
 
-Si `shared.live === true` : adapter la cadence à 20 s pour le prochain cycle.
-Si `shared.live === false`, absent, ou erreur réseau : cadence 60 s par défaut.
+### M4 — Bloc HPs : longueur fixe 4
 
-### F7 — Encodage
+`values.HPs` est **toujours un array de longueur 4**. `values.nHp` indique combien sont réellement actifs. Les indices `[nHp .. 3]` doivent contenir des slots avec valeurs neutres :
+
+- numérics → `0`
+- strings de version → `""` (chaîne vide)
+- autres strings → `"0.00"` ou similaire selon convention firmware
+
+Avantage : pas de gestion d'array dynamique côté automate, parsing trivial côté widget.
+
+### M5 — Blocs `heat` et `dhw`
+
+Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
+
+### M6 — Mode live : embed dans la réponse POST
+
+À chaque POST telemetry avec `?withSharedKeys=live`, l'automate lit le body de réponse :
+
+```json
+{ "shared": { "live": true | false } }
+```
+
+- `live === true` → cadence prochain POST = 20 s
+- `live === false`, absent, body vide, ou erreur réseau → cadence 60 s par défaut
+
+**Pas de GET attributes séparé.**
+
+### M7 — Encodage
 
 - UTF-8 sans BOM
 - Floats max 1 décimale (sauf strings de version `"1.04"`)
@@ -552,19 +626,30 @@ Si `shared.live === false`, absent, ou erreur réseau : cadence 60 s par défaut
 - Pas de retours ligne dans le JSON
 - Content-Length set correctement
 
-### F8 — Buffer offline et retry
+### M8 — Buffer offline et rejeu
 
-- Sur perte WAN : buffer N samples en RAM/FRAM (N à dimensionner selon taille buffer ; ~3 KB par sample)
-- Reconnexion : POST chaque sample en séquence, TB déduplique sur le `ts` interne
-- Retry max 3 fois avec backoff `5, 15, 60` s, puis abandon ce sample
+C'est le **rôle principal de l'automate middleware**. Pendant une indisponibilité TB :
 
-### F9 — Compatibilité firmware ancien
+- L'automate continue d'acquérir les données firmware à cadence normale (60 s) ou la cadence courante
+- Chaque sample est stocké localement avec son `ts` (epoch ms acquisition) dans un buffer FIFO persistant (RAM + FRAM/SSD selon hardware automate)
+- Capacité min recommandée : 24 h × 60 (cadence 1/min) = 1 440 samples × ~3 KB = ~4 MB
 
-Pendant la phase de rollout, certains devices continueront d'envoyer le format flat ancien. La rule chain TB l'accepte sans modification (branche `Switch=false`). Aucune coordination firmware ⇄ TB nécessaire au déploiement.
+À la reconnexion TB :
 
-### F10 — Modification setpoints
+- POST chaque sample en séquence, avec son `ts` d'origine
+- TB attribue chaque ligne `ts_kv` à `values.ts` (pas au timestamp de réception)
+- Le buffer se vide progressivement
+- En parallèle, l'automate continue d'acquérir et de POST les nouveaux samples en temps réel (ordre peut être mélangé, TB s'en moque)
 
-**Hors scope payload v2.** Les consignes sont modifiées par voie locale (écran physique, LAN, BLE). Le firmware remonte les setpoints courants dans le payload via les champs `[ATTR]`. TB **n'est jamais source de vérité** pour les setpoints.
+Retry sur échec individuel : max 3 fois avec backoff `5, 15, 60` s, puis le sample reste dans le buffer et sera retenté au cycle suivant.
+
+### M9 — Compatibilité firmware ancien
+
+Pendant la phase de rollout, certains devices ne sont pas encore reliés à l'automate middleware et POSTent directement en format flat ancien. La rule chain TB accepte les deux formats (Section 4) sans coordination supplémentaire.
+
+### M10 — Modification setpoints
+
+**Hors scope payload v2.** Les consignes sont modifiées par voie locale (écran physique du firmware, LAN, BLE). Le firmware remonte les setpoints courants à l'automate via Modbus ; l'automate les remonte dans le payload via les champs `[ATTR]`. TB **n'est jamais source de vérité** pour les setpoints.
 
 ## 10. Inventaire composants
 
@@ -572,6 +657,7 @@ Pendant la phase de rollout, certains devices continueront d'envoyer le format f
 
 | Composant | Type | Action |
 |---|---|---|
+| `DeviceApiController.postTelemetry()` | TB Java (fork yahtec) | **Étendre** avec query param `?withSharedKeys` (Section 11) |
 | Rule chain "PAC Hybride Router" | TB rule chain | **Remplacer** (Section 4) |
 | Rule chain "Live Timeout Sweep" | TB rule chain | **Créer** (Section 5) |
 | Device profile "PAC Hybride" : default rule chain | TB device profile | Pointer vers "PAC Hybride Router v2" |
@@ -584,7 +670,8 @@ Pendant la phase de rollout, certains devices continueront d'envoyer le format f
 | Widget `usage_pie` (custom JS) | TB widget | Refactor si lit du flat, sinon supprimer |
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
-| Firmware (repo séparé) | Code embedded | **Refonte** (Section 9) |
+| Automate middleware (nouveau composant) | Code automate, repo séparé | **Développer** (Section 9) |
+| Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (parle uniquement Modbus à l'automate maintenant) |
 
 ### Intouchés
 
@@ -598,7 +685,95 @@ Pendant la phase de rollout, certains devices continueront d'envoyer le format f
 | Rule chain "Root Rule Chain" | Indépendante de "PAC Hybride Router" |
 | Branche `Switch=false` de "PAC Hybride Router v2" | Préserve le routage flat pour devices anciens et POST `evt_*` séparés |
 
-## 11. Décisions différées
+## 11. Modification TB : extension `postTelemetry` avec `withSharedKeys`
+
+Cette modification est portée par notre fork yahtec (branche `yahtec-main`). Elle ajoute un query param optionnel à l'endpoint POST telemetry HTTP.
+
+### Comportement
+
+- **Sans le param** : comportement TB standard inchangé, body de réponse vide. Aucune régression pour les autres clients HTTP.
+- **Avec `?withSharedKeys=k1,k2,...`** : après l'écriture du telemetry, TB lit les shared attributes listés et les inclut dans le body de réponse au format `{ "shared": { "k1": <val>, "k2": <val>, ... } }`.
+
+### Fichier impacté
+
+`common/transport/http/src/main/java/org/thingsboard/server/transport/http/DeviceApiController.java`
+
+Méthode `postTelemetry()` (actuellement [lignes 197-210](../../../common/transport/http/src/main/java/org/thingsboard/server/transport/http/DeviceApiController.java#L197-L210)).
+
+### Patch design
+
+Ajouter un param optionnel et chaîner deux appels `transportService.process()` quand il est présent :
+
+```java
+@RequestMapping(value = "/{deviceToken}/telemetry", method = RequestMethod.POST)
+public DeferredResult<ResponseEntity> postTelemetry(
+        @PathVariable("deviceToken") String deviceToken,
+        @RequestParam(value = "withSharedKeys", required = false) String withSharedKeys,
+        @RequestBody String json, HttpServletRequest request) {
+    DeferredResult<ResponseEntity> responseWriter = new DeferredResult<>();
+    transportContext.getTransportService().process(DeviceTransportType.DEFAULT,
+            ValidateDeviceTokenRequestMsg.newBuilder().setToken(deviceToken).build(),
+            new DeviceAuthCallback(transportContext, responseWriter, sessionInfo -> {
+                TransportService transportService = transportContext.getTransportService();
+                var telemetryMsg = JsonConverter.convertToTelemetryProto(JsonParser.parseString(json));
+
+                if (StringUtils.isEmpty(withSharedKeys)) {
+                    // Comportement standard : OK callback vide
+                    transportService.process(sessionInfo, telemetryMsg, new HttpOkCallback(responseWriter));
+                    return;
+                }
+
+                // Comportement étendu : process telemetry, puis fetch shared, puis répond
+                transportService.process(sessionInfo, telemetryMsg, new TransportServiceCallback<Void>() {
+                    @Override
+                    public void onSuccess(Void unused) {
+                        var sharedKeySet = Arrays.asList(withSharedKeys.split(","));
+                        var req = GetAttributeRequestMsg.newBuilder()
+                                .setRequestId(0)
+                                .addAllSharedAttributeNames(sharedKeySet)
+                                .build();
+                        transportService.registerSyncSession(sessionInfo,
+                                new HttpSessionListener(responseWriter, transportService, sessionInfo),
+                                transportContext.getDefaultTimeout());
+                        transportService.process(sessionInfo, req,
+                                new SessionCloseOnErrorCallback(transportService, sessionInfo));
+                    }
+                    @Override
+                    public void onError(Throwable e) {
+                        responseWriter.setResult(new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR));
+                    }
+                });
+            }));
+    return responseWriter;
+}
+```
+
+### Format réponse
+
+```json
+{ "shared": { "live": true } }
+```
+
+Forme strictement identique à celle déjà retournée par l'endpoint GET attributes existant (lignes 141-167 du même contrôleur). Permet aux clients de réutiliser leur parseur.
+
+Si la clé demandée n'a aucune valeur attribuée pour le device, elle est **omise** du body — comportement TB standard. L'automate doit traiter cette absence comme `live = false`.
+
+### Tests à ajouter
+
+`common/transport/http/src/test/java/org/thingsboard/server/transport/http/DeviceApiControllerTest.java` :
+
+1. POST telemetry sans `?withSharedKeys` → response body vide (régression test)
+2. POST telemetry `?withSharedKeys=live` quand `live` n'existe pas → response body vide ou `{"shared":{}}`
+3. POST telemetry `?withSharedKeys=live` quand `live=true` set → response body `{"shared":{"live":true}}`
+4. POST telemetry `?withSharedKeys=live,foo` avec `live=true` et `foo=42` → response body `{"shared":{"live":true,"foo":42}}`
+
+### Considérations merge LTS
+
+Le fichier `DeviceApiController.java` est touché ailleurs côté upstream à chaque LTS. Notre patch ajoute un param + un callback, modifications localisées dans une seule méthode. Conflit possible mais résolution mécanique.
+
+Marquer le diff avec un commentaire `// yahtec:withSharedKeys` au-dessus de la méthode pour faciliter le repérage lors des merges futurs.
+
+## 12. Décisions différées
 
 Hors scope de cette spec, à trancher au moment où le palier se pose :
 
@@ -608,7 +783,7 @@ Hors scope de cette spec, à trancher au moment où le palier se pose :
 - **Migration cleanup historique flat** : à T+1 an du cutover, décider si on DROP les partitions `ts_kv_2026_*` antérieures au cutover (libère ~50% du volume actuel) ou si on les garde pour comparaisons.
 - **6e TDUO `TDUO Tile`** : usage exact à déterminer (probablement template inclus par les 5 autres, à confirmer en lisant le descriptor).
 
-## 12. Risques et mitigations
+## 13. Risques et mitigations
 
 | Risque | Détection | Mitigation |
 |---|---|---|
@@ -619,13 +794,15 @@ Hors scope de cette spec, à trancher au moment où le palier se pose :
 | Live Timeout Sweep manque de tourner | Devices restent en cadence 20 s sans client | Surveillance via log de la rule chain ; option (c) firmware-side check `liveTs` < 3 min comme ceinture+bretelles |
 | Cron DROP PARTITION échoue (verrou, espace) | `/var/log/tb-ts_kv-drop.log` | Alerte log + tentative manuelle ; impact = on garde 1 année de plus, pas critique |
 
-## 13. Acceptance criteria
+## 14. Acceptance criteria
 
 Le projet est considéré terminé quand :
 
 - 100% des devices PAC Hybride du parc envoient en format nested v2 (vérifiable via `SELECT count(*) FROM ts_kv WHERE key = 'pac_v2' GROUP BY entity_id`)
 - Aucune ligne `ts_kv` flat n'est plus écrite (hors `evt_*`) après J+30 du dernier OTA
-- Les attributs SERVER_SCOPE sont présents sur chaque device : 5 (métadonnées root) + 9 (consignes heat) + 1 (dhw.tSet) + 5 (unités calo) + 3×N (versions par HP, N = nb HPs présents). Min 20 pour 0 HP, max 32 pour 4 HPs
+- Les 33 attributs SERVER_SCOPE sont présents sur chaque device : 6 (métadonnées root, incluant nHp) + 9 (consignes heat) + 1 (dhw.tSet) + 5 (unités calo) + 12 (versions par HP × 4 fixe)
+- L'endpoint étendu `POST /api/v1/{token}/telemetry?withSharedKeys=live` retourne `{"shared":{"live":<bool>}}` ; sans le query param, retourne body vide (régression nulle)
+- L'automate middleware POSTe avec `ts` explicite ; les samples rejoués après buffer apparaissent dans `ts_kv` à leur `ts` d'origine et non au timestamp de réception
 - Le state `default` et `donnees_HP1` affichent correctement les valeurs depuis `pac_v2` sur les 6 widgets TDUO refactorisés
 - Le mode live est observable : cadence passe à 20 s quand un client ouvre `default` ou `donnees_HP1`, retombe à 60 s 3 min après la fermeture
 - Le state `historique` affiche un chart 1 an en < 3 s
