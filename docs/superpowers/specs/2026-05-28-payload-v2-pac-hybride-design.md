@@ -439,14 +439,15 @@ Deux phases distinctes :
 
 ### Phase 0 — Proxy
 
+Le proxy est **déjà déployé** en **mode legacy** (passthrough pur). Cette phase teste le passage en mode v2 et le bascule progressivement.
+
 | Étape | Action | Validation |
 |---|---|---|
-| P0.1 | Développer le proxy (P1-P5, passthrough + buffer). P6/P7 (live discovery) peuvent être stubés : retourner toujours `{"shared":{"live":false}}` | Tests unitaires proxy |
-| P0.2 | Déployer le proxy sur infra cible (mini-PC LAN, raspberry, container cloud — TBD selon archi) | Health check proxy OK |
-| P0.3 | Reconfigurer 1 device pilote pour pointer vers `<proxy_host>` au lieu de TB direct | Lignes `ts_kv` arrivent toujours (format flat) sur ce device dans TB |
-| P0.4 | Tester scénario buffer : couper TB ~5 min, vérifier que les POST sont bufferisés côté proxy puis rejoués à la reconnexion | Lignes `ts_kv` apparaissent avec `ts` d'origine (issu de `dateTime` parsé par le proxy) |
-| P0.5 | Rollout reconfiguration sur tous les devices du parc | Volume `ts_kv` quotidien inchangé vs avant proxy |
-| P0.6 | Activer P6/P7 (live discovery) dans le code proxy. Pas d'impact tant que les automates v2 n'existent pas. | GET attributes proxy→TB fonctionnel |
+| P0.1 | Activer le mode v2 sur **1 device pilote** via le toggle config du proxy | Le proxy parse `dateTime`, wrap en `{ts,values}`, forwarde correctement à TB. Lignes `ts_kv` apparaissent avec le `ts` d'acquisition (pas la réception réseau) |
+| P0.2 | Tester scénario cache offline : couper TB ~5 min, vérifier que les POST sont mis en cache côté proxy puis rejoués à la reconnexion | Les 5 lignes `ts_kv` du device pilote pendant la coupure apparaissent à leur `ts` d'origine après reconnexion |
+| P0.3 | Vérifier le toggle de rollback : remettre le device pilote en mode legacy | Lignes `ts_kv` reviennent au format actuel ; aucune perte de continuité |
+| P0.4 | Rollout du toggle mode v2 sur tous les devices du parc | Tous les devices écrivent en `ts_kv` au `ts` d'acquisition (issu de `dateTime`) |
+| P0.5 | Activer la logique `live` discovery (P6/P7) dans le proxy | Pas d'impact tant qu'aucun client n'ouvre les pages `default` / `donnees_HP1` |
 
 ### Phase 1+ — Cutover payload v2 (par device via OTA)
 
@@ -681,6 +682,12 @@ Pendant la phase de rollout, certains devices ne sont pas encore reliés à l'au
 
 Composant intercalé entre l'automate et TB. Rôle : **enrichir avec `ts` à partir de `dateTime` + relay HTTP + cache offline**.
 
+**Toggle deux modes** : le proxy supporte un paramètre de configuration qui sélectionne le comportement :
+- **Mode legacy** (défaut) : passthrough pur, aucune transformation. Body forwardé tel quel à TB. C'est le mode actuel (avant payload v2).
+- **Mode v2** (activable) : parse `dateTime` + wrap `{ts, values}` + cache offline avec rejeu à la reconnexion. C'est le comportement décrit dans P1-P8 ci-dessous.
+
+Le toggle peut être appliqué par device (matching sur token) ou globalement. Permet un rollout progressif et un rollback instantané sans redéployer le proxy.
+
 #### P1 — Transformation à chaque forward
 
 Le proxy fait **deux transformations** sur chaque body reçu de l'automate :
@@ -802,7 +809,7 @@ Pas de batch endpoint, pas de throttle : le rate limit entre proxy et TB est lev
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
 | Automate (générateur payload v2) | Code automate, repo séparé | **Développer** (Section 9.1, M1-M10) |
-| Proxy / buffer | Code séparé (mini-PC LAN, raspberry, ou container) | **Développer** (Section 9.2, P1-P8) |
+| Proxy | Code séparé (déjà déployé) | **Activer le mode v2 via toggle config** (Section 9.2, P1-P8). Code de parse `dateTime` + wrap déjà présent dans le proxy, juste à activer |
 | Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (parle uniquement Modbus à l'automate maintenant) |
 
 ### Intouchés
