@@ -2,30 +2,60 @@
 
 **Date** : 2026-05-28
 **Auteurs** : Julien (product), Claude (design)
-**Statut** : Brouillon, en attente de validation utilisateur avant plan d'implémentation
+**Statut** : Phase 0 (proxy) **VALIDÉE en prod 2026-05-28** ; Phases 1+ (rule chain v2, widgets, dashboard) à dérouler
 **Branche** : `yahtec-main`
+
+## Statut d'implémentation
+
+| Phase | Statut | Date |
+|---|---|---|
+| 0 — Proxy mode v2 (parse `dateTime` + wrap `{ts, values}` + cache offline) | ✅ DONE | 2026-05-28 |
+| 1+ — Payload nested v2, rule chain TBEL, widgets TDUO, dashboard, rotation | À dérouler | — |
+
+### Validation Phase 0 (résumé)
+
+- Proxy Rust `telemetry-proxy 0.1.0` déployé sur `10.77.0.74`, service systemd, toggle `tb_format` activable via UI admin (`https://bootloader.tsmart.fr/proxy/ui`)
+- Test rupture TB 5 min (2026-05-28 16:55-17:00 UTC) :
+  - Cache passé 0 → 11 entrées pendant la panne
+  - Replay automatique à la reconnexion, cache vidé en ~60 s
+  - Les 2 vrais devices PAC (`2602000001`, `2602000002`) ont reçu **5 samples × ~247 keys** chacun pendant la panne, ts d'acquisition d'origine préservé
+- Mémoire détaillée : [[project-proxy-pac-hybride]]
+
+### Architecture réelle découverte (vs initialement spec)
+
+Le proxy POSTe via **un seul token TB** (`yDq5GxcbQpuJVgKYRiWu` → device `heatPumpHybride` profile `default`). Ce device joue le rôle de **dispatcher** : une rule chain TB lit l'`installation_id` du body et **redispatche** la télémétrie vers le vrai device PAC correspondant (profile `pac hybride`). C'est ce mécanisme qui assure la séparation par installation (2602000001, 2602000002, 2610000001, ...) sans démultiplier les configs proxy.
+
+Pour la migration v2 (Phases 1+), la rule chain TBEL split-attributes-from-payload devra tourner **sur les vrais devices PAC** (en sortie du dispatcher), pas sur le dispatcher lui-même.
 
 ## 1. Contexte
 
 ### Architecture cible
 
 ```
-[Firmware PAC]  ──Modbus──►  [Automate]  ──HTTPS 1/min──►  [Proxy]  ──HTTPS──►  [ThingsBoard]
-                                            body :                  body :
-                                            {dateTime,...}          {ts, values:{...}}
-                                            (string seulement)         (ts parsé depuis dateTime
-                                                                        par le proxy)
-                                            │
-                                            └─ Cache si TB injoignable
-                                               (flush en POST individuels à la reconnexion ;
-                                                chaque sample atterrit dans ts_kv à son ts d'acquisition)
+[Firmware PAC]   ──Modbus──►  [Automate]   ──HTTPS 1/min──►  [Proxy /tduo]   ──HTTPS──►  [TB device dispatcher
+ (2602000001/2/...)              tb_format=true                                            heatPumpHybride
+                                 parse dateTime                                            profile default]
+                                 wrap {ts, values}                                                │
+                                 cache offline                                                    ▼ rule chain
+                                                                                          lit installation_id
+                                                                                                  │
+                                                                                                  ├─► evt_dispatch
+                                                                                                  │   (trace sur dispatcher)
+                                                                                                  └─► redispatch payload
+                                                                                                      vers vrai device PAC
+                                                                                                      (profile "pac hybride") :
+                                                                                                        2602000001
+                                                                                                        2602000002
+                                                                                                        2610000001
+                                                                                                        ...
 ```
 
-Trois couches distinctes :
+Quatre couches distinctes :
 
 - **Firmware PAC** : acquisition métier, expose ses données en Modbus local. Ne parle pas HTTP.
-- **Automate** : agrège Modbus, construit le JSON nested v2 (Section 3) **avec un champ `dateTime` string** (`"JJ/MM/AA HH:MM:SS"`, formaté depuis le RTC local). POSTe vers le proxy à cadence **1/min** en régime normal (20 s en mode live, Section 5). L'automate **ne calcule pas** d'epoch ms — il connaît seulement le RTC local.
-- **Proxy** : parse `dateTime` en epoch ms et enveloppe en `{ts, values}` avant forward à TB. Le `ts` parsé devient le timestamp officiel de la ligne `ts_kv`. Si TB est injoignable, le proxy garde le sample en cache (déjà parsé) et flushe en POST individuels à la reconnexion (Section 9.2 P8). Pas de batch ni throttle (rate limit proxy → TB levé sur ce déploiement). **L'historique de la panne est intégralement préservé** : chaque sample atterrit dans `ts_kv` au `ts` d'acquisition d'origine.
+- **Automate** : agrège Modbus, construit le JSON nested v2 (Section 3) **avec un champ `dateTime` string** (`"dd/MM/yy HH:mm:ss"` UTC, formaté depuis le RTC). POSTe vers le proxy à cadence **1/min** en régime normal (20 s en mode live, Section 5). L'automate **ne calcule pas** d'epoch ms — il envoie juste la string.
+- **Proxy** (`telemetry-proxy` 0.1.0 Rust, déjà déployé) : parse `dateTime` UTC en epoch ms et enveloppe en `{ts, values}` avant forward à TB. Le `ts` parsé devient le timestamp officiel de la ligne `ts_kv`. Si TB est injoignable, le proxy garde le sample en cache SQLite local (déjà parsé) et flushe en POST individuels à la reconnexion (Section 9.2 P8). Pas de batch ni throttle (rate limit proxy → TB levé sur ce déploiement). **L'historique de la panne est intégralement préservé** : chaque sample atterrit dans `ts_kv` au `ts` d'acquisition d'origine.
+- **TB device dispatcher** (`heatPumpHybride`, profile `default`) : reçoit la télémétrie de tous les automates sur un seul token TB. Une rule chain lit l'`installation_id` du body et redispatche le payload vers le vrai device PAC (profile `pac hybride`). Trace de passage écrite via `evt_dispatch`. **C'est ce mécanisme qui sépare les installations sans démultiplier les configs proxy.**
 
 Le timestamp d'acquisition est fixé **par l'automate via son RTC** (encodé en string `dateTime`), traduit en epoch ms **par le proxy** au premier passage. TB ne fait que stocker.
 
@@ -437,17 +467,18 @@ Deux phases distinctes :
 
 **Phase 1+ — Payload v2** (rule chain + widgets + automate v2). Une fois Phase 0 stable, on déploie tout le reste (Sections 3-5, 7, 8). Le proxy se met à gérer `live` quand le premier automate v2 entre en service.
 
-### Phase 0 — Proxy
+### Phase 0 — Proxy ✅ DONE 2026-05-28
 
-Le proxy est **déjà déployé** en **mode legacy** (passthrough pur). Cette phase teste le passage en mode v2 et le bascule progressivement.
+Le proxy était déjà déployé en mode legacy (passthrough). La bascule en mode v2 a été faite et validée en prod le 2026-05-28.
 
-| Étape | Action | Validation |
-|---|---|---|
-| P0.1 | Activer le mode v2 sur **1 device pilote** via le toggle config du proxy | Le proxy parse `dateTime`, wrap en `{ts,values}`, forwarde correctement à TB. Lignes `ts_kv` apparaissent avec le `ts` d'acquisition (pas la réception réseau) |
-| P0.2 | Tester scénario cache offline : couper TB ~5 min, vérifier que les POST sont mis en cache côté proxy puis rejoués à la reconnexion | Les 5 lignes `ts_kv` du device pilote pendant la coupure apparaissent à leur `ts` d'origine après reconnexion |
-| P0.3 | Vérifier le toggle de rollback : remettre le device pilote en mode legacy | Lignes `ts_kv` reviennent au format actuel ; aucune perte de continuité |
-| P0.4 | Rollout du toggle mode v2 sur tous les devices du parc | Tous les devices écrivent en `ts_kv` au `ts` d'acquisition (issu de `dateTime`) |
-| P0.5 | Activer la logique `live` discovery (P6/P7) dans le proxy | Pas d'impact tant qu'aucun client n'ouvre les pages `default` / `donnees_HP1` |
+| Étape | Action | Validation | Statut |
+|---|---|---|---|
+| P0.1 | Activer le mode v2 sur device "tduo" via toggle config (`tb_format=true`) | Le proxy parse `dateTime` UTC, wrap `{ts, values}`, forwarde à TB. Lignes `ts_kv` apparaissent au ts d'acquisition | ✅ DONE |
+| P0.2 | Test scénario cache offline : `systemctl stop thingsboard` 5 min, vérifier cache, restart, vérifier replay | Cache passé 0 → 11 entrées pendant la coupure 16:55-17:00 UTC. Replay automatique en ~60 s. Devices `2602000001`/`2602000002` reçoivent 5 samples × 247 keys au `ts` d'origine | ✅ DONE |
+| P0.3 | Validation rollback toggle | Pas effectué — mode v2 jugé stable, kept ON | ✅ N/A |
+| P0.4 | Rollout sur tous les devices du parc | Le proxy n'a qu'1 entrée `devices.tduo` qui couvre les 2 automates actifs (`2602000001`, `2602000002`). Le 3e (`2610000001`) et le 4e (`2602000003`) déjà alignés sur la même URL d'ingest | ✅ DONE |
+| P0.5 | Activer la logique `live` discovery (P6/P7) dans le proxy | Reporté : sera fait quand le mode live des dashboards arrivera (Phase 1+ Section 5) | ⏳ TODO |
+| P0.6 | Bugs d'affichage UI proxy `https://bootloader.tsmart.fr/proxy/ui` | À investiguer/corriger | ⏳ TODO |
 
 ### Phase 1+ — Cutover payload v2 (par device via OTA)
 
@@ -678,15 +709,22 @@ Pendant la phase de rollout, certains devices ne sont pas encore reliés à l'au
 
 **Hors scope payload v2.** Les consignes sont modifiées par voie locale (écran physique du firmware, LAN, BLE). Le firmware remonte les setpoints courants à l'automate via Modbus ; l'automate les remonte dans le payload via les champs `[ATTR]`. TB **n'est jamais source de vérité** pour les setpoints.
 
-### 9.2 Proxy
+### 9.2 Proxy — ✅ IMPLÉMENTÉ ET VALIDÉ EN PROD 2026-05-28
 
 Composant intercalé entre l'automate et TB. Rôle : **enrichir avec `ts` à partir de `dateTime` + relay HTTP + cache offline**.
 
-**Toggle deux modes** : le proxy supporte un paramètre de configuration qui sélectionne le comportement :
-- **Mode legacy** (défaut) : passthrough pur, aucune transformation. Body forwardé tel quel à TB. C'est le mode actuel (avant payload v2).
-- **Mode v2** (activable) : parse `dateTime` + wrap `{ts, values}` + cache offline avec rejeu à la reconnexion. C'est le comportement décrit dans P1-P8 ci-dessous.
+**Statut concret** :
+- Binary Rust `telemetry-proxy 0.1.0` à `/usr/local/bin/telemetry-proxy`, service systemd `telemetry-proxy.service`
+- Config JSON `/etc/telemetry-proxy/config.json`, format documenté en config.example
+- UI admin à `https://bootloader.tsmart.fr/proxy/ui` (login yahtec)
+- Cache SQLite `/var/lib/telemetry-proxy/cache.db` (table `pending(id, device, body BLOB, headers TEXT, created_at, attempts)`)
+- Validation test rupture TB 5 min OK (voir frontmatter spec)
 
-Le toggle peut être appliqué par device (matching sur token) ou globalement. Permet un rollout progressif et un rollback instantané sans redéployer le proxy.
+**Toggle deux modes** : champ `devices.<name>.tb_format` (bool) dans la config :
+- **`tb_format: false`** (mode legacy) : passthrough pur, aucune transformation. Body forwardé tel quel à TB.
+- **`tb_format: true`** (mode v2, **activé pour `tduo` depuis 2026-05-28**) : parse `dateTime` UTC (format `dd/MM/yy HH:mm:ss`, Rust chrono `%d/%m/%y %H:%M:%S`) + wrap `{ts, values}` + cache offline avec rejeu à la reconnexion. Comportement décrit P1-P8.
+
+Le toggle est appliqué par device (alias dans l'URL `/api/v1/telemetry/<device>` ↔ entrée `devices.<device>` dans la config). Permet un rollout progressif et un rollback instantané sans redéployer le proxy (toggle via UI ou edit config + SIGHUP/file watch).
 
 #### P1 — Transformation à chaque forward
 

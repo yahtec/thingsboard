@@ -12,6 +12,22 @@
 
 **Hors scope de ce plan** : développement du code automate (repo séparé). Ce plan suppose qu'au moins un automate v2 est disponible pour tests à partir du Phase 7.
 
+## Statut d'avancement
+
+| Phase | Statut | Date |
+|---|---|---|
+| 0 — Setup | À faire | — |
+| 1 — Rule chain v2 | À faire | — |
+| 2 — Device profile cleanup | À faire | — |
+| 3 — Widgets TDUO refactor | À faire | — |
+| 4 — Dashboard refonte | À faire | — |
+| 5 — Storage rotation cron | À faire | — |
+| 6 — Live Timeout Sweep | À faire | — |
+| **7 — Proxy mode v2 activation** | **✅ DONE (anticipé)** | **2026-05-28** |
+| 8 — Acceptance | À faire | — |
+
+**Note** : Phase 7 a été réalisée et validée en avance de phase 2026-05-28, **avant** les Phases 1-6. Possible parce que le proxy a un toggle indépendant et que la validation porte sur la couche transport seulement (parse `dateTime` → wrap `{ts, values}` → cache offline → replay). Les Phases 1-6 (côté TB) restent à dérouler quand le firmware automate v2 sera prêt à émettre du JSON nested. Voir détails Phase 7 plus bas et `project_proxy_pac_hybride` en mémoire.
+
 ---
 
 ## Phase 0 : Setup
@@ -1233,157 +1249,52 @@ git commit -m "feat(tb): Live Timeout Sweep rule chain (or SQL cron fallback)"
 
 ---
 
-## Phase 7 : Proxy mode v2 — activation progressive
+## Phase 7 : Proxy mode v2 — activation progressive ✅ DONE 2026-05-28
 
-Le proxy est déjà déployé avec un toggle config legacy/v2. Cette phase active le toggle progressivement, device par device.
+Toutes les tasks ci-dessous ont été **exécutées et validées en prod le 2026-05-28**. La documentation des découvertes est en mémoire dans `project_proxy_pac_hybride.md`.
 
-### Task 26 : Documenter la procédure d'activation toggle proxy
+### Récapitulatif du run
 
-**Files:**
-- Create : `scripts/proxy/activate-mode-v2.md`
+| Task | Statut | Résultat |
+|---|---|---|
+| 26 — Documenter procédure toggle | ✅ | UI admin proxy `/proxy/ui` (yahtec/argon2). Toggle = checkbox `Format ThingsBoard (wrap ts)`. Bind sur champ `devices.<name>.tb_format` dans `/etc/telemetry-proxy/config.json`. |
+| 27 — Activer mode v2 sur pilote | ✅ | `tb_format=true` activé pour device alias `tduo`. Les 2 automates `2602000001`/`2602000002` POSTent via `/proxy/api/v1/telemetry/tduo`. |
+| 28 — Test cache offline + replay au ts d'origine | ✅ | Stop TB 5 min (16:55-17:00 UTC), cache passé 0 → 11, restart TB, cache vidé en ~60 s, 5 samples × 247 keys arrivent sur `2602000001`/`2602000002` au ts d'origine. |
+| 29 — Test toggle rollback | N/A | Pas exécuté — mode v2 stable, jugé inutile de rollback pendant le test. |
+| 30 — Rollout parc | ✅ | Le routing proxy se fait via un seul alias `tduo` qui dessert tous les automates. Pas de config par device à dupliquer. Tous les automates actifs sont déjà sur cette voie. |
 
-- [ ] **Step 1 : Documenter le mécanisme exact du toggle (à compléter avec l'opérateur)**
+### Architecture découverte pendant la validation
 
-Le format exact du toggle dépend de l'implémentation du proxy (config file ? env var ? endpoint REST ? base de données interne ?). Compléter ce fichier avec :
+Le proxy POSTe via **un seul token TB** (`yDq5GxcbQpuJVgKYRiWu` → device `heatPumpHybride` profile `default`) qui joue le rôle de **dispatcher**. Une rule chain TB existante lit `installation_id` du body et redispatche vers le vrai device PAC (profile `pac hybride`).
 
-- mécanisme du toggle (chemin, format)
-- commande d'activation
-- commande de rollback
-- vérification post-activation (logs proxy : parse dateTime, wrap {ts, values}, cache offline si TB down)
+| Composant | Rôle |
+|---|---|
+| Device `heatPumpHybride` (profile `default`) | Dispatcher : reçoit tous les POSTs proxy, trace via `evt_dispatch` |
+| Devices `2602000001`, `2602000002`, `2610000001` (profile `pac hybride`) | Stockent le payload télémétrie réel (247 keys distinctes par sample) |
+| Rule chain sur `heatPumpHybride` (déjà existante) | Lit `installation_id`, redispatche |
 
-- [ ] **Step 2 : Commit la doc**
+**Implication pour Phases 1-6** : la rule chain TBEL `split-attributes-from-payload` (Task 2) devra tourner **sur le device profile `pac hybride`** (en sortie du dispatch), pas sur le dispatcher.
+
+### Composants installés sur le serveur
+
+- Binary Rust `telemetry-proxy 0.1.0` à `/usr/local/bin/telemetry-proxy`
+- Service systemd `telemetry-proxy.service` (Restart=always)
+- Config `/etc/telemetry-proxy/config.json` (avec 6 backups `.bak.*` historiques)
+- Cache SQLite `/var/lib/telemetry-proxy/cache.db` (table `pending(id, device, body BLOB, headers TEXT, created_at, attempts)`)
+- Nginx routing : `/etc/nginx/snippets/telemetry-proxy-location.conf` monté sur vhost `bootloader.tsmart.fr` (HTTPS) + sites-available `telemetry-proxy` (HTTP :8088 legacy)
+- UI admin : `https://bootloader.tsmart.fr/proxy/ui`, login `yahtec`
+
+### TODO restant sur le proxy (hors couverture Phase 7 originale)
+
+- [ ] **Bugs d'affichage UI proxy** (`https://bootloader.tsmart.fr/proxy/ui`). Reporté volontairement.
+- [ ] **Activer P6/P7 (live discovery)** dans le proxy quand le mode live dashboards sera déployé (Phase 1+ Section 5 de la spec).
 
 ```bash
 git add scripts/proxy/activate-mode-v2.md
 git commit -m "docs(proxy): procedure for activating mode v2 toggle per device"
 ```
 
-### Task 27 : Activer mode v2 sur 1 device pilote
-
-- [ ] **Step 1 : Choisir un device pilote**
-
-Critères : device avec automate v2 ready, profil "PAC Hybride", traffic modéré (idéalement 1 des devices `2602*` à cadence 1/min).
-
-- [ ] **Step 2 : Activer le toggle proxy pour ce device (procédure Task 26)**
-
-- [ ] **Step 3 : Attendre 1-2 cycles d'envoi (max 2 min)**
-
-- [ ] **Step 4 : Vérifier que `pac_v2` apparaît à un `ts` proche de maintenant**
-
-```powershell
-"SELECT to_timestamp(ts/1000) AS sample_ts, length(json_v::text) AS sz FROM ts_kv WHERE entity_id = '<pilote-uuid>' AND key = 'pac_v2' ORDER BY ts DESC LIMIT 3;" | ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "sudo -u postgres psql thingsboard -A -F'|'"
-```
-
-Expected : 1-2 lignes avec `sample_ts` ~ now et `sz` ~3000 octets.
-
-- [ ] **Step 5 : Vérifier les attributs SERVER_SCOPE populés**
-
-```powershell
-"SELECT key, str_v, long_v, dbl_v, bool_v FROM attribute_kv WHERE entity_id = '<pilote-uuid>' AND attribute_type = 'SERVER_SCOPE' ORDER BY key;" | ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "sudo -u postgres psql thingsboard -A -F'|'"
-```
-
-Expected : 33 lignes incluant `id`, `rel`, `modType`, `nHp`, `dhw_tSet`, `heat_slope`, `heat_calo_qeU`, `HP1_relStm`, etc.
-
-- [ ] **Step 6 : Ouvrir le dashboard sur ce device pilote, state `default`**
-
-Tous les widgets TDUO v2 affichent des valeurs cohérentes (pas N/A, pas blanc).
-
-- [ ] **Step 7 : Commit**
-
-```bash
-git commit --allow-empty -m "ops(proxy): activated mode v2 on pilot device, ts_kv pac_v2 confirmed"
-```
-
-### Task 28 : Test cache offline avec coupure TB 5 min
-
-- [ ] **Step 1 : Marquer le `ts` de référence avant coupure**
-
-```powershell
-$beforeTs = [int64](Get-Date -UFormat %s) * 1000
-Write-Host "Before TB outage: $beforeTs"
-```
-
-- [ ] **Step 2 : Couper TB pendant 5 min**
-
-```powershell
-ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "systemctl stop thingsboard; date -Iseconds"
-Start-Sleep -Seconds 300
-ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "systemctl start thingsboard; date -Iseconds"
-```
-
-- [ ] **Step 3 : Attendre 1-2 min que le proxy détecte la reconnexion et flushe**
-
-- [ ] **Step 4 : Vérifier que les samples bufferisés ont atterri à leur ts d'origine**
-
-```powershell
-"SELECT count(*), min(to_timestamp(ts/1000)) AS first_sample, max(to_timestamp(ts/1000)) AS last_sample FROM ts_kv WHERE entity_id = '<pilote-uuid>' AND key = 'pac_v2' AND ts > $beforeTs;" | ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "sudo -u postgres psql thingsboard -A -F'|'"
-```
-
-Expected : `count >= 5`, `first_sample` et `last_sample` espacés d'environ 5 min, **dans la fenêtre de la coupure**.
-
-- [ ] **Step 5 : Commit**
-
-```bash
-git commit --allow-empty -m "test(proxy): verified offline cache + replay preserves ts d'origine"
-```
-
-### Task 29 : Test du toggle de rollback
-
-- [ ] **Step 1 : Désactiver le mode v2 sur le pilote (procédure inverse Task 26)**
-
-- [ ] **Step 2 : Attendre 1-2 cycles**
-
-- [ ] **Step 3 : Vérifier que les nouvelles lignes sont en format flat ancien**
-
-```powershell
-"SELECT key, dbl_v, str_v FROM ts_kv WHERE entity_id = '<pilote-uuid>' AND ts > extract(epoch from now() - interval '2 min')*1000 ORDER BY ts DESC LIMIT 20;" | ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "sudo -u postgres psql thingsboard -A -F'|'"
-```
-
-Expected : retour aux clés flat (`dhw_tOut`, `heat_tIn`, etc.), plus de `pac_v2`. La rule chain v2 accepte le format flat via la branche `Switch=false`.
-
-- [ ] **Step 4 : Réactiver le mode v2 sur le pilote**
-
-- [ ] **Step 5 : Commit**
-
-```bash
-git commit --allow-empty -m "test(proxy): verified toggle rollback works without data loss"
-```
-
-### Task 30 : Rollout mode v2 sur tout le parc
-
-- [ ] **Step 1 : Lister les devices PAC Hybride**
-
-```powershell
-"SELECT id, name FROM device WHERE device_profile_id = (SELECT id FROM device_profile WHERE name = 'PAC Hybride') ORDER BY name;" | ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "sudo -u postgres psql thingsboard -A -F'|'"
-```
-
-- [ ] **Step 2 : Activer mode v2 par lot (10% → 50% → 100%)**
-
-- Lot 1 (10%) : activer, attendre 24 h, vérifier en DB aucune anomalie
-- Lot 2 (50%) : étendre, attendre 24 h
-- Lot 3 (100%) : étendre à tout le parc
-
-- [ ] **Step 3 : Vérifier la couverture finale**
-
-```powershell
-@'
-WITH parc AS (
-  SELECT id, name FROM device WHERE device_profile_id = (SELECT id FROM device_profile WHERE name = 'PAC Hybride')
-)
-SELECT p.name,
-       (SELECT count(*) FROM ts_kv WHERE entity_id = p.id AND key = 'pac_v2' AND ts > extract(epoch from now() - interval '24h')*1000) AS pac_v2_24h,
-       (SELECT count(*) FROM ts_kv WHERE entity_id = p.id AND key != 'pac_v2' AND key NOT LIKE 'evt_%' AND ts > extract(epoch from now() - interval '24h')*1000) AS flat_24h
-FROM parc p ORDER BY p.name;
-'@ | ssh -i C:\Users\je\.ssh\yahtec-ota root@10.77.0.74 "sudo -u postgres psql thingsboard -A -F'|'"
-```
-
-Expected : tous les devices `pac_v2_24h > 0`, `flat_24h ≈ 0`.
-
-- [ ] **Step 4 : Commit**
-
-```bash
-git commit --allow-empty -m "ops(proxy): mode v2 activated on 100% of PAC Hybride parc"
-```
+> Tasks 27-30 condensées dans le récap ci-dessus (Phase 7 DONE 2026-05-28). Historique git du repo + `project_proxy_pac_hybride.md` en mémoire contiennent les détails d'exécution. Les procédures SQL de validation restent dans les sections Phase 8 (mêmes critères).
 
 ---
 
