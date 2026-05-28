@@ -441,7 +441,7 @@ Deux phases distinctes :
 | P0.1 | Développer le proxy (P1-P5, passthrough + buffer). P6/P7 (live discovery) peuvent être stubés : retourner toujours `{"shared":{"live":false}}` | Tests unitaires proxy |
 | P0.2 | Déployer le proxy sur infra cible (mini-PC LAN, raspberry, container cloud — TBD selon archi) | Health check proxy OK |
 | P0.3 | Reconfigurer 1 device pilote pour pointer vers `<proxy_host>` au lieu de TB direct | Lignes `ts_kv` arrivent toujours (format flat) sur ce device dans TB |
-| P0.4 | Tester scénario buffer : couper TB ~5 min, vérifier que les POST sont bufferisés côté proxy puis rejoués à la reconnexion | Lignes `ts_kv` apparaissent avec `ts` d'origine |
+| P0.4 | Tester scénario buffer : couper TB ~5 min, vérifier que les POST sont bufferisés côté proxy puis rejoués **en batch** à la reconnexion sans déclencher le rate limit | Lignes `ts_kv` apparaissent avec `ts` d'origine, aucun 429 dans les logs proxy |
 | P0.5 | Rollout reconfiguration sur tous les devices du parc | Volume `ts_kv` quotidien inchangé vs avant proxy |
 | P0.6 | Activer P6/P7 (live discovery) dans le code proxy. Pas d'impact tant que les automates v2 n'existent pas. | GET attributes proxy→TB fonctionnel |
 
@@ -702,11 +702,11 @@ Latence ajoutée : 1 hop TCP + parse/forward (~ms en LAN, ~10 ms en WAN).
 
 Quand TB est injoignable (timeout, 5xx, erreur DNS, etc.) :
 1. Receive POST de l'automate
-2. **Persister** la requête (méthode + URL + headers + body) sur disque local du proxy
-3. Répondre 200 OK à l'automate avec un body neutre (ex : `{"shared":{"live":false}}`) — par défaut mode normal côté automate
+2. **Persister** le body sur disque local du proxy (uniquement le body JSON `{ts, values}`, pas l'URL — l'URL et le token sont déduits du device)
+3. Répondre 200 OK à l'automate avec un body neutre `{"shared":{"live":false}}` — l'automate reste en cadence normale (60 s)
 4. En tâche de fond, retenter le forward vers TB avec backoff exponentiel (60 s, 120 s, 240 s, max 600 s)
-5. À la reconnexion TB : rejouer les requêtes bufferisées dans l'ordre FIFO, avec leur body d'origine (le `ts` interne au JSON est préservé → TB attribue la bonne ligne `ts_kv`)
-6. Si une requête rejouée échoue (TB répond 4xx — payload invalide par exemple) : log et drop, ne bloque pas la file
+5. À la reconnexion TB : rejouer les samples bufferisés avec la stratégie batch + throttle de P8
+6. Si une requête rejouée échoue (TB répond 4xx — payload invalide par exemple) : log et drop ce sample, ne bloque pas la file
 
 #### P4 — Capacité buffer
 
@@ -742,6 +742,43 @@ Proxy ─► Automate { "shared": { "live": cache[token].live } }
 
 Au démarrage froid (cache vide) : `cache[token].live = false` par défaut, premier GET au prochain POST initialise.
 
+#### P8 — Rejeu rate-limit-aware (batch + throttle)
+
+TB applique des rate limits sur la télémétrie au niveau tenant et device (paramètres `transportTelemetryMsgRateLimit`, `transportDeviceMsgRateLimit` du tenant profile, ~1 msg/s/device sur ce déploiement). Un rejeu naïf après reconnexion saturerait TB et beaucoup de samples seraient rejetés en 429.
+
+**Stratégie obligatoire** :
+
+1. **Batch endpoint TB**. À la reconnexion, le proxy regroupe les samples bufferisés en arrays JSON et POST chacun en **un seul appel** :
+
+   ```
+   POST /api/v1/{token}/telemetry
+   Content-Type: application/json
+
+   [
+     { "ts": 1716902040000, "values": { ... payload v2 ... } },
+     { "ts": 1716902100000, "values": { ... payload v2 ... } },
+     { "ts": 1716902160000, "values": { ... payload v2 ... } },
+     ...
+   ]
+   ```
+
+   TB accepte nativement ce format (array de `{ts, values}`) et persiste chaque élément en ligne `ts_kv` distincte. Chaque array compte pour **1 message** vis-à-vis du rate limit.
+
+2. **Taille de batch**. Recommandé : **100 samples par POST**, soit ~300 KB de body (sous la limite TB par défaut de 10 MB). Un device 24h bufferisé = ~1 440 samples = 15 batches.
+
+3. **Throttle inter-batch**. Le proxy attend ≥ 1 s entre 2 POST batchés vers TB (par device), pour rester sous le rate limit même au pire cas.
+
+4. **Détection 429 / 4xx**. Si TB répond 429 (Too Many Requests) ou un 4xx générique, le proxy :
+   - Multiplie le délai inter-batch par 2 (max 30 s)
+   - Retente le même batch après le délai
+   - Restaure le délai à 1 s après 3 succès consécutifs
+
+5. **Priorité au temps réel**. Pendant le drainage du buffer, les nouveaux POSTs de l'automate arrivent en parallèle. Le proxy doit les **prioriser** : forwarder immédiatement (en single sample) le nouveau POST, et continuer le drain en arrière-plan. L'automate ne doit pas attendre que le buffer se vide pour voir ses nouveaux samples enregistrés.
+
+6. **Volume calcul**. 24 h de buffer × 1 device = 1 440 samples × 3 KB ≈ 4.3 MB sur disque proxy. Drainage à 1 batch/s × 100 samples = 14 s pour ce device. 30 devices simultanément en drain = 30 batches en parallèle × 1 s entre batches = 14 × 30 s ≈ 7 min de drainage pour vider 24 h sur 30 devices. Acceptable.
+
+7. **Ordre FIFO**. Les samples sont rejoués dans l'ordre de leur `ts`, mais TB stocke chaque sample à son propre `ts` ; l'ordre d'arrivée à TB n'a aucun impact sur la timeline finale dans `ts_kv`.
+
 ## 10. Inventaire composants
 
 ### À modifier
@@ -761,7 +798,7 @@ Au démarrage froid (cache vide) : `cache[token].live = false` par défaut, prem
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
 | Automate (générateur payload v2) | Code automate, repo séparé | **Développer** (Section 9.1, M1-M10) |
-| Proxy / buffer | Code séparé (mini-PC LAN, raspberry, ou container) | **Développer** (Section 9.2, P1-P7) |
+| Proxy / buffer | Code séparé (mini-PC LAN, raspberry, ou container) | **Développer** (Section 9.2, P1-P8) |
 | Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (parle uniquement Modbus à l'automate maintenant) |
 
 ### Intouchés
@@ -807,6 +844,7 @@ Le projet est considéré terminé quand :
 - Les 33 attributs SERVER_SCOPE sont présents sur chaque device : 6 (métadonnées root, incluant nHp) + 9 (consignes heat) + 1 (dhw.tSet) + 5 (unités calo) + 12 (versions par HP × 4 fixe)
 - Le proxy retourne dans la réponse à l'automate `{"shared":{"live":<bool>}}` reflétant l'état courant en TB ; pendant une indisponibilité TB, retourne `{"shared":{"live":false}}` (mode normal)
 - L'automate POSTe avec `ts` explicite vers le proxy ; les samples rejoués par le proxy après reconnexion TB apparaissent dans `ts_kv` à leur `ts` d'origine et non au timestamp de réception
+- Le rejeu après reconnexion utilise le format batch array de TB et un throttle ≥ 1 s entre batches par device ; aucun 429 dans les logs lors d'un drainage de 24 h × 30 devices
 - Le state `default` et `donnees_HP1` affichent correctement les valeurs depuis `pac_v2` sur les 6 widgets TDUO refactorisés
 - Le mode live est observable : cadence passe à 20 s quand un client ouvre `default` ou `donnees_HP1`, retombe à 60 s 3 min après la fermeture
 - Le state `historique` affiche un chart 1 an en < 3 s
