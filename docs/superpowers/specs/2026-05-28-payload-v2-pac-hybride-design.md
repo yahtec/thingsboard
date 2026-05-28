@@ -10,22 +10,24 @@
 ### Architecture cible
 
 ```
-[Firmware PAC]  ──Modbus──►  [Automate]  ──HTTPS──►  [Proxy / buffer]  ──HTTPS──►  [ThingsBoard]
-                                                            │
-                                                            └─ Buffer local si TB indisponible
-                                                               (rejoue les POSTs avec leur ts d'origine
-                                                                à la reconnexion)
+[Firmware PAC]  ──Modbus──►  [Automate]  ──HTTPS 1/min──►  [Proxy]  ──HTTPS──►  [ThingsBoard]
+                                            body :                  body :
+                                            {dateTime,...}          {ts, values:{...}}
+                                            (string seulement)         (ts parsé depuis dateTime
+                                                                        par le proxy)
+                                            │
+                                            └─ Cache si TB injoignable
+                                               (flush en POST individuels à la reconnexion ;
+                                                chaque sample atterrit dans ts_kv à son ts d'acquisition)
 ```
 
 Trois couches distinctes :
 
 - **Firmware PAC** : acquisition métier, expose ses données en Modbus local. Ne parle pas HTTP.
-- **Automate** : composant logique qui agrège les données Modbus, construit le JSON nested v2 (Section 3), ajoute `ts` (epoch ms d'acquisition), et POSTe vers le proxy. C'est le **générateur du payload**.
-- **Proxy / buffer** : passthrough transparent entre l'automate et TB. Il forwarde la requête HTTP **sans la modifier** (même URL, même body, même query string, mêmes headers). Si TB est injoignable, le proxy bufferise la requête et la rejoue ultérieurement avec le `ts` que l'automate a déjà mis dans le body. Au retour, le proxy relaie la réponse TB telle quelle à l'automate.
+- **Automate** : agrège Modbus, construit le JSON nested v2 (Section 3) **avec un champ `dateTime` string** (`"JJ/MM/AA HH:MM:SS"`, formaté depuis le RTC local). POSTe vers le proxy à cadence **1/min** en régime normal (20 s en mode live, Section 5). L'automate **ne calcule pas** d'epoch ms — il connaît seulement le RTC local.
+- **Proxy** : parse `dateTime` en epoch ms et enveloppe en `{ts, values}` avant forward à TB. Le `ts` parsé devient le timestamp officiel de la ligne `ts_kv`. Si TB est injoignable, le proxy garde le sample en cache (déjà parsé) et flushe en POST individuels à la reconnexion (Section 9.2 P8). Pas de batch ni throttle (rate limit proxy → TB levé sur ce déploiement). **L'historique de la panne est intégralement préservé** : chaque sample atterrit dans `ts_kv` au `ts` d'acquisition d'origine.
 
-Le `ts` est fixé **par l'automate au moment de l'acquisition**, jamais par le proxy. Le proxy n'a pas à comprendre la sémantique du payload.
-
-Le proxy peut aussi répondre à l'automate sur la base d'un cache local (ex : 200 OK ack même si TB est temporairement down, pour que l'automate ne retente pas inutilement) ; le contrat exact proxy ↔ automate est détaillé en Section 9.5.
+Le timestamp d'acquisition est fixé **par l'automate via son RTC** (encodé en string `dateTime`), traduit en epoch ms **par le proxy** au premier passage. TB ne fait que stocker.
 
 ### Mesures historiques
 
@@ -74,25 +76,24 @@ Content-Type: application/json
 
 **Pas de query param spécial sur TB.** Le proxy gère `live` lui-même (Section 9.2) et l'injecte dans la réponse retournée à l'automate. Pour TB, c'est une requête `POST /telemetry` standard.
 
-Le body est wrappé pour permettre l'envoi d'un `ts` explicite (essentiel pour le rejeu après buffer) :
+Body envoyé par l'automate au proxy = body forwardé par le proxy à TB (passthrough pur). Payload nested directement, **sans wrapper** ni `ts` :
 
 ```json
 {
-  "ts": 1716902040000,
-  "values": {
-    "dateTime": "20/01/26 16:34:00",
-    "id": "2503200123",
-    "...": "structure nested ci-dessous"
-  }
+  "dateTime": "20/01/26 16:34:00",
+  "id": "2503200123",
+  "...": "structure nested ci-dessous"
 }
 ```
 
-- `ts` : epoch ms du moment de l'acquisition côté firmware/automate (pas le moment de l'envoi à TB). Permet à TB d'attribuer le bon timestamp même quand l'automate rejoue des samples bufferisés.
-- `values` : le payload nested complet décrit ci-dessous.
+- `dateTime` : string `"JJ/MM/AA HH:MM:SS"` du RTC automate. C'est le **seul timestamp** présent dans la requête.
+- Le reste du payload : structure nested décrite ci-dessous.
+
+C'est la **rule chain TB** (Section 4) qui parse `msg.dateTime` en epoch ms et override `metadata.ts` avant le Save Timeseries. TB stocke chaque ligne `ts_kv` au ts d'acquisition (string parsée), pas au ts de réception réseau.
 
 Pas de pretty-print. Body UTF-8.
 
-### Structure nested (`values`)
+### Structure nested
 
 ```yaml
 Chaufferie:
@@ -289,6 +290,8 @@ Device telemetry POST
 
 ### Script TBEL "split-attributes-from-payload"
 
+Le timestamp d'acquisition est déjà placé dans `metadata.ts` par TB (à partir du `ts` du body `{ts, values}` envoyé par le proxy, Section 9.2). Le script n'a qu'à faire le split attributs / payload.
+
 ```javascript
 // Paths à router en SERVER_SCOPE. Préfixe HPs.* applique sur chaque élément de l'array (longueur fixe 4).
 var ATTR_PATHS = [
@@ -441,7 +444,7 @@ Deux phases distinctes :
 | P0.1 | Développer le proxy (P1-P5, passthrough + buffer). P6/P7 (live discovery) peuvent être stubés : retourner toujours `{"shared":{"live":false}}` | Tests unitaires proxy |
 | P0.2 | Déployer le proxy sur infra cible (mini-PC LAN, raspberry, container cloud — TBD selon archi) | Health check proxy OK |
 | P0.3 | Reconfigurer 1 device pilote pour pointer vers `<proxy_host>` au lieu de TB direct | Lignes `ts_kv` arrivent toujours (format flat) sur ce device dans TB |
-| P0.4 | Tester scénario buffer : couper TB ~5 min, vérifier que les POST sont bufferisés côté proxy puis rejoués **en batch** à la reconnexion sans déclencher le rate limit | Lignes `ts_kv` apparaissent avec `ts` d'origine, aucun 429 dans les logs proxy |
+| P0.4 | Tester scénario buffer : couper TB ~5 min, vérifier que les POST sont bufferisés côté proxy puis rejoués à la reconnexion | Lignes `ts_kv` apparaissent avec `ts` d'origine (issu de `dateTime` parsé par le proxy) |
 | P0.5 | Rollout reconfiguration sur tous les devices du parc | Volume `ts_kv` quotidien inchangé vs avant proxy |
 | P0.6 | Activer P6/P7 (live discovery) dans le code proxy. Pas d'impact tant que les automates v2 n'existent pas. | GET attributes proxy→TB fonctionnel |
 
@@ -598,7 +601,7 @@ Content-Type: application/json
 
 `<proxy_host>` est l'adresse du proxy (LAN local typiquement). Le proxy forwarde vers `thingsboard.tsmart.fr` sans modification d'URL. Pas de query param spécial : le proxy injecte `live` dans la réponse à partir de sa propre connaissance.
 
-Body : objet wrappé avec `ts` explicite :
+Body wrappé `{ ts, values }` (Section 3) pour préserver le timestamp d'acquisition côté automate :
 
 ```json
 { "ts": 1716902040000, "values": { "...nested payload v2..." } }
@@ -659,12 +662,12 @@ Le proxy est responsable du maintien de `live`. L'automate ne fait jamais d'appe
 
 #### M8 — Retry réseau côté automate
 
-Le buffer offline est **délégué au proxy** (Section 9.2). L'automate fait du retry simple côté HTTP :
+Le cache offline est **délégué au proxy** (Section 9.2). L'automate fait du retry simple côté HTTP :
 
 - Sur timeout / erreur 5xx du proxy : max 3 retries avec backoff `5, 15, 60` s
 - Au-delà : abandon de ce sample (le proxy est censé absorber les pannes TB ; un échec persistant proxy → automate est probablement un problème de LAN à investiguer)
 
-L'automate n'a pas besoin de bufferiser lui-même : le proxy le fait pour TB.
+L'automate n'a pas besoin de cacher lui-même : le proxy le fait pour les samples destinés à TB.
 
 #### M9 — Compatibilité firmware ancien
 
@@ -674,39 +677,51 @@ Pendant la phase de rollout, certains devices ne sont pas encore reliés à l'au
 
 **Hors scope payload v2.** Les consignes sont modifiées par voie locale (écran physique du firmware, LAN, BLE). Le firmware remonte les setpoints courants à l'automate via Modbus ; l'automate les remonte dans le payload via les champs `[ATTR]`. TB **n'est jamais source de vérité** pour les setpoints.
 
-### 9.2 Proxy / buffer
+### 9.2 Proxy
 
-Composant intercalé entre l'automate et TB. Rôle unique : **passthrough HTTP avec buffer persistant**.
+Composant intercalé entre l'automate et TB. Rôle : **enrichir avec `ts` à partir de `dateTime` + relay HTTP + cache offline**.
 
-#### P1 — Transparence
+#### P1 — Transformation à chaque forward
 
-Le proxy ne modifie **jamais** :
-- L'URL forwardée (path, query string)
-- Les headers significatifs (`Content-Type`, `Content-Length`, auth si applicable)
-- Le body de la requête
-- Le body et le status code de la réponse
+Le proxy fait **deux transformations** sur chaque body reçu de l'automate :
 
-Du point de vue de l'automate : `<proxy_host>` est interchangeable avec `thingsboard.tsmart.fr`. Du point de vue de TB : la requête est indiscernable d'une requête directe de l'automate (sauf adresse IP source = proxy).
+1. **Parse `dateTime`** (`"JJ/MM/AA HH:MM:SS"`) en epoch ms. Pseudo-code Python :
+   ```python
+   from datetime import datetime
+   ts_ms = int(datetime.strptime(body["dateTime"], "%d/%m/%y %H:%M:%S").timestamp() * 1000)
+   ```
+   (équivalents Go `time.Parse("02/01/06 15:04:05", ...)`, Node `Date.parse(...)`, etc.)
+2. **Wrap en `{ts, values}`** : nouveau body =
+   ```json
+   { "ts": <ts_ms>, "values": <body_original_intact> }
+   ```
+
+URL / headers / méthode HTTP : **inchangés**. Le proxy ne touche pas à `Content-Type`, l'auth, l'endpoint TB.
+
+Du point de vue de TB : la requête est une POST telemetry standard avec wrapper `{ts, values}`. TB stocke la ligne `ts_kv` au `ts` parsé.
 
 #### P2 — Forwarding nominal
 
 Quand TB est joignable :
+1. Receive POST de l'automate (body bare avec `dateTime` string)
+2. Parse + wrap (P1)
+3. Forward HTTPS à TB avec le body wrappé
+4. Receive response TB
+5. Forward response à l'automate (réponse contient `{"shared":{"live":...}}` géré par P7)
+
+Latence ajoutée : ~1 ms de parsing + 1 hop TCP.
+
+#### P3 — Comportement cache hors-ligne
+
+Quand TB est injoignable (timeout, 5xx, erreur DNS) :
 1. Receive POST de l'automate
-2. Forward HTTPS à TB avec le même body/URL/headers
-3. Receive response TB (typiquement 200 + body `{"shared":{"live":...}}` ou 200 vide)
-4. Forward response à l'automate
-
-Latence ajoutée : 1 hop TCP + parse/forward (~ms en LAN, ~10 ms en WAN).
-
-#### P3 — Comportement buffering
-
-Quand TB est injoignable (timeout, 5xx, erreur DNS, etc.) :
-1. Receive POST de l'automate
-2. **Persister** le body sur disque local du proxy (uniquement le body JSON `{ts, values}`, pas l'URL — l'URL et le token sont déduits du device)
-3. Répondre 200 OK à l'automate avec un body neutre `{"shared":{"live":false}}` — l'automate reste en cadence normale (60 s)
-4. En tâche de fond, retenter le forward vers TB avec backoff exponentiel (60 s, 120 s, 240 s, max 600 s)
-5. À la reconnexion TB : rejouer les samples bufferisés avec la stratégie batch + throttle de P8
-6. Si une requête rejouée échoue (TB répond 4xx — payload invalide par exemple) : log et drop ce sample, ne bloque pas la file
+2. Effectuer la transformation P1 immédiatement (parse + wrap) — le `ts` est figé dès l'arrivée
+3. **Persister** le body wrappé `{ts, values}` sur disque local du proxy (FIFO)
+4. Répondre 200 OK à l'automate avec body neutre `{"shared":{"live":false}}` — l'automate reste en cadence normale 60 s
+5. En tâche de fond, retenter `GET https://thingsboard.tsmart.fr/` (healthcheck léger) avec backoff exponentiel (60 s, 120 s, 240 s, max 600 s)
+6. À la reconnexion TB : flusher les samples cachés en POST individuels FIFO (Section P8). Pas de batch, pas de throttle (le rate limit entre proxy et TB est levé sur ce déploiement)
+7. **Historique préservé** : 1 h de panne = 60 samples bufferisés = 60 lignes `ts_kv` distinctes à leurs `ts` d'acquisition respectifs après flush
+8. Si une requête flushée échoue (TB répond 4xx — payload invalide) : log et drop ce sample, ne bloque pas la file. Si TB répond 5xx au milieu du flush, retourner à l'état déconnecté et garder le reste du cache pour le prochain cycle
 
 #### P4 — Capacité buffer
 
@@ -742,42 +757,31 @@ Proxy ─► Automate { "shared": { "live": cache[token].live } }
 
 Au démarrage froid (cache vide) : `cache[token].live = false` par défaut, premier GET au prochain POST initialise.
 
-#### P8 — Rejeu rate-limit-aware (batch + throttle)
+#### P8 — Flush du cache
 
-TB applique des rate limits sur la télémétrie au niveau tenant et device (paramètres `transportTelemetryMsgRateLimit`, `transportDeviceMsgRateLimit` du tenant profile, ~1 msg/s/device sur ce déploiement). Un rejeu naïf après reconnexion saturerait TB et beaucoup de samples seraient rejetés en 429.
+À la reconnexion TB, le proxy envoie chaque sample du cache en **POST individuel** dans l'ordre FIFO :
 
-**Stratégie obligatoire** :
+```
+for each cached_wrapped_body in cache[token]:
+    response = POST https://thingsboard.tsmart.fr/api/v1/{token}/telemetry
+               body = cached_wrapped_body   # déjà {ts, values}
+    if response.status >= 500:
+        # TB est retombé, on garde le reste pour plus tard
+        break
+    if response.status >= 400:
+        # payload mal formé sur ce sample, on log et on continue
+        log_drop(cached_wrapped_body)
+    pop_from_cache()
+```
 
-1. **Batch endpoint TB**. À la reconnexion, le proxy regroupe les samples bufferisés en arrays JSON et POST chacun en **un seul appel** :
+Pas de batch endpoint, pas de throttle : le rate limit entre proxy et TB est levé sur ce déploiement. TB encaisse N POST en rafale, chacun écrit 1 ligne `ts_kv` à son `ts` d'acquisition.
 
-   ```
-   POST /api/v1/{token}/telemetry
-   Content-Type: application/json
+**Calcul volume** :
+- Pire cas pratique : 24 h de panne × 1 device à cadence 1/min = **1 440 samples** = 1 440 POST séquentiels = ~1 minute de drain par device
+- 30 devices reconnectent en même temps = 30 drains parallèles, chacun ~1 min
+- Plus de 7 jours de panne = 10 080 samples = ~7 min de drain par device. Pas un cas opérationnel attendu.
 
-   [
-     { "ts": 1716902040000, "values": { ... payload v2 ... } },
-     { "ts": 1716902100000, "values": { ... payload v2 ... } },
-     { "ts": 1716902160000, "values": { ... payload v2 ... } },
-     ...
-   ]
-   ```
-
-   TB accepte nativement ce format (array de `{ts, values}`) et persiste chaque élément en ligne `ts_kv` distincte. Chaque array compte pour **1 message** vis-à-vis du rate limit.
-
-2. **Taille de batch**. Recommandé : **100 samples par POST**, soit ~300 KB de body (sous la limite TB par défaut de 10 MB). Un device 24h bufferisé = ~1 440 samples = 15 batches.
-
-3. **Throttle inter-batch**. Le proxy attend ≥ 1 s entre 2 POST batchés vers TB (par device), pour rester sous le rate limit même au pire cas.
-
-4. **Détection 429 / 4xx**. Si TB répond 429 (Too Many Requests) ou un 4xx générique, le proxy :
-   - Multiplie le délai inter-batch par 2 (max 30 s)
-   - Retente le même batch après le délai
-   - Restaure le délai à 1 s après 3 succès consécutifs
-
-5. **Priorité au temps réel**. Pendant le drainage du buffer, les nouveaux POSTs de l'automate arrivent en parallèle. Le proxy doit les **prioriser** : forwarder immédiatement (en single sample) le nouveau POST, et continuer le drain en arrière-plan. L'automate ne doit pas attendre que le buffer se vide pour voir ses nouveaux samples enregistrés.
-
-6. **Volume calcul**. 24 h de buffer × 1 device = 1 440 samples × 3 KB ≈ 4.3 MB sur disque proxy. Drainage à 1 batch/s × 100 samples = 14 s pour ce device. 30 devices simultanément en drain = 30 batches en parallèle × 1 s entre batches = 14 × 30 s ≈ 7 min de drainage pour vider 24 h sur 30 devices. Acceptable.
-
-7. **Ordre FIFO**. Les samples sont rejoués dans l'ordre de leur `ts`, mais TB stocke chaque sample à son propre `ts` ; l'ordre d'arrivée à TB n'a aucun impact sur la timeline finale dans `ts_kv`.
+**Ordre FIFO** préservé dans le drain, mais TB stocke chaque sample à son `ts` propre — l'ordre d'arrivée à TB n'a aucun impact sur la timeline finale dans `ts_kv`.
 
 ## 10. Inventaire composants
 
@@ -843,8 +847,8 @@ Le projet est considéré terminé quand :
 - Aucune ligne `ts_kv` flat n'est plus écrite (hors `evt_*`) après J+30 du dernier OTA
 - Les 33 attributs SERVER_SCOPE sont présents sur chaque device : 6 (métadonnées root, incluant nHp) + 9 (consignes heat) + 1 (dhw.tSet) + 5 (unités calo) + 12 (versions par HP × 4 fixe)
 - Le proxy retourne dans la réponse à l'automate `{"shared":{"live":<bool>}}` reflétant l'état courant en TB ; pendant une indisponibilité TB, retourne `{"shared":{"live":false}}` (mode normal)
-- L'automate POSTe avec `ts` explicite vers le proxy ; les samples rejoués par le proxy après reconnexion TB apparaissent dans `ts_kv` à leur `ts` d'origine et non au timestamp de réception
-- Le rejeu après reconnexion utilise le format batch array de TB et un throttle ≥ 1 s entre batches par device ; aucun 429 dans les logs lors d'un drainage de 24 h × 30 devices
+- L'automate POSTe au proxy avec body bare contenant `dateTime` en string (pas de `ts` epoch). Le proxy parse `dateTime` et wrap en `{ts, values}` avant forward à TB. Les samples (live ou rejoués après reconnexion) apparaissent dans `ts_kv` à leur `ts` d'acquisition d'origine, pas au timestamp de réception réseau
+- Le rejeu après reconnexion envoie chaque sample en POST individuel sans batch ni throttle ; toutes les lignes `ts_kv` historiques sont écrites correctement
 - Le state `default` et `donnees_HP1` affichent correctement les valeurs depuis `pac_v2` sur les 6 widgets TDUO refactorisés
 - Le mode live est observable : cadence passe à 20 s quand un client ouvre `default` ou `donnees_HP1`, retombe à 60 s 3 min après la fermeture
 - Le state `historique` affiche un chart 1 an en < 3 s
