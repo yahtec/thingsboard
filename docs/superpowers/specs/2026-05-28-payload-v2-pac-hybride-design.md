@@ -10,20 +10,22 @@
 ### Architecture cible
 
 ```
-[Firmware PAC]  ──Modbus / lien local──►  [Automate middleware]  ──HTTPS──►  [ThingsBoard]
-                                                  │
-                                                  └─ Buffer local si TB indisponible
-                                                     (les samples sont rejoués avec leur ts d'origine
-                                                      à la reconnexion)
+[Firmware PAC]  ──Modbus──►  [Automate]  ──HTTPS──►  [Proxy / buffer]  ──HTTPS──►  [ThingsBoard]
+                                                            │
+                                                            └─ Buffer local si TB indisponible
+                                                               (rejoue les POSTs avec leur ts d'origine
+                                                                à la reconnexion)
 ```
 
-Une nouvelle couche **automate middleware** s'intercale entre les PAC et TB. Son rôle :
-- agréger les données firmware (Modbus probablement)
-- construire le JSON nested v2 ci-dessous
-- POST vers TB en ajoutant explicitement `ts` (epoch ms) pour que TB attribue le bon timestamp même en rejeu après buffer
-- bufferiser localement si TB est down
+Trois couches distinctes :
 
-L'**automate** est donc le client HTTP de TB pour ce projet. Le firmware PAC lui-même ne parle plus HTTP.
+- **Firmware PAC** : acquisition métier, expose ses données en Modbus local. Ne parle pas HTTP.
+- **Automate** : composant logique qui agrège les données Modbus, construit le JSON nested v2 (Section 3), ajoute `ts` (epoch ms d'acquisition), et POSTe vers le proxy. C'est le **générateur du payload**.
+- **Proxy / buffer** : passthrough transparent entre l'automate et TB. Il forwarde la requête HTTP **sans la modifier** (même URL, même body, même query string, mêmes headers). Si TB est injoignable, le proxy bufferise la requête et la rejoue ultérieurement avec le `ts` que l'automate a déjà mis dans le body. Au retour, le proxy relaie la réponse TB telle quelle à l'automate.
+
+Le `ts` est fixé **par l'automate au moment de l'acquisition**, jamais par le proxy. Le proxy n'a pas à comprendre la sémantique du payload.
+
+Le proxy peut aussi répondre à l'automate sur la base d'un cache local (ex : 200 OK ack même si TB est temporairement down, pour que l'automate ne retente pas inutilement) ; le contrat exact proxy ↔ automate est détaillé en Section 9.5.
 
 ### Mesures historiques
 
@@ -112,7 +114,11 @@ Chaufferie:
     rpm:  4555                     # rpm vitesse
     time: 4000                     # h temps cumulé ON
   pump2M:                          # pompe primaire 2 (idem pump1M)
-    pwr: 0; dP: 0; qe: 0; rpm: 0; time: 4000
+    pwr: 0
+    dP: 0
+    qe: 0
+    rpm: 0
+    time: 4000
 
   dhw:                              # bloc ECS, toujours présent (à 0 si modType ne contient pas DHW)
     tOut:    60.2                   # °C sortie ECS
@@ -554,18 +560,22 @@ echo "$(date -Iseconds) — done" >> "${LOG}"
 
 Pour 60 PACs il faudra envisager le SBS resize Scaleway (voir [project-thingsboard-storage-optim]).
 
-## 9. Exigences automate middleware
+## 9. Exigences automate + proxy
 
-L'automate middleware est le composant client HTTP de TB pour ce projet. Il agrège les données firmware (Modbus local typiquement) et POST vers TB.
+### 9.1 Automate (générateur du payload)
 
-### M1 — Endpoint et format
+L'automate agrège les données firmware (Modbus local) et POSTe vers le proxy. Du point de vue de l'automate, le proxy se comporte comme TB ; il n'y a aucun ajustement à faire dans le code automate du fait du proxy.
+
+#### M1 — Endpoint et format
 
 ```
-POST https://thingsboard.tsmart.fr/api/v1/{token}/telemetry?withSharedKeys=live
+POST https://<proxy_host>/api/v1/{token}/telemetry?withSharedKeys=live
 Content-Type: application/json
 ```
 
-Le query param `?withSharedKeys=live` est essentiel : il déclenche le renvoi de `live` dans la réponse (Section 11).
+`<proxy_host>` est l'adresse du proxy (LAN local typiquement). Le proxy forwarde vers `thingsboard.tsmart.fr` sans modification.
+
+Le query param `?withSharedKeys=live` est essentiel : il déclenche le renvoi de `live` dans la réponse (Section 11). Le proxy le préserve tel quel.
 
 Body : objet wrappé avec `ts` explicite :
 
@@ -573,13 +583,13 @@ Body : objet wrappé avec `ts` explicite :
 { "ts": 1716902040000, "values": { "...nested payload v2..." } }
 ```
 
-### M2 — Cadence
+#### M2 — Cadence
 
 - **Mode normal** : 1 POST / 60 s
 - **Mode live** : 1 POST / 20 s
 - Cadence ajustée à chaque cycle à partir du `shared.live` lu dans la réponse du POST précédent
 
-### M3 — Format `dateTime`
+#### M3 — Format `dateTime`
 
 Field `values.dateTime` = string `"JJ/MM/AA HH:MM:SS"` formatée à partir du RTC local de l'automate ou du firmware (24h, slash, espace, deux-points, année sur 2 chiffres). Pas d'offset timezone.
 
@@ -591,7 +601,7 @@ sprintf(dateTime, "%02d/%02d/%02d %02d:%02d:%02d",
         rtc.hour, rtc.minute, rtc.second);
 ```
 
-### M4 — Bloc HPs : longueur fixe 4
+#### M4 — Bloc HPs : longueur fixe 4
 
 `values.HPs` est **toujours un array de longueur 4**. `values.nHp` indique combien sont réellement actifs. Les indices `[nHp .. 3]` doivent contenir des slots avec valeurs neutres :
 
@@ -601,11 +611,11 @@ sprintf(dateTime, "%02d/%02d/%02d %02d:%02d:%02d",
 
 Avantage : pas de gestion d'array dynamique côté automate, parsing trivial côté widget.
 
-### M5 — Blocs `heat` et `dhw`
+#### M5 — Blocs `heat` et `dhw`
 
 Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
 
-### M6 — Mode live : embed dans la réponse POST
+#### M6 — Mode live : embed dans la réponse POST
 
 À chaque POST telemetry avec `?withSharedKeys=live`, l'automate lit le body de réponse :
 
@@ -618,7 +628,7 @@ Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
 
 **Pas de GET attributes séparé.**
 
-### M7 — Encodage
+#### M7 — Encodage
 
 - UTF-8 sans BOM
 - Floats max 1 décimale (sauf strings de version `"1.04"`)
@@ -626,30 +636,72 @@ Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
 - Pas de retours ligne dans le JSON
 - Content-Length set correctement
 
-### M8 — Buffer offline et rejeu
+#### M8 — Retry réseau côté automate
 
-C'est le **rôle principal de l'automate middleware**. Pendant une indisponibilité TB :
+Le buffer offline est **délégué au proxy** (Section 9.2). L'automate fait du retry simple côté HTTP :
 
-- L'automate continue d'acquérir les données firmware à cadence normale (60 s) ou la cadence courante
-- Chaque sample est stocké localement avec son `ts` (epoch ms acquisition) dans un buffer FIFO persistant (RAM + FRAM/SSD selon hardware automate)
-- Capacité min recommandée : 24 h × 60 (cadence 1/min) = 1 440 samples × ~3 KB = ~4 MB
+- Sur timeout / erreur 5xx du proxy : max 3 retries avec backoff `5, 15, 60` s
+- Au-delà : abandon de ce sample (le proxy est censé absorber les pannes TB ; un échec persistant proxy → automate est probablement un problème de LAN à investiguer)
 
-À la reconnexion TB :
+L'automate n'a pas besoin de bufferiser lui-même : le proxy le fait pour TB.
 
-- POST chaque sample en séquence, avec son `ts` d'origine
-- TB attribue chaque ligne `ts_kv` à `values.ts` (pas au timestamp de réception)
-- Le buffer se vide progressivement
-- En parallèle, l'automate continue d'acquérir et de POST les nouveaux samples en temps réel (ordre peut être mélangé, TB s'en moque)
-
-Retry sur échec individuel : max 3 fois avec backoff `5, 15, 60` s, puis le sample reste dans le buffer et sera retenté au cycle suivant.
-
-### M9 — Compatibilité firmware ancien
+#### M9 — Compatibilité firmware ancien
 
 Pendant la phase de rollout, certains devices ne sont pas encore reliés à l'automate middleware et POSTent directement en format flat ancien. La rule chain TB accepte les deux formats (Section 4) sans coordination supplémentaire.
 
-### M10 — Modification setpoints
+#### M10 — Modification setpoints
 
 **Hors scope payload v2.** Les consignes sont modifiées par voie locale (écran physique du firmware, LAN, BLE). Le firmware remonte les setpoints courants à l'automate via Modbus ; l'automate les remonte dans le payload via les champs `[ATTR]`. TB **n'est jamais source de vérité** pour les setpoints.
+
+### 9.2 Proxy / buffer
+
+Composant intercalé entre l'automate et TB. Rôle unique : **passthrough HTTP avec buffer persistant**.
+
+#### P1 — Transparence
+
+Le proxy ne modifie **jamais** :
+- L'URL forwardée (path, query string)
+- Les headers significatifs (`Content-Type`, `Content-Length`, auth si applicable)
+- Le body de la requête
+- Le body et le status code de la réponse
+
+Du point de vue de l'automate : `<proxy_host>` est interchangeable avec `thingsboard.tsmart.fr`. Du point de vue de TB : la requête est indiscernable d'une requête directe de l'automate (sauf adresse IP source = proxy).
+
+#### P2 — Forwarding nominal
+
+Quand TB est joignable :
+1. Receive POST de l'automate
+2. Forward HTTPS à TB avec le même body/URL/headers
+3. Receive response TB (typiquement 200 + body `{"shared":{"live":...}}` ou 200 vide)
+4. Forward response à l'automate
+
+Latence ajoutée : 1 hop TCP + parse/forward (~ms en LAN, ~10 ms en WAN).
+
+#### P3 — Comportement buffering
+
+Quand TB est injoignable (timeout, 5xx, erreur DNS, etc.) :
+1. Receive POST de l'automate
+2. **Persister** la requête (méthode + URL + headers + body) sur disque local du proxy
+3. Répondre 200 OK à l'automate avec un body neutre (ex : `{"shared":{"live":false}}`) — par défaut mode normal côté automate
+4. En tâche de fond, retenter le forward vers TB avec backoff exponentiel (60 s, 120 s, 240 s, max 600 s)
+5. À la reconnexion TB : rejouer les requêtes bufferisées dans l'ordre FIFO, avec leur body d'origine (le `ts` interne au JSON est préservé → TB attribue la bonne ligne `ts_kv`)
+6. Si une requête rejouée échoue (TB répond 4xx — payload invalide par exemple) : log et drop, ne bloque pas la file
+
+#### P4 — Capacité buffer
+
+Minimum recommandé : **24 h de samples** = 1 440 × ~3 KB = ~5 MB. Le proxy est typiquement sur un mini-PC LAN ou un raspberry, donc dimensionnable beaucoup plus large (Go disponibles). Politique d'éviction si plein : FIFO drop des plus anciens.
+
+#### P5 — Idempotence et déduplication
+
+TB **n'a pas** de mécanisme natif de déduplication sur `ts`. Si le proxy rejoue 2× la même requête (ex : redémarrage du proxy avec un sample partiellement persisté), TB écrira **2 lignes** dans `ts_kv` avec le même `ts`. Conséquence : valeur dupliquée dans les charts.
+
+Mitigation : le proxy maintient un compteur de séquence ou un hash du body pour éviter le re-POST d'une même requête au sein d'une session. Détail d'implémentation, hors spec.
+
+#### P6 — Réponse `shared.live` quand TB est down
+
+Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côté TB. Deux options :
+- **Conservative** : répondre toujours `{"shared":{"live":false}}` → l'automate reste en cadence 60 s (mode normal) tant que la connexion TB n'est pas rétablie. Recommandé.
+- **Cache** : mémoriser la dernière valeur reçue de TB et la rejouer pendant le buffering. Permet le mode live à fonctionner brièvement après une déconnexion. Plus complexe, gain mineur.
 
 ## 10. Inventaire composants
 
@@ -670,7 +722,8 @@ Pendant la phase de rollout, certains devices ne sont pas encore reliés à l'au
 | Widget `usage_pie` (custom JS) | TB widget | Refactor si lit du flat, sinon supprimer |
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
-| Automate middleware (nouveau composant) | Code automate, repo séparé | **Développer** (Section 9) |
+| Automate (générateur payload v2) | Code automate, repo séparé | **Développer** (Section 9.1, M1-M10) |
+| Proxy / buffer | Code séparé (mini-PC LAN, raspberry, ou container) | **Développer** (Section 9.2, P1-P6) |
 | Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (parle uniquement Modbus à l'automate maintenant) |
 
 ### Intouchés
