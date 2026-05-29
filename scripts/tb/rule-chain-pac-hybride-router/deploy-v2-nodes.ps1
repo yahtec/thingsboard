@@ -61,7 +61,7 @@ if (-not (Test-Path $TbelScriptPath)) {
   Write-Error "TBEL script not found at $TbelScriptPath"
   exit 1
 }
-$tbelScript = Get-Content $TbelScriptPath -Raw
+$tbelScript = [System.IO.File]::ReadAllText((Resolve-Path $TbelScriptPath).Path, [System.Text.Encoding]::UTF8)
 Write-Host "TBEL script loaded ($($tbelScript.Length) chars)"
 
 # 3. Definition of the 5 new nodes
@@ -134,19 +134,21 @@ $NewNodes = @(
   }
 )
 
-# 4. Locate 'mark active' source node
-$markActiveIdx = -1
+# 4. Locate source node : 'save TS (per-id device)' (NOT 'mark active' which transforms msg)
+# IMPORTANT : 'mark active' rewrites msg to {active:true, lastActivityTime:...} which loses the payload.
+# 'save TS (per-id device)' is a Save Timeseries node which doesn't transform the msg — payload preserved.
+$srcIdx = -1
 for ($i = 0; $i -lt $meta.nodes.Count; $i++) {
-  if ($meta.nodes[$i].name -eq "mark active") {
-    $markActiveIdx = $i
+  if ($meta.nodes[$i].name -eq "save TS (per-id device)") {
+    $srcIdx = $i
     break
   }
 }
-if ($markActiveIdx -lt 0) {
-  Write-Error "'mark active' node not found in current rule chain"
+if ($srcIdx -lt 0) {
+  Write-Error "'save TS (per-id device)' node not found in current rule chain"
   exit 1
 }
-Write-Host "'mark active' node found at index $markActiveIdx"
+Write-Host "'save TS (per-id device)' node found at index $srcIdx (source of new branch)"
 
 # 5. For each new node : update if name exists, append otherwise (idempotent)
 Write-Host "`n=== Step 4: Add or update the 5 new nodes ==="
@@ -184,7 +186,7 @@ $saveTsIdx = Get-NodeIdx "Save TS pac_v2"
 # 7. Connections to add (skip if already present)
 Write-Host "`n=== Step 5: Add connections ==="
 $NewConnections = @(
-  @{fromIndex = $markActiveIdx; toIndex = $filterIdx;    type = "Success"        },
+  @{fromIndex = $srcIdx;        toIndex = $filterIdx;    type = "Success"        },
   @{fromIndex = $filterIdx;     toIndex = $tbelIdx;      type = "True"           },
   @{fromIndex = $tbelIdx;       toIndex = $switchIdx;    type = "Success"        },
   @{fromIndex = $switchIdx;     toIndex = $saveAttrsIdx; type = "Post attributes"},
@@ -206,10 +208,12 @@ foreach ($conn in $NewConnections) {
   }
 }
 
-# 8. POST updated metadata
+# 8. POST updated metadata (UTF-8 byte encoded to avoid PowerShell re-encoding)
 Write-Host "`n=== Step 6: POST updated rule chain metadata ==="
 $body = $meta | ConvertTo-Json -Depth 100
-$result = Invoke-RestMethod -Uri "$BaseUrl/api/ruleChain/metadata" -Method Post -Body $body -ContentType "application/json" -Headers $Headers
+$bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+Write-Host "Body size : $($body.Length) chars / $($bodyBytes.Length) bytes UTF-8"
+$result = Invoke-RestMethod -Uri "$BaseUrl/api/ruleChain/metadata" -Method Post -Body $bodyBytes -ContentType "application/json; charset=utf-8" -Headers $Headers -TimeoutSec 60
 Write-Host "Rule chain updated. New nodes count : $($result.nodes.Count) (was $($meta.nodes.Count - $NewNodes.Count))"
 
 Write-Host "`n=== DONE ==="

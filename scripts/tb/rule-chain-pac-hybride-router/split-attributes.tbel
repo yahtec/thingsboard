@@ -23,9 +23,10 @@ var ATTR_PATHS = [
 ];
 
 var attrs = {};
-var payload = clone(msg);
+var payload = JSON.parse(JSON.stringify(msg));
 
-foreach (path : ATTR_PATHS) {
+for (var pi = 0; pi < ATTR_PATHS.length; pi++) {
+  var path = ATTR_PATHS[pi];
   var parts = path.split(".");
 
   // HPs.* case : applique sur chaque element du array (longueur fixe 4)
@@ -35,7 +36,7 @@ foreach (path : ATTR_PATHS) {
       for (var i = 0; i < payload.HPs.length; i++) {
         if (payload.HPs[i][leaf] != null) {
           attrs["HP" + (i+1) + "_" + leaf] = payload.HPs[i][leaf];
-          payload.HPs[i].remove(leaf);
+          delete payload.HPs[i][leaf];
         }
       }
     }
@@ -53,13 +54,17 @@ foreach (path : ATTR_PATHS) {
   var leafName = parts[parts.length - 1];
   if (ref[leafName] != null) {
     attrs[parts.join("_")] = ref[leafName];   // heat.calo.qeU -> heat_calo_qeU
-    ref.remove(leafName);
+    delete ref[leafName];
   }
 }
 
+var attrsMeta = {};
+for (var mk in metadata) { attrsMeta[mk] = metadata[mk]; }
+attrsMeta.scope = "SERVER_SCOPE";
+
 return [
   { msg: attrs,
-    metadata: metadata.merge({"scope": "SERVER_SCOPE"}),
+    metadata: attrsMeta,
     msgType: "POST_ATTRIBUTES_REQUEST" },
   { msg: { pac_v2: payload },
     metadata: metadata,
