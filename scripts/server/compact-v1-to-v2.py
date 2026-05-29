@@ -157,12 +157,10 @@ def build_pac_v2(flat_keys):
 
 
 @contextmanager
-def get_conn(host="localhost", dbname="thingsboard", user="postgres"):
-    """psycopg2 connection avec RealDictCursor par defaut."""
+def get_conn(dbname="thingsboard"):
+    """psycopg2 connection (Unix socket peer auth — script doit tourner en sudo -u postgres)."""
     conn = psycopg2.connect(
-        host=host,
         dbname=dbname,
-        user=user,
         cursor_factory=psycopg2.extras.RealDictCursor,
     )
     try:
