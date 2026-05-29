@@ -93,197 +93,407 @@ Ce document spécifie **le contrat firmware → TB**, **le routing rule chain**,
 - Pré-agrégation des cumuls `hKwh`, `cKwh`, `qeTot` (déjà cumulatifs par nature)
 - Mise en place d'un SHARED_SCOPE pour les setpoints (firmware = master, modifs hors TB)
 
-## 3. Schéma v2 — contrat firmware → TB
+## 3. Schéma v2 — contrat automate → proxy → TB
 
-### Endpoint
+> **Statut** : VALIDÉ vérité terrain le 2026-05-29 à partir des payloads réels (automate `2602000001` et `2602000002`) et des décisions utilisateur tranchées en session. Source archivée : `_draft-section3-from-workflow.md` (workflow `wf_6d97a358-298`, 60+ adversarial issues résolues).
 
-L'automate POSTe vers le proxy ; le proxy forwarde à TB sans modification d'URL :
+### 3.1 Endpoint et flux de transport
 
 ```
-POST <proxy_host>/api/v1/{deviceAccessToken}/telemetry
+POST https://bootloader.tsmart.fr/proxy/api/v1/telemetry/tduo
 Content-Type: application/json
 ```
 
-**Pas de query param spécial sur TB.** Le proxy gère `live` lui-même (Section 9.2) et l'injecte dans la réponse retournée à l'automate. Pour TB, c'est une requête `POST /telemetry` standard.
+- L'automate POSTe un **body bare** (JSON nu) au proxy.
+- Le proxy (`telemetry-proxy 0.1.0` sur `10.77.0.74`, toggle `tb_format=true` actif) :
+  1. Parse `dateTime` UTC (format `dd/MM/yy HH:mm:ss`, Rust chrono)
+  2. Convertit en epoch ms
+  3. Wrap en `{ts, values: <body>}`
+  4. Forwarde vers TB (`http://127.0.0.1:8080/api/v1/yDq5GxcbQpuJVgKYRiWu/telemetry`, token du device dispatcher `heatPumpHybride`)
+- Le device `heatPumpHybride` (profile `default`) joue le rôle de **dispatcher** : sa rule chain lit `id` du body et redispatche le payload vers le vrai device PAC correspondant (profile `pac hybride`, ex `2602000001`).
+- TB stocke en `ts_kv` une ligne par sous-clé après flatten dans la rule chain.
 
-Body envoyé par l'automate au proxy = body forwardé par le proxy à TB (passthrough pur). Payload nested directement, **sans wrapper** ni `ts` :
+### 3.2 Body format
+
+#### 3.2.1 Body bare (automate → proxy)
+
+Capture réelle (2026-05-29) d'un POST de l'automate `2602000001` (type=0, sans module) :
 
 ```json
 {
-  "dateTime": "20/01/26 16:34:00",
-  "id": "2503200123",
-  "...": "structure nested ci-dessous"
+  "id": "2602000001",
+  "rel": 1.4,
+  "type": 0,
+  "nHp": 1,
+  "tExt": 33.4,
+  "TinM": 6.9,
+  "press": 2,
+  "commCm2": 0,
+  "relCm2": 0,
+  "date": "29/05/26",
+  "time": "13:05:37",
+  "dateTime": "29/05/26 11:05:38",
+  "HPs": [ { /* HP1 actif */ }, { /* slot inactif */ }, { /* slot inactif */ }, { /* slot inactif */ } ],
+  "heat":   { /* … 14 keys + calo{12} */ },
+  "dhw":    { /* … 5 keys + 4 × pump{5} */ },
+  "caloM":  { /* … 12 keys */ },
+  "pump1M": { /* … 5 keys */ },
+  "pump2M": { /* … 5 keys */ }
 }
 ```
 
-- `dateTime` : string `"JJ/MM/AA HH:MM:SS"` du RTC automate. C'est le **seul timestamp** présent dans la requête.
-- Le reste du payload : structure nested décrite ci-dessous.
+#### 3.2.2 Body wrappé (proxy → TB)
 
-C'est la **rule chain TB** (Section 4) qui parse `msg.dateTime` en epoch ms et override `metadata.ts` avant le Save Timeseries. TB stocke chaque ligne `ts_kv` au ts d'acquisition (string parsée), pas au ts de réception réseau.
-
-Pas de pretty-print. Body UTF-8.
-
-### Structure nested
-
-```yaml
-Chaufferie:
-  dateTime: "20/01/26 16:34:00"   # JJ/MM/AA HH:MM:SS (24h, slash, espace, deux-points)
-  id:        "2503200123"         # [ATTR] série device
-  rel:       "1.04"               # [ATTR] version programme CPU principal
-  modType:   3                     # [ATTR] enum 0..3
-                                   #   0 = no module, 1 = heating, 2 = dhw, 3 = heating + dhw
-  nHp:       2                     # [ATTR] nombre de HPs réellement présents (1..4)
-                                   #   HPs[] est toujours de longueur 4, les indices >= nHp ont des slots à 0 / "" / "0.00"
-  tExt:      5.7                   # °C température extérieure
-  tInM:      60.1                  # °C température collecteur primaire
-  press:     1.7                   # bar pression hydraulique primaire
-  commCm2:   1                     # [ATTR] enum 0..1 comm carte CM2
-  relCm2:    "1.02"                # [ATTR] version programme CM2
-
-  pump1M:                          # pompe primaire 1
-    pwr:  200                      # W puissance électrique
-    dP:   7.5                      # mCE delta pression
-    qe:   3.0                      # m³/h débit eau
-    rpm:  4555                     # rpm vitesse
-    time: 4000                     # h temps cumulé ON
-  pump2M:                          # pompe primaire 2 (idem pump1M)
-    pwr: 0
-    dP: 0
-    qe: 0
-    rpm: 0
-    time: 4000
-
-  dhw:                              # bloc ECS, toujours présent (à 0 si modType ne contient pas DHW)
-    tOut:    60.2                   # °C sortie ECS
-    tIn:     45.2                   # °C entrée ECS
-    tTank:   59.2                   # °C ballon ECS
-    tSet:    60                     # [ATTR] °C consigne ECS
-    posV3V:  100                    # % position V3V ECS primaire
-    pump1:   { pwr, dP, qe, rpm, time }    # secondaire ECS pompe 1
-    pump2:   { pwr, dP, qe, rpm, time }
-    pump3:   { pwr, dP, qe, rpm, time }
-    pump4:   { pwr, dP, qe, rpm, time }
-
-  heat:                             # bloc chauffage, toujours présent (à 0 si modType ne contient pas heating)
-    tOut:        40.2               # °C sortie chauffage
-    tIn:         33.2               # °C retour chauffage
-    posV3V:      100                # % position V3V chauffage
-    qeCalc:      5000               # l/h débit estimé
-    slope:       1.80               # [ATTR] pente loi de chauffe
-    foot:        20                 # [ATTR] °C pied de pente
-    tMax:        85                 # [ATTR] °C consigne max
-    dayBgEte:    31                 # [ATTR] JJ début été
-    monthBgEte:  5                  # [ATTR] MM début été
-    dayEndEte:   31                 # [ATTR] JJ fin été
-    monthEndEte: 9                  # [ATTR] MM fin été
-    tCut:        20                 # [ATTR] °C température extérieure arrêt chauffage
-    tRes:        17                 # [ATTR] °C température extérieure restart chauffage
-    calo:                           # calorimètre Modbus
-      tIn:    55.85                 # °C entrée
-      tRet:   44.05                 # °C retour
-      qe:     11578                 # débit (unité = qeU)
-      qeU:    2875                  # [ATTR] code unité débit (2875 = l/h)
-      qeTot:  456789                # cumul débit (unité = qeTotU)
-      qeTotU: 3092                  # [ATTR] code unité cumul (3092 = 0.01 m³)
-      pwr:    250                   # puissance (unité = pwrU)
-      pwrU:   2860                  # [ATTR] code unité puissance (2860 = 10 W)
-      hKwh:   123456                # énergie chaud (unité = hKwhU)
-      hKwhU:  3078                  # [ATTR] code unité (3078 = kWh, 3079 = 10 kWh)
-      cKwh:   654321                # énergie froid (unité = cKwhU)
-      cKwhU:  3079                  # [ATTR] code unité
-
-  HPs:                              # array de longueur FIXE = 4. Les indices >= nHp sont des slots "vides"
-                                    # (numerics à 0, strings de version à "", autres strings à "0.00" si applicable).
-                                    # Avantages : pas de gestion d'array dynamique côté automate, parsing widget simplifié.
-    - comm:   1                     # enum 0..1
-      relStm: "1.23"                # [ATTR] version STM32
-      relEsp: "2.45"                # [ATTR] version ESP
-      relScr: "3.01"                # [ATTR] version écran
-      HP:
-        status: 10                  # code statut HP (0=OFF, 1=attente débit, 4=ON, ...)
-        pHi:    25.3                # bar haute pression
-        pLo:    6.8                 # bar basse pression
-        pAir:   120                 # Pa pression air
-        tIn:    45.2                # °C entrée eau
-        tOut:   52.7                # °C sortie eau
-        tHPf:   8.5                 # °C HP froide
-        tHPc:   65.4                # °C HP chaude
-        tLP:    2.3                 # °C basse pression
-        tCond:  48.1                # °C condensation
-        tEvap:  -1.8                # °C évaporation
-        tSC:    5.6                 # °C sous-refroidissement
-        tOH:    12.4                # °C surchauffe
-        eevPos: 800                 # pas vanne expansion (renommé depuis 'dpf')
-        rpm:    850                 # rpm ventilateur
-        time:   12450               # h temps cumulé HP ON
-      invert:
-        comm: 1                     # enum 0..1
-        freq: 45                    # Hz fréquence sortie
-        volt: 380.0                 # V tension sortie
-        curr: 12.5                  # A courant sortie
-        pwr:  4500                  # W puissance sortie
-        def0: 0                     # code défaut 0
-        def1: 0                     # code défaut 1
-        def2: 0                     # code défaut 2
-      boil:                         # chaudière appoint optionnelle par HP
-        status: 0                   # 0=OFF, 5=ON, 8=défaut, ...
-        tOut:   62.3                # °C sortie
-        tSmoke: 180.5               # °C fumées
-        press:  1.85                # bar pression eau
-        qe:     1200                # l/h débit
-        rpm:    4500                # rpm brûleur
-        time:   3200                # h temps ON
-      pump:                          # pompe individuelle HP
-        comm: 1
-        pwr:  180
-        dP:   6.2
-        qe:   2.8
-        rpm:  4200
-        time: 3800
+```json
+{
+  "ts": 1780052779000,
+  "values": { /* body bare ci-dessus tel quel */ }
+}
 ```
 
-### Marquage `[ATTR]`
+- `ts` = epoch ms calculé depuis `dateTime` UTC du body bare.
+- `values` = body bare intégral (les champs `date`, `time`, `dateTime` sont conservés).
+- Pas de pretty-print. UTF-8.
 
-Les champs marqués `[ATTR]` ci-dessus sont **routés en attribut SERVER_SCOPE** par la rule chain (Section 4). Le firmware **envoie tous ces champs à chaque cycle** ; TB déduplique côté `attribute_kv` (no-op si valeur identique au stockage actuel).
+### 3.3 Structure nested complète
 
-Total des champs routés en attribut par device :
+Les champs marqués `[ATTR]` sont routés en attribut **`SERVER_SCOPE`** par la rule chain TBEL (Section 4). Le firmware envoie tous les champs à chaque cycle ; TB déduplique les attributs (no-op si valeur identique).
 
-| Catégorie | Nb champs | Notes |
-|---|---|---|
-| Métadonnées (id, rel, modType, nHp, commCm2, relCm2) | 6 | au root |
-| Consignes heat (slope, foot, tMax, jours/mois été ×4, tCut, tRes) | 9 | sous `heat` |
-| Consigne dhw (tSet) | 1 | sous `dhw` |
-| Unités calo (qeU, qeTotU, pwrU, hKwhU, cKwhU) | 5 | sous `heat.calo` |
-| Versions par HP (relStm, relEsp, relScr) × 4 HPs (fixe) | 12 | sous `HPs[].` |
-| **Total** | **33** | constant quel que soit le nb de HPs réellement actifs |
+#### 3.3.1 Top-level (18 clés)
 
-### Modifications vs schéma initial
+```yaml
+id:       string   # installation_id, ex "2602000001"                            [ATTR]
+rel:      number   # version programme régulateur module, ex 1.4                 [ATTR]
+type:     integer  # enum 0..3 ; 0=no module, 1=heating, 2=dhw, 3=heating+dhw    [ATTR]
+nHp:      integer  # nombre de HPs actifs, 1..4 (0 possible si type=0)           [ATTR]
+tExt:     number   # °C température extérieure
+TinM:     number   # °C température collecteur primaire module  (T MAJUSCULE — ne pas renommer)
+press:    number   # bar pression circuit primaire (plage opération 1..4)
+commCm2:  integer  # 0/1 mot de status de communication carte esclave CM2  (télémétrie, pas attribut)
+relCm2:   number   # version programme carte esclave CM2 STM32, ex 0           [ATTR]
+                   # ⚠ Pas de programme ESP32 dans le module CM2.
+date:     string   # "DD/MM/YY" RTC automate, fuseau Europe/Paris (synchro NTP)  (compat widgets dashboard)
+time:     string   # "HH:MM:SS" RTC automate, fuseau Europe/Paris                (compat widgets dashboard)
+dateTime: string   # "DD/MM/YY HH:MM:SS" UTC — parsé par proxy en ts epoch ms
 
-| Changement | Avant | Après |
-|---|---|---|
-| Date+heure | 2 strings `date` + `time` | 1 string combiné `dateTime` |
-| Type module (root) | `type` (mot réservé dans certains langages/gen OpenAPI) | `modType` |
-| Nombre HP | `nHp` explicite | **gardé** ; HPs[] toujours de longueur 4, slots inutilisés à 0 |
-| Vanne expansion | `dpf` (peu clair) | `eevPos` |
-| Wrapper TB | body direct | `{ "ts": ..., "values": { ... } }` (permet rejeu après buffer du proxy) |
-| Routing | tout en ts_kv flat | nested, rule chain extrait 33 paths en SERVER_SCOPE |
-| Réponse POST | 200 body vide | 200 avec body `{ "shared": { "live": <bool> } }` injecté par le proxy |
+HPs:      array[4] # voir 3.3.2 — longueur FIXE, slots inutilisés à 0/""
+heat:     object   # voir 3.3.3
+dhw:      object   # voir 3.3.4
+caloM:    object   # voir 3.3.5 — calorimètre MODULE primaire (au root)
+pump1M:   object   # voir 3.3.6 — pompe primaire 1 module (Wilo Para Maxo)
+pump2M:   object   # voir 3.3.6 — pompe primaire 2 module (Wilo Stratos Maxo)
+```
 
-### Format `dateTime`
+#### 3.3.2 HPs[i] — i = 0..3, longueur fixe 4
 
-L'automate formate avec `sprintf("%02d/%02d/%02d %02d:%02d:%02d", jour, mois, annee%100, heure, minute, seconde)`.
+Chaque slot représente une PAC individuelle. Les slots `i >= nHp` sont **présents** avec des valeurs à 0 / chaînes vides (cf. 3.4.4).
+
+```yaml
+HPs[i]:
+  HP:                              # 16 keys — groupe frigorifique
+    status:  integer               # code statut PAC (0=OFF, 4=ON, 5=fault, 6=fault gaz, 7=anti-cycle, 9=dégivrage, 10=pump down …)
+    pHi:     number   # bar        # pression haute pression
+    pLo:     number   # bar        # pression basse pression
+    pAir:    integer  # Pa         # pression air
+    tIn:     number   # °C         # température entrée eau
+    tOut:    number   # °C         # température sortie eau
+    tHPf:    number   # °C         # température HP froide
+    tHPc:    number   # °C         # température HP chaude
+    tLP:     number   # °C         # température BP
+    tEvap:   number   # °C         # température évaporation
+    tCond:   number   # °C         # température condensation
+    tSC:     number   # °C         # sous-refroidissement
+    tOH:     number   # °C         # surchauffe
+    dpf:     integer               # position détendeur (PAS renommer en eevPos — convention firmware conservée)
+    rpm:     integer  # tr/min     # vitesse ventilateur
+    time:    integer  # SECONDES   # ⚠ secondes cumulées (impacte widget camembert)
+
+  invert:                          # 8 keys — variateur compresseur (Modbus)
+    comm:    bool | integer 0      # cf. note 3.4.3
+    freq:    number   # Hz
+    volt:    number   # V
+    curr:    number   # A
+    pwr:     number   # W
+    def0:    integer               # code défaut 0
+    def1:    integer               # code défaut 1
+    def2:    integer               # code défaut 2
+
+  boil:                            # 7 keys — chaudière appoint
+    status:  integer               # cf. codes FAULT_LABELS Section 3.5
+    tOut:    number   # °C         # sortie chaudière
+    tSmoke:  number   # °C         # température fumées
+    press:   number   # bar
+    qe:      number   # L/h        # débit eau (débitmètre Huba Control 5V)
+    rpm:     integer  # tr/min     # vitesse brûleur
+    time:    integer  # SECONDES   # ⚠ secondes cumulées (impacte widget camembert)
+
+  pump:                            # 6 keys — pompe PAC dédiée (Wilo Modbus)
+    comm:    bool | integer 0      # cf. note 3.4.3
+    pwr:     integer  # W
+    dP:      number   # mCE        # pression différentielle (renvoyée par la pompe en Modbus)
+    qe:      number   # m³/h       # débit (renvoyé direct par la pompe, non transformé)
+    rpm:     integer  # tr/min
+    time:    integer  # HEURES     # heures cumulées (pas de 10 h renvoyé par la pompe)
+
+  comm:    bool | integer 0        # cf. note 3.4.3
+  relStm:  string                  # semver STM32, ex "1.3.137"   ("" si slot inactif)   [ATTR]
+  relEsp:  string                  # semver ESP32, ex "1.0.145"   ("" si slot inactif)   [ATTR]
+  relScr:  string                  # semver écran tactile, ex "1.0.202" ("" si slot inactif) [ATTR]
+```
+
+#### 3.3.3 heat — bloc chauffage (14 keys + calo{12})
+
+```yaml
+heat:
+  tOut:        number   # °C       # température départ chauffage
+  tIn:         number   # °C       # température retour chauffage
+  posV3V:      integer  # %        # position vanne 3 voies chauffage
+  qeCalc:      integer  # L/h      # débit secondaire chauffage ESTIMÉ
+
+  slope:       number              # pente loi d'eau                            [ATTR]
+  foot:        number   # °C       # pied de courbe loi d'eau                   [ATTR]
+  tMax:        number   # °C       # consigne max départ chauffage              [ATTR]
+  setpoint:    number   # °C       # consigne courante départ chauffage (calculée temps réel)
+
+  dayBgEte:    integer  # DD       # jour début période été                     [ATTR]
+  monthBgEte:  integer  # MM       # mois début période été                     [ATTR]
+  dayEndEte:   integer  # DD       # jour fin période été                       [ATTR]
+  monthEndEte: integer  # MM       # mois fin période été                       [ATTR]
+
+  tCut:        number   # °C       # consigne coupure chauffage (T extérieure)  [ATTR]
+  tRes:        number   # °C       # consigne réenclenchement                   [ATTR]
+
+  calo:                            # calorimètre DÉPART CHAUFFAGE (distinct de caloM)
+    tIn:    number   # °C
+    tRet:   number   # °C          # température retour
+    qe:     integer                # débit instantané (unité = qeU)
+    qeU:    integer                # code unité Modbus, ex 2875=L/h              [ATTR]
+    qeTot:  integer                # débit cumulé (unité = qeTotU)
+    qeTotU: integer                # code unité Modbus, ex 3092=0.01 m³          [ATTR]
+    pwr:    integer                # puissance instantanée (unité = pwrU)
+    pwrU:   integer                # code unité Modbus, ex 2860=10 W             [ATTR]
+    hKwh:   integer                # énergie chaud cumulée (unité = hKwhU)
+    hKwhU:  integer                # code unité Modbus, ex 3078=kWh / 3079=10kWh [ATTR]
+    cKwh:   integer                # énergie froid cumulée (=0 si PAC non réversible)
+    cKwhU:  integer                # code unité Modbus                           [ATTR]
+```
+
+#### 3.3.4 dhw — bloc ECS (5 keys + 4 × pump{5})
+
+```yaml
+dhw:
+  tOut:    number   # °C           # température sortie ECS
+  tIn:     number   # °C           # température entrée ECS
+  tTank:   number   # °C           # température ballon
+  tSet:    number   # °C           # consigne ECS                                [ATTR]
+  posV3V:  integer  # %            # position V3V ECS primaire
+
+  pump1:                           # primaire 1 (Wilo Modbus)
+    pwr:   integer   # W
+    dP:    number    # mCE         # pression différentielle (Wilo Modbus)
+    qe:    number    # m³/h        # débit (Wilo direct)
+    rpm:   integer   # tr/min
+    time:  integer   # HEURES      # pas de 10 h
+  pump2:                           # primaire 2 (mêmes champs/unités)
+  pump3:                           # secondaire 1 (échangeur à plaques, mêmes champs/unités)
+  pump4:                           # secondaire 2 (échangeur à plaques, mêmes champs/unités)
+```
+
+#### 3.3.5 caloM — calorimètre MODULE primaire
+
+Au root du payload, **distinct** de `heat.calo`. Structure miroir (les codes unité Modbus peuvent différer).
+
+```yaml
+caloM:
+  tIn:    number   # °C
+  tRet:   number   # °C
+  qe:     integer                  # débit (unité = qeU)
+  qeU:    integer                  # code unité Modbus                           [ATTR]
+  qeTot:  integer                  # débit cumulé
+  qeTotU: integer                  # code unité Modbus                           [ATTR]
+  pwr:    integer                  # puissance
+  pwrU:   integer                  # code unité Modbus                           [ATTR]
+  hKwh:   integer                  # énergie chaud cumulée
+  hKwhU:  integer                  # code unité Modbus                           [ATTR]
+  cKwh:   integer                  # énergie froid cumulée
+  cKwhU:  integer                  # code unité Modbus                           [ATTR]
+```
+
+#### 3.3.6 pump1M, pump2M — pompes primaires module
+
+Wilo Para Maxo (pump1M) et Wilo Stratos Maxo (pump2M), Modbus.
+
+```yaml
+pump1M:
+  pwr:   integer   # W
+  dP:    number    # mCE
+  qe:    number    # m³/h
+  rpm:   integer   # tr/min
+  time:  integer   # HEURES        # pas de 10 h
+pump2M:
+  # mêmes champs / mêmes unités
+```
+
+### 3.4 Notes, types, pièges
+
+#### 3.4.1 Types numériques inhabituels
+
+- `rel` et `relCm2` sont des **numbers** (pas strings). Choix firmware. Ex `rel = 1.4`, `relCm2 = 0`.
+- `relStm` / `relEsp` / `relScr` sont en revanche des **strings semver 3-level** (`"1.3.137"`, `"1.0.145"`, `"1.0.202"`).
+- Pas de programme ESP32 dans le module CM2 — `relCm2` documente uniquement le firmware STM32 esclave.
+
+#### 3.4.2 Casse et nommage préservés
+
+- `TinM` (T **MAJUSCULE**) : convention firmware module. **Ne pas renommer** en `tInM`. La clé `tInM` (lowercase) qui traîne dans `ts_kv_latest` est un historique pré-v2, sera purgée par rotation TTL.
+- `dpf` (et `HP{i}_dpf` après flatten) : convention firmware conservée. **Ne pas renommer** en `eevPos`.
+- `type` : conservé tel quel (pas renommé `modType`).
+
+#### 3.4.3 Champs `comm` : booléen vs integer 0 (transitoire)
+
+- Type cible : **boolean partout** (firmware final).
+- Firmware de **certification actuel** : `comm` hardcodé à `integer 0` pour les slots `HPs[1..3]` non implémentés (structures `pac2/pac3/pac4` pas encore dans le code de cert). Dans `HPs[0]` et autres `comm` actifs : vrai booléen.
+- Spec déclare : `comm: bool | integer 0`. Le consommateur TB doit accepter les deux.
+- S'applique à : `HPs[i].comm`, `HPs[i].invert.comm`, `HPs[i].pump.comm`. **Ne s'applique pas** à `commCm2` (top-level) qui reste un integer 0/1 status.
+
+#### 3.4.4 Slots HPs[i] inactifs (i >= nHp)
+
+- Numérics → `0`
+- Strings semver (`relStm`, `relEsp`, `relScr`) → `""` (chaîne vide)
+- Booléens `comm` → `0` (integer, cf. 3.4.3)
+- Tous les sous-objets `HP/invert/boil/pump` sont **présents** avec valeurs à 0
+- Avantage : flatten déterministe en rule chain → `HP1_*`, `HP2_*`, `HP3_*`, `HP4_*` toujours présents en `ts_kv`
+
+#### 3.4.5 Installations sans module (`type = 0`)
+
+- Tous les blocs nested (`HPs`, `heat`, `dhw`, `caloM`, `pump1M`, `pump2M`) sont **présents** avec valeurs à 0 (ou chaînes vides pour les strings).
+- Seuls `id`, `rel`, `type`, `nHp`, `tExt`, `TinM`, `press`, `commCm2`, `relCm2`, `date`, `time`, `dateTime` portent leurs vraies valeurs.
+- **Reportées sur TB normalement** — le contrat v2 ne les exclut pas.
+
+#### 3.4.6 Format `dateTime`
+
+L'automate formate avec `sprintf("%02d/%02d/%02d %02d:%02d:%02d", jour, mois, annee%100, heure, minute, seconde)` en UTC.
 
 - Séparateur : `/` entre date, `:` entre heure, espace entre date et heure
-- Année sur 2 chiffres (modulo 100)
-- Pas d'offset timezone (local time du site)
-- Sert de label humain dans le payload, **TB met son propre ts epoch ms** à réception qui sert d'axe temporel pour les graphes
+- Année sur 2 chiffres (modulo 100) ; limitation connue pour 2100+
+- **UTC obligatoire** (le proxy parse en TZ serveur = UTC)
+- `date` et `time` séparés (fuseau Europe/Paris) sont gardés en parallèle pour compat widgets dashboard existants
 
-### Contraintes encodage
+#### 3.4.7 Contraintes encodage
 
 - JSON sans pretty-print (pas de retours ligne ni d'espaces superflus)
 - UTF-8
-- Float 1 décimale max (sauf `rel`, `relCm2`, `relStm`, `relEsp`, `relScr` qui sont des strings du genre `"1.04"`)
-- Booléens encodés `0` / `1` en integer (pas `true` / `false`)
+- Booléens encodés `true`/`false` quand actifs, ou `0` (integer) pour les slots inactifs (transition firmware)
+
+### 3.5 Flux `evt_*` — POSTs ad-hoc (séparé du nested cyclique)
+
+Les clés `evt_*` ne font **pas partie du payload nested régulier**. Ce sont des télémétries POSTées séparément lors de changements d'état (apparition / disparition de défaut), plus des traces internes du dispatcher.
+
+Inventaire validé en prod 2026-05-29.
+
+#### 3.5.1 Bundle défaut (apparition / disparition)
+
+Co-écrit en un seul POST au même `ts` (~3 events/24h par device en fonctionnement nominal).
+
+| Clé | Type TB | Rôle | Devices |
+|---|---|---|---|
+| `evt_date` | string | Date de l'événement, `dd/MM/yy` (fuseau Paris) | `heatPumpHybride`, `2602000001`, `2602000002` |
+| `evt_time` | string | Heure de l'événement, `HH:mm:ss` (fuseau Paris) | idem |
+| `evt_device` | long | ID sous-équipement source (0 = base, 50 = dispatcher self, autres = HP/module) | idem |
+| `evt_fault` | long | **Code défaut** (cf. table 3.5.4) | idem |
+| `evt_status` | long | `1 = apparition` défaut / `0 = disparition` défaut | idem |
+| `evt_type` | long | Catégorie événement (0/1 observés) | idem |
+
+#### 3.5.2 Corrélation défaut
+
+| Clé | Type TB | Rôle | Devices |
+|---|---|---|---|
+| `evt_id` | long | **Timestamp epoch SECONDES** (pas ms !) du dernier événement — corrèle `evt_date`+`evt_time` | `2602000001`, `2602000002` |
+
+Écrite séparément du bundle, avec son propre `ts`. ⚠ Ratio s vs ms à respecter dans les widgets de corrélation.
+
+#### 3.5.3 Traces dispatcher
+
+Émises uniquement sur le device virtuel `heatPumpHybride`.
+
+| Clé | Fréquence 24h | Rôle |
+|---|---|---|
+| `evt_dispatch` | ~3265 (~2.27/min) | Trace de routage — `str_v` = id routé via FIFO N |
+| `evt_no_id` | ~16 | Payload reçu sans champ `id` — rejeté par dispatcher |
+| `evt_unknown_id` | ~30 | `id` présent mais inconnu du mapping |
+| `evt_provision` | ~22 | Création/association device suite à `id` inconnu (log provisioning) |
+
+#### 3.5.4 Table des codes `evt_fault` (FAULT_LABELS)
+
+Interprétation côté serveur, source de vérité dans le widget `tduo.fault_diagnostic` (TB). Tableau complet 114 codes (0..113) :
+
+| Code | Libellé FR | Code | Libellé FR | Code | Libellé FR |
+|---|---|---|---|---|---|
+| 0 | (vide) | 38 | Defaut communication | 80 | Defaut pression HP |
+| 1 | Defaut sonde depart | 39 | Defaut communication | 81 | Defaut pression BP |
+| 2 | Defaut sonde retour | 40 | Defaut communication | 82 | **Gaz detecte** |
+| 3 | Defaut sonde fumee | 41 | Pression trop faible | 83 | Defaut surchauffe chaud. |
+| 4 | Defaut sonde pression | 42 | Redemarrage regulateur | 84 | Defaut com. pompe |
+| 5 | Defaut debit eau | 43 | Manipulation tactile | 85 | Defaut com. compresseur |
+| 6 | Defaut surpression eau | 44 | Filtre encrasse | 86 | Defaut com. gaz G20 |
+| 7 | Surchauffe | 45 | Defaut carte 1 | 87 | Defaut com. gaz R290 |
+| 8 | Defaut bruleur | 46 | Defaut carte 2 | 88 | Defaut communication |
+| 9 | Defaut ventil. bruleur | 47 | Defaut carte 3 | 89 | Defaut pression eau |
+| 10 | Defaut preventilation | 48 | Defaut carte 4 | 90 | Defaut HP max |
+| 11 | Defaut delta temp. | 49 | Defaut carte 5 | 91 | Defaut BP min |
+| 12 | Defaut temp. fumee | 50 | Defaut carte 6 | 92 | Defaut variateur 0Hz |
+| 13 | Defaut circuit fumee | 51 | Defaut carte 7 | 93 | Defaut variateur |
+| 14 | Bruleur non linearise | 52 | Defaut bruleur 8 | 94 | Defaut surchauffe PAC |
+| 15 | Defaut communication | 53 | Defaut bruleur 9 | 95 | Defaut T sortie PAC |
+| 16 | Defaut sous-tension | 54 | Defaut bruleur 10 | 96 | Defaut T entree PAC |
+| 17 | Defaut surtension | 55 | Defaut bruleur 11 | 97 | Defaut T BP |
+| 18 | Manque phase | 56 | Defaut bruleur 12 | 98 | Defaut T HP chaud |
+| 19 | Marche a sec | 57 | Defaut bruleur 13 | 99 | Defaut T HP froid |
+| 20 | Pression trop forte | 58 | Defaut interne boitier | 100 | Defaut pression eau bas |
+| 21 | Pression trop faible | 59 | Defaut general boitier | 101 | Defaut pression eau haut |
+| 22 | Moteur trop chaud | 60 | Nb max reset atteint | 102 | Defaut pression air |
+| 23 | Defaut moteur | 61 | Defaut pompe ECS | 103 | Defaut vitesse ventilateur |
+| 24 | Pompe bloquee | 62 | Defaut module FTP | 104 | Defaut sonde T entree module |
+| 25 | Surchauffe module | 63 | Defaut pression fumee | 105 | Defaut sonde T exterieure |
+| 26 | Avertissement module | 70 | Defaut sonde T entree chaud. | 106 | Defaut sonde T sortie ECS |
+| 27 | Defaut module | 71 | Defaut sonde T sortie chaud. | 107 | Defaut sonde T entree ECS |
+| 28 | Defaut capteur | 72 | Defaut sonde T fumee chaud. | 108 | Defaut sonde T sortie chauffage |
+| 29 | Defaut communication | 73 | Defaut sonde T entree PAC | 109 | Defaut sonde T entree chauffage |
+| 30 | Defaut vanne eau | 74 | Defaut sonde T BP | 110 | Defaut sonde T stockage |
+| 31 | Utilisation excessive | 75 | Defaut sonde T HP-h | 111 | Gaz R290 détecté |
+| 32 | Adaptation plage | 76 | Defaut sonde T HP-c | 112 | Gaz G20 détecté |
+| 33 | Surcharge mecanique | 77 | Defaut sonde T air ext. | 113 | Defaut temperature sortie chaudiere |
+| 34 | Defaut securite | 78 | Defaut pression air | | |
+| 35 | Erreur test clapet | 79 | Defaut pression eau | | |
+| 36 | Temperature trop elevee | | | | |
+| 37 | Fumee detectee | | | | |
+
+Note : les codes 64-69 n'existent pas dans la table actuelle (réservés). Cette table est maintenue dans `widget_type` où `fqn='tduo.fault_diagnostic'` (variable JS `FAULT_LABELS`).
+
+#### 3.5.5 Devices émetteurs (UUIDs TB)
+
+| Device | UUID |
+|---|---|
+| `heatPumpHybride` (dispatcher virtuel) | `2de23ab0-3e51-11f1-bbfe-e1395562cba0` |
+| `2602000001` | `b16d15b0-4227-11f1-bbfe-e1395562cba0` |
+| `2602000002` | `2bceaf80-42dc-11f1-bbfe-e1395562cba0` |
+
+`2610000001` et `2602000003` mentionnés en mémoire mais pas encore actifs en TB.
+
+### 3.6 Récapitulatif `[ATTR]` — paths attributs SERVER_SCOPE
+
+Champs routés en attribut par la rule chain TBEL (Section 4). Constants par device, mis à jour seulement sur changement.
+
+| Bloc | Champs `[ATTR]` | Compte |
+|---|---|---|
+| top-level | `id`, `rel`, `type`, `nHp`, `relCm2` | 5 |
+| `HPs[i]` (× 4 slots fixes) | `relStm`, `relEsp`, `relScr` | 12 |
+| `heat` | `slope`, `foot`, `tMax`, `dayBgEte`, `monthBgEte`, `dayEndEte`, `monthEndEte`, `tCut`, `tRes` | 9 |
+| `heat.calo` | `qeU`, `qeTotU`, `pwrU`, `hKwhU`, `cKwhU` | 5 |
+| `dhw` | `tSet` | 1 |
+| `caloM` | `qeU`, `qeTotU`, `pwrU`, `hKwhU`, `cKwhU` | 5 |
+| **Total** | | **37** |
+
+Les autres champs (`tExt`, `TinM`, `press`, `commCm2`, `date`, `time`, `dateTime`, contenus `HPs[i].HP/invert/boil/pump`, `heat.tOut/tIn/posV3V/qeCalc/setpoint`, `heat.calo.tIn/tRet/qe/qeTot/pwr/hKwh/cKwh`, `dhw.tOut/tIn/tTank/posV3V/pumpN.*`, `caloM.tIn/tRet/qe/qeTot/pwr/hKwh/cKwh`, `pump1M/2M.*`) sont en télémétrie horodatée standard.
 
 ## 4. Rule chain "PAC Hybride Router v2"
 
