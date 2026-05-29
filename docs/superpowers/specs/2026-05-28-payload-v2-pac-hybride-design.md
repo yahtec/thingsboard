@@ -495,47 +495,78 @@ Champs routés en attribut par la rule chain TBEL (Section 4). Constants par dev
 
 Les autres champs (`tExt`, `TinM`, `press`, `commCm2`, `date`, `time`, `dateTime`, contenus `HPs[i].HP/invert/boil/pump`, `heat.tOut/tIn/posV3V/qeCalc/setpoint`, `heat.calo.tIn/tRet/qe/qeTot/pwr/hKwh/cKwh`, `dhw.tOut/tIn/tTank/posV3V/pumpN.*`, `caloM.tIn/tRet/qe/qeTot/pwr/hKwh/cKwh`, `pump1M/2M.*`) sont en télémétrie horodatée standard.
 
-## 4. Rule chain "PAC Hybride Router v2"
+## 4. Rule chain "PAC Hybride Router" — extension v2
 
-### Flow
+> **Décisions actées** (2026-05-29 point 2) :
+> - **Option B** : double écriture flat + json_v en parallèle pendant la transition Phase 3 (refonte widgets). Coût stockage transitoire +7 %.
+> - **Insertion dans la rule chain existante** `PAC Hybride Router` (UUID `b6af0570-4226-11f1-bbfe-e1395562cba0`), pas de nouvelle rule chain.
+> - **Déploiement via REST API JSON** (UI manuelle non praticable). Procédure Section 4.6.
+
+### 4.1 État actuel de la rule chain
+
+Déployée et opérationnelle. 13 nodes :
 
 ```
-Device telemetry POST
-    │
-    ▼
-[Originator filter: device profile = PAC Hybride]
-    │
-    ▼
-[Switch script: msg.HPs !== undefined ?]
-    │
-    ├── true (POST nested v2)
-    │     │
-    │     ▼
-    │   [TBEL transform: split-attributes-from-payload]
-    │     │   → 2 messages :
-    │     │     • POST_ATTRIBUTES_REQUEST  (msg.attrs, scope=SERVER_SCOPE)
-    │     │     • POST_TELEMETRY_REQUEST   ({ pac_v2: <payload sans attrs> })
-    │     │
-    │     ├── POST_ATTRIBUTES_REQUEST ─► [Save Attributes node, scope=SERVER_SCOPE]
-    │     │
-    │     └── POST_TELEMETRY_REQUEST ──► [Save Timeseries node, useServerTs=false]
-    │                                       (1 ligne ts_kv, key="pac_v2", value_json=<payload>)
-    │
-    └── false (POST flat : evt_* ou ancien firmware)
-          │
-          ▼
-        [Save Timeseries node, default flat]
-          → chemin actuel, intouché
+[id present?] (filter JS sur msg.id)
+   │
+   ├─ no  → [wrap evt_no_id] → [save evt_no_id]  (telemetry sur dispatcher heatPumpHybride)
+   │
+   └─ yes → [extract id → metadata]
+                 │
+                 ▼
+            [originator → device(${id})] (ChangeOriginator : redirige vers device PAC réel par nom)
+                 │
+                 ├─ device inconnu → [wrap evt_unknown_id] → [save evt_unknown_id] + [alarm UnknownInstallation]
+                 │
+                 └─ device existant → [mark active] → [save active attrs]
+                                              │
+                                              ▼
+                                      [save TS (per-id device)]   ← écrit body en FLAT keys (HP1_*, dhw_*, etc.)
+                                              │
+                                              ▼
+                                      [DeviceProfile (alarms)] → [alarm MalformedPayload] si applicable
 ```
 
-### Script TBEL "split-attributes-from-payload"
+C'est ce flow qui produit aujourd'hui les ~247 keys flat sur les vrais devices PAC (`2602000001`, `2602000002`, …).
 
-Le timestamp d'acquisition est déjà placé dans `metadata.ts` par TB (à partir du `ts` du body `{ts, values}` envoyé par le proxy, Section 9.2). Le script n'a qu'à faire le split attributs / payload.
+### 4.2 Extension v2 — insertion de 4 nouveaux nodes
+
+Après `mark active`, on insère 4 nouveaux nodes **en parallèle** de `save TS (per-id device)` :
+
+```
+[mark active] ─┬─► [save TS (per-id device)]                                              ← GARDÉ (Option B)
+               │     └─► [DeviceProfile (alarms)]                                          (chaîne existante)
+               │
+               └─► [4.3 TBEL : split-attributes-from-payload]                              ← NOUVEAU
+                          │
+                          ▼
+                    [4.4 Message Type Switch]
+                          │
+                          ├─ Post attributes  → [4.5 Save Attributes SERVER_SCOPE]         ← NOUVEAU
+                          │
+                          └─ Post telemetry   → [4.5 Save Timeseries (key=pac_v2)]         ← NOUVEAU
+```
+
+Résultat 13 + 4 = 17 nodes. Chaque sample reçu produit :
+
+- 1 ligne `attribute_kv` par attribut SERVER_SCOPE (no-op si valeur inchangée — TB déduplique)
+- 247 lignes `ts_kv` flat (chaîne existante, inchangée)
+- 1 ligne `ts_kv` avec `key=pac_v2` et `value_json = <payload nested sans attrs>` (nouvelle)
+
+### 4.3 Script TBEL "split-attributes-from-payload"
+
+Le `ts` d'acquisition est déjà dans `metadata.ts` (injecté par le proxy via le wrapper `{ts, values}`). Le script ne fait que le split attributs / payload.
+
+**Paths attributs (28 templates → 37 attrs au runtime avec HPs × 4)** :
 
 ```javascript
-// Paths à router en SERVER_SCOPE. Préfixe HPs.* applique sur chaque élément de l'array (longueur fixe 4).
+// scripts/tb/rule-chain-pac-hybride-router/split-attributes.tbel
+//
+// Reçoit un msg nested v2 (msg.HPs présent).
+// Output : 2 messages — POST_ATTRIBUTES_REQUEST (SERVER_SCOPE) + POST_TELEMETRY_REQUEST (pac_v2 json_v).
+
 var ATTR_PATHS = [
-  "id", "rel", "modType", "nHp", "commCm2", "relCm2",
+  "id", "rel", "type", "nHp", "relCm2",
   "dhw.tSet",
   "heat.slope", "heat.foot", "heat.tMax",
   "heat.dayBgEte", "heat.monthBgEte",
@@ -543,16 +574,18 @@ var ATTR_PATHS = [
   "heat.tCut", "heat.tRes",
   "heat.calo.qeU", "heat.calo.qeTotU",
   "heat.calo.pwrU", "heat.calo.hKwhU", "heat.calo.cKwhU",
+  "caloM.qeU", "caloM.qeTotU",
+  "caloM.pwrU", "caloM.hKwhU", "caloM.cKwhU",
   "HPs.relStm", "HPs.relEsp", "HPs.relScr"
 ];
 
 var attrs = {};
-var payload = clone(msg);  // TBEL : clone() au lieu de JSON.parse(JSON.stringify())
+var payload = clone(msg);
 
 foreach (path : ATTR_PATHS) {
   var parts = path.split(".");
 
-  // Cas spécial : HPs.* (array)
+  // Cas HPs.* : applique sur chaque élément de l'array (longueur fixe 4)
   if (parts[0] == "HPs") {
     var leaf = parts[1];
     if (payload.HPs != null) {
@@ -566,16 +599,17 @@ foreach (path : ATTR_PATHS) {
     continue;
   }
 
-  // Cas générique dotted path
+  // Cas générique dotted-path
   var ref = payload;
+  var ok = true;
   for (var j = 0; j < parts.length - 1; j++) {
-    if (ref[parts[j]] == null) { break; }
+    if (ref[parts[j]] == null) { ok = false; break; }
     ref = ref[parts[j]];
   }
+  if (!ok) continue;
   var leafName = parts[parts.length - 1];
-  if (ref != null && ref[leafName] != null) {
-    var attrKey = parts.join("_");  // heat.calo.qeU -> heat_calo_qeU
-    attrs[attrKey] = ref[leafName];
+  if (ref[leafName] != null) {
+    attrs[parts.join("_")] = ref[leafName];   // heat.calo.qeU → heat_calo_qeU
     ref.remove(leafName);
   }
 }
@@ -590,19 +624,95 @@ return [
 ];
 ```
 
-> **Note implémentation** : la syntaxe TBEL exacte (`foreach`, `.remove()`, `metadata.merge()`) doit être validée contre la doc TB 4.3. Si une primitive manque, fallback vers le node JavaScript équivalent (légèrement plus lent mais sémantique identique).
+> **Validation TBEL** : la syntaxe `foreach`, `clone()`, `metadata.merge()`, `.remove()` doit être validée contre TB 4.3 avant déploiement. Si une primitive manque, fallback sur un node JavaScript (`TbJsTransformNode`) avec sémantique identique (légèrement plus lent au runtime mais sans impact à cadence 1/min).
 
-### Nommage
+### 4.4 Node "Message Type Switch"
 
-- **Clé telemetry** : `pac_v2` (string fixe, versionnée — permet l'évolution future sans casser les widgets v2)
-- **Clé attribut HPs** : `HP{1..4}_relStm`, `HP{1..4}_relEsp`, `HP{1..4}_relScr` (1 attribut par HP par champ)
-- **Clé attribut générique** : dotted path joiné par underscore (`heat_calo_qeU`, `heat_slope`, etc.)
+Le TBEL retourne **2 messages** dans la même réponse, tous deux émis sur la sortie `Success`. Il faut router chaque message vers le bon node de stockage en fonction de son `msgType` :
 
-### Cas d'erreur
+- Type node : `org.thingsboard.rule.engine.flow.TbMsgTypeSwitchNode`
+- Le node a des sorties nommées par type de message ; on connecte :
+  - sortie `Post attributes request` → Save Attributes (4.5)
+  - sortie `Post telemetry request`  → Save Timeseries (4.5)
 
-- **Payload mal formé** (`msg.HPs` présent mais clé manquante dans le script) : pas de crash, le script saute le champ via la garde `!= null`
-- **Save Timeseries failure** : message envoyé sur output `Failure` de la rule chain, à diriger vers une queue/log dédiée (standard TB)
-- **Attribut volumineux** (str_v > 255) : à surveiller via `SELECT max(length(str_v)) FROM attribute_kv WHERE entity_id IN (...)`
+### 4.5 Nodes Save Attributes + Save Timeseries
+
+#### Save Attributes (SERVER_SCOPE)
+
+- Type : `org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode`
+- Configuration : `scope = SERVER_SCOPE`, `notifyDevice = false`, `sendAttributesUpdatedNotification = true`
+- Comportement : lit `msg` (objet plat `{id, rel, type, nHp, relCm2, dhw_tSet, heat_slope, ..., HP1_relStm, HP2_relStm, ...}`) et écrit chaque clé en attribut SERVER_SCOPE du device originator (post-ChangeOriginator).
+
+#### Save Timeseries (key=pac_v2 json_v)
+
+- Type : `org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode`
+- Configuration : `useServerTs = false` (utilise `metadata.ts`), `defaultTTL = 0` (illimité, géré par cron Section 8)
+- Comportement : prend `msg = { pac_v2: <payload nested> }`, écrit 1 ligne `ts_kv` avec `key = pac_v2` et `value_json = <payload>` au `ts = metadata.ts`.
+
+### 4.6 Procédure de déploiement (REST API JSON)
+
+UI manuelle non praticable — modif via REST API obligatoire. Le script de déploiement est dans la Phase 1 du plan d'implémentation (`scripts/tb/rule-chain-pac-hybride-router/deploy-v2-nodes.ps1`).
+
+#### Étapes
+
+1. **Authentification** : récupérer un JWT tenant admin.
+2. **Backup** : `GET /api/ruleChain/b6af0570-4226-11f1-bbfe-e1395562cba0/metadata` → sauvegarder en `scripts/tb/backup/rule-chain-pac-hybride-router-pre-v2.json`.
+3. **Modification du JSON** : insertion programmatique des 4 nouveaux nodes dans le tableau `nodes` + des connexions associées dans `connections` :
+   - Connexion existante `mark active → save TS (per-id device)` : conservée.
+   - Nouvelle connexion `mark active → TBEL split` (type `Success`).
+   - Nouvelle connexion `TBEL split → Message Type Switch` (type `Success`).
+   - Nouvelle connexion `Message Type Switch → Save Attributes` (type `Post attributes`).
+   - Nouvelle connexion `Message Type Switch → Save Timeseries pac_v2` (type `Post telemetry`).
+4. **Validation** : `POST /api/ruleChain/{id}/metadata` avec le JSON modifié.
+5. **Vérification fumée** : envoyer 1 POST factice via curl à l'endpoint proxy avec un body v2, vérifier en SQL :
+
+   ```sql
+   -- 1 ligne pac_v2 récente
+   SELECT to_timestamp(ts/1000), length(json_v::text)
+   FROM ts_kv_2026_05
+   WHERE entity_id = (SELECT id FROM device WHERE name='2602000001')
+     AND key = (SELECT key_id FROM key_dictionary WHERE key='pac_v2')
+   ORDER BY ts DESC LIMIT 1;
+
+   -- Attributs SERVER_SCOPE populés
+   SELECT count(*)
+   FROM attribute_kv
+   WHERE entity_id = (SELECT id FROM device WHERE name='2602000001')
+     AND attribute_type = 'SERVER_SCOPE';
+   ```
+
+   Attendu : 1 ligne pac_v2 (~3 KB JSON), ≥ 30 attributs SERVER_SCOPE.
+
+6. **Rollback** : `POST /api/ruleChain/{id}/metadata` avec le backup pre-v2. Le device retombe en double-écriture sans le pac_v2 supplémentaire.
+
+#### Outils
+
+- **PowerShell** : `Invoke-RestMethod` pour les appels REST.
+- **Python** : alternative possible (`requests` + `json`), choix au moment de l'écriture du script.
+- Le script doit être **idempotent** : si les nouveaux nodes existent déjà (détectés par nom unique `TBEL split v2`, `MsgType Switch v2`, `Save Attrs v2`, `Save TS pac_v2`), il met à jour leur configuration sans dupliquer.
+
+### 4.7 Nommage des clés produites
+
+- **Telemetry key** : `pac_v2` (fixe, versionnée — évolution future possible vers `pac_v3` sans casser les widgets v2)
+- **Attributs root** : `id`, `rel`, `type`, `nHp`, `relCm2`, `dhw_tSet`, `heat_slope`, …, `heat_calo_qeU`, …, `caloM_qeU`, …
+- **Attributs HPs** : `HP1_relStm`, `HP1_relEsp`, `HP1_relScr`, `HP2_relStm`, …, `HP4_relScr` (12 attributs HPs)
+- Format du path attribut : dotted path source joiné par `_`. Exemple `heat.calo.qeTotU` → `heat_calo_qeTotU`.
+
+### 4.8 Cas d'erreur
+
+- **Body mal formé** (HPs présent mais clé attribut manquante) : le script saute le champ via la garde `!= null`. Aucun crash.
+- **Save Timeseries failure** : message routé sur output `Failure` du node, à diriger vers une queue/log standard TB. La ligne flat parallèle continue d'être écrite (Option B).
+- **Attribut volumineux** (`str_v > 255` bytes) : à surveiller périodiquement via `SELECT max(length(str_v)) FROM attribute_kv`. Si dépassement, restreindre `ATTR_PATHS` ou tronquer dans le TBEL.
+- **TBEL syntax error** : message en `Failure`, save flat continue, à logger.
+
+### 4.9 Évolution Phase 3 (refactor widgets)
+
+Quand les widgets dashboard auront été refactorisés pour lire `pac_v2` json_v (Phase 3 du plan d'implémentation) :
+
+1. Supprimer la connexion `mark active → save TS (per-id device)` (le node existe encore mais n'est plus exécuté).
+2. Optionnel : supprimer le node `save TS (per-id device)` entièrement.
+3. Volume `ts_kv` chute de ~247 lignes/sample à ~1 ligne/sample → gain ×~250 sur ce flux.
+4. Les attributs SERVER_SCOPE produits par le TBEL split deviennent la seule source pour les versions / consignes / unités calo.
 
 ## 5. Mode live
 
