@@ -529,29 +529,52 @@ Déployée et opérationnelle. 13 nodes :
 
 C'est ce flow qui produit aujourd'hui les ~247 keys flat sur les vrais devices PAC (`2602000001`, `2602000002`, …).
 
-### 4.2 Extension v2 — insertion de 4 nouveaux nodes
+### 4.2 Extension v2 — insertion de 5 nouveaux nodes
 
-Après `mark active`, on insère 4 nouveaux nodes **en parallèle** de `save TS (per-id device)` :
+Après `mark active`, on insère 5 nouveaux nodes **en parallèle** de `save TS (per-id device)` :
 
 ```
 [mark active] ─┬─► [save TS (per-id device)]                                              ← GARDÉ (Option B)
                │     └─► [DeviceProfile (alarms)]                                          (chaîne existante)
+               │     │
+               │     │   Reçoit AUSSI les POSTs evt_* (bundle défaut envoyé par
+               │     │   l'automate via proxy, même encapsulation {ts, values}).
+               │     │   Les evt_date / evt_time / evt_fault / evt_status / evt_type /
+               │     │   evt_device sont sauvés en flat ts_kv sur le device PAC.
                │
-               └─► [4.3 TBEL : split-attributes-from-payload]                              ← NOUVEAU
+               └─► [4.2.1 Filter : msg.HPs présent ?]                                      ← NOUVEAU (gating)
                           │
-                          ▼
-                    [4.4 Message Type Switch]
+                          ├─ false (POST evt_*) → arrêt (déjà sauvé par save TS flat)
                           │
-                          ├─ Post attributes  → [4.5 Save Attributes SERVER_SCOPE]         ← NOUVEAU
-                          │
-                          └─ Post telemetry   → [4.5 Save Timeseries (key=pac_v2)]         ← NOUVEAU
+                          └─ true (POST nested v2) → [4.3 TBEL : split-attributes-from-payload]   ← NOUVEAU
+                                                            │
+                                                            ▼
+                                                      [4.4 Message Type Switch]            ← NOUVEAU
+                                                            │
+                                                            ├─ Post attributes → [4.5 Save Attributes SERVER_SCOPE]   ← NOUVEAU
+                                                            │
+                                                            └─ Post telemetry  → [4.5 Save Timeseries (key=pac_v2)]   ← NOUVEAU
 ```
 
-Résultat 13 + 4 = 17 nodes. Chaque sample reçu produit :
+Résultat 13 + 5 = 18 nodes. Pour chaque POST reçu :
 
-- 1 ligne `attribute_kv` par attribut SERVER_SCOPE (no-op si valeur inchangée — TB déduplique)
-- 247 lignes `ts_kv` flat (chaîne existante, inchangée)
-- 1 ligne `ts_kv` avec `key=pac_v2` et `value_json = <payload nested sans attrs>` (nouvelle)
+- **POST nested v2** (avec champ `HPs`) :
+  - 247 lignes `ts_kv` flat (branche save TS, inchangée)
+  - 1 ligne `attribute_kv` par attribut SERVER_SCOPE (no-op si valeur inchangée — TB déduplique)
+  - 1 ligne `ts_kv` avec `key=pac_v2` et `value_json = <payload nested sans attrs>` (nouvelle branche)
+- **POST evt_*** (bundle défaut, pas de `HPs`) :
+  - Sauvegardé en flat ts_kv via la branche existante `save TS (per-id device)` — les keys `evt_date`, `evt_time`, `evt_fault`, etc. apparaissent sur le device PAC
+  - La branche TBEL split n'est **pas activée** (filter gating)
+  - Encapsulation proxy `{ts, values}` identique au flux régulier (le proxy parse `dateTime` du body evt_* aussi) — confirmé point 4 (2026-05-29)
+
+### 4.2.1 Filter node "msg.HPs présent ?"
+
+Node de gating qui n'active la branche TBEL split que pour les POSTs nested v2 :
+
+- Type : `org.thingsboard.rule.engine.filter.TbJsFilterNode` (filter JavaScript)
+- Script : `return msg.HPs !== undefined && Array.isArray(msg.HPs);`
+- Sortie `True` → connectée au TBEL split (4.3)
+- Sortie `False` → non connectée (les POSTs evt_* sont déjà sauvés par `save TS (per-id device)` en flat)
 
 ### 4.3 Script TBEL "split-attributes-from-payload"
 
@@ -657,9 +680,10 @@ UI manuelle non praticable — modif via REST API obligatoire. Le script de dép
 
 1. **Authentification** : récupérer un JWT tenant admin.
 2. **Backup** : `GET /api/ruleChain/b6af0570-4226-11f1-bbfe-e1395562cba0/metadata` → sauvegarder en `scripts/tb/backup/rule-chain-pac-hybride-router-pre-v2.json`.
-3. **Modification du JSON** : insertion programmatique des 4 nouveaux nodes dans le tableau `nodes` + des connexions associées dans `connections` :
-   - Connexion existante `mark active → save TS (per-id device)` : conservée.
-   - Nouvelle connexion `mark active → TBEL split` (type `Success`).
+3. **Modification du JSON** : insertion programmatique des 5 nouveaux nodes dans le tableau `nodes` + des connexions associées dans `connections` :
+   - Connexion existante `mark active → save TS (per-id device)` : conservée (sert flat + evt_* via la même branche).
+   - Nouvelle connexion `mark active → Filter HPs présent ?` (type `Success`).
+   - Nouvelle connexion `Filter HPs présent ? → TBEL split` (type `True`).
    - Nouvelle connexion `TBEL split → Message Type Switch` (type `Success`).
    - Nouvelle connexion `Message Type Switch → Save Attributes` (type `Post attributes`).
    - Nouvelle connexion `Message Type Switch → Save Timeseries pac_v2` (type `Post telemetry`).
@@ -789,39 +813,130 @@ WHERE entity_id = '<uuid pilote>'
 
 Un device peut être rebasculé en firmware ancien (flat) à tout moment : la branche `Switch=false` de la rule chain l'accepte. Aucun nettoyage requis côté TB.
 
-## 7. Refonte dashboard "Mes Installations"
+## 7. Refonte dashboard "Mes Installations" — intégrale
 
-8 états identifiés sur le dashboard. Plan d'action par état :
+> **Décision (2026-05-29 point 4)** : refonte intégrale du dashboard. Tous les widgets de contenu (états `default`, `donnees_HP1`, `historique`, `fault_diagnostic`) sont **refactorisés ou créés** pour lire `pac_v2` json_v et les attributs SERVER_SCOPE. Le bundle `tduo.*` actuel (15 widgets dont 7 versions d'`events_history`) sert de base.
 
-| State ID | Nom affiché | Root | Action |
+### 7.1 Inventaire actuel (8 états)
+
+État du dashboard `Mes Installations` (dashboard id `0964da30-3e56-11f1-bbfe-e1395562cba0`) capturé 2026-05-29 :
+
+| État | Type | Widgets actifs (avec télémétrie) | Widgets décoratifs |
 |---|---|---|---|
-| `menu` | Menu | **true** | Pas de changement obligatoire ; optionnel : tile résumé TDUO Tile en mode "summary" si utile |
-| `default` | Unité | false | **Refonte complète** : Hub Info + Heating Loop Card + DHW Card + N × PAC Synoptic + Boiler Synoptic (conditionnel sur présence chaudière) |
-| `donnees_HP1` | Données détaillées PAC | false | **Refonte** : 1 × PAC Synoptic en pleine page (lit `pac_v2.HPs[selected].*`) |
-| `configuration` | Configuration | false | Hors scope payload v2 (saisie user/account, pas device setpoint) |
-| `fault_diagnostic` | Diagnostic défaut | false | **Intouché** (lit `evt_*` qui reste flat) |
-| `historique` | Historique | false | **Refonte** : Chart.js custom lisant array `pac_v2` sur fenêtre temporelle, avec extraction côté JS de `pac_v2.heat.tOut`, etc. |
-| `profil` | Mon profil | false | **Intouché** |
-| `notifications_admin` | Notifications (admin) | false | **Intouché** (iframe externe) |
+| `menu` (root) | Menu d'entrée | HTML Value Card (entry tile) | Navbar |
+| `default` (Unité) | Page détail | 8 markdown_card inline : `Données générales`, `PAC HP1`, `PAC HP2`, `PAC HP3`, `PAC HP4`, `ECS`, `Chauffage`, `Map` (system) | Topbar, Navbar, HTML Value Card |
+| `donnees_HP1` (Données détaillées PAC) | Page détail HP | 5 widgets : `PAC Info`, `PAC Chart`, `Chaudière Info`, `Chaudière Chart` (4 markdown_card timeseries), `Répartition d'utilisation PAC vs Chaudière` (`tenant.tduo.usage_pie`) | Topbar, HTML Card, Timeline, Action button |
+| `historique` | Historique événements | `Historique événements` (`tenant.tduo.events_history`) | Topbar, Navbar 2btn |
+| `fault_diagnostic` | Diagnostic défaut | `Diagnostic défaut` (`tenant.tduo.fault_diagnostic`, avec FAULT_LABELS) | Topbar |
+| `configuration` | Configuration utilisateur | HTML Value Card | Topbar |
+| `notifications_admin` | Notifications | Static `Configuration notifications` (iframe) | Topbar |
+| `profil` | Profil utilisateur | Static `Profil` | Topbar |
 
-### Les 6 widgets TDUO (refactor)
+**Observation** : la majorité des widgets de contenu sont des `system.cards.markdown_card` **inline** dans le dashboard JSON (templates HTML custom avec datasources flat), pas des widgets du bundle `tduo.*`. Seuls **3 widgets TDUO** sont actuellement déployés sur ce dashboard : `usage_pie`, `events_history`, `fault_diagnostic`.
 
-Bundle `tduo.*` déjà créé (2026-04-22), aucun deprecated, tailles 5-9 KB. Refactor = changer les datasources pour lire `pac_v2` au lieu de flat.
+### 7.2 Bundle `tduo.*` — 15 widgets disponibles
 
-| Widget | fqn | Lecture v2 | Placement |
-|---|---|---|---|
-| Hub Info | `tduo.hub_info` | `pac_v2.tExt`, `pac_v2.press`, attributs `id`, `rel`, `modType` | `default` (haut de page) |
-| Heating Loop Card | `tduo.heating_loop_card` | `pac_v2.heat.tOut/tIn/posV3V/qeCalc/calo.*` | `default` |
-| DHW Card | `tduo.dhw_card` | `pac_v2.dhw.tOut/tIn/tTank/posV3V/pump1..4` | `default` |
-| PAC Synoptic | `tduo.pac_synoptic` | `pac_v2.HPs[i].HP/invert/pump` | `default` (×N) et `donnees_HP1` (×1 plein écran) |
-| Boiler Synoptic | `tduo.boiler_synoptic` | `pac_v2.HPs[i].boil.*` | `default` (conditionnel sur `boil.status` != null) |
-| TDUO Tile | `tduo.tduo_tile` | template / brique de base | n/a directement, sert d'inclusion aux 5 autres |
+Inventaire bundle (query `widget_type WHERE fqn LIKE 'tduo.%'`) :
 
-### Composants à supprimer / archiver
+| Widget | fqn | Statut sur dashboard |
+|---|---|---|
+| Boiler Synoptic | `tduo.boiler_synoptic` | **Non déployé** |
+| DHW Card | `tduo.dhw_card` | **Non déployé** |
+| Heating Loop Card | `tduo.heating_loop_card` | **Non déployé** |
+| Hub Info | `tduo.hub_info` | **Non déployé** |
+| PAC Synoptic | `tduo.pac_synoptic` | **Non déployé** |
+| TDUO Tile | `tduo.tduo_tile` | **Non déployé** (brique de base) |
+| Events History | `tduo.events_history` | ✅ déployé sur `historique` |
+| Events History 2..7 | `tduo.events_history{2..7}` | **Versions de dev**, non déployées — à archiver |
+| Fault Diagnostic | `tduo.fault_diagnostic` | ✅ déployé sur `fault_diagnostic` |
+| Usage Pie PAC/Chaudière | `tduo.usage_pie` | ✅ déployé sur `donnees_HP1` |
 
-- 12 widgets `markdown_card` actuels du dashboard `Mes Installations` (états `default` et probablement `donnees_HP1`) — remplacés par les TDUO
-- `usage_pie` (custom JS) si lit du flat — à adapter ou supprimer
-- 13 alarms orphelines du device profile PAC Hybride : `HPxFault` ×4, `BoilxFault` ×4, `SensorxFault` ×4, `Offline` ×1
+Les 6 widgets non déployés (Hub Info, DHW Card, Heating Loop Card, PAC Synoptic, Boiler Synoptic, TDUO Tile) ont été créés le 2026-04-22 et constituent la base prévue pour la refonte.
+
+### 7.3 Cible v2 par état
+
+#### État `default` (Unité) — refonte complète
+
+Remplacement des 8 markdown_card inline par des **widgets TDUO v2 refactorisés** lisant `pac_v2` json_v et attributs SERVER_SCOPE :
+
+| Widget actuel | Widget v2 | Source données |
+|---|---|---|
+| Données générales (markdown_card) | **Hub Info v2** (`tduo.hub_info` refactor) | attrs `id`/`rel`/`type`/`nHp`/`commCm2`/`relCm2` + `pac_v2.tExt`/`TinM`/`press`/`dateTime` |
+| PAC HP1 / HP2 / HP3 / HP4 (4 × markdown_card) | **4 × PAC Synoptic v2** (`tduo.pac_synoptic` refactor, setting `hpIndex=0..3`) | `pac_v2.HPs[hpIndex].HP/invert/boil/pump` + attrs `HP{i}_relStm/relEsp/relScr` |
+| ECS (markdown_card) | **DHW Card v2** (`tduo.dhw_card` refactor) | `pac_v2.dhw.*` + attr `dhw_tSet` |
+| Chauffage (markdown_card) | **Heating Loop Card v2** (`tduo.heating_loop_card` refactor) | `pac_v2.heat.*` + `pac_v2.heat.calo.*` + attrs consignes |
+| (nouveau) | **Boiler Synoptic v2** (`tduo.boiler_synoptic` refactor) ×4 conditionnel sur `pac_v2.HPs[i].boil.status != 0` | `pac_v2.HPs[hpIndex].boil.*` |
+| Map (system.map) | **Inchangé** | attribut `location` |
+| Topbar / Navbar / HTML Value Card | **Inchangés** | static |
+
+#### État `donnees_HP1` (Données détaillées PAC)
+
+Vue détaillée d'un HP sélectionné via la navigation. Refactor :
+
+| Widget actuel | Widget v2 |
+|---|---|
+| PAC Info + Chaudière Info (2 × markdown_card timeseries) | **1 × PAC Synoptic v2 plein écran** + **1 × Boiler Synoptic v2 plein écran** (lit `pac_v2.HPs[selected].HP/invert/pump` et `.boil`) |
+| PAC Chart + Chaudière Chart (2 × markdown_card timeseries) | **Charts custom Chart.js** lisant historique `pac_v2` sur fenêtre temporelle (parse JSON nested, extrait séries `pac_v2.HPs[selected].HP.tIn/tOut/pHi/pLo/...` et `.boil.tOut/tSmoke/...`) |
+| Usage Pie PAC/Chaudière (`tduo.usage_pie`) | **Usage Pie v2** : refactor pour lire `pac_v2.HPs[hpIndex].HP.time` (secondes) + `pac_v2.HPs[hpIndex].boil.time` (secondes). ⚠ Attention : les `time` HP et boil sont en **secondes** (point 1 A1), les autres `time` (pump, pump1M/2M) sont en **heures**. Le calcul du camembert doit faire la conversion appropriée. |
+| Timeline (static) | **Inchangé** |
+| Topbar / HTML Card / Action button | **Inchangés** |
+
+#### État `historique`
+
+Liste des événements défaut et graphes historiques.
+
+| Widget actuel | Widget v2 |
+|---|---|
+| Historique événements (`tduo.events_history`) | **Refactor** : lit `evt_date`, `evt_time`, `evt_device`, `evt_fault`, `evt_status`, `evt_type` (flat sur device PAC) + interprète `evt_fault` via la table `FAULT_LABELS` 114 codes (cf. Section 3.5.4). Les `time` champs visibles dans la liste doivent être convertis (`evt_id` est epoch **secondes**, à convertir × 1000 pour `new Date()`). |
+| Topbar / Navbar 2btn | **Inchangés** |
+
+Les 6 versions de dev `events_history{2..7}` du bundle TDUO sont à **archiver/supprimer** une fois la version `events_history` v2 validée.
+
+#### État `fault_diagnostic`
+
+| Widget actuel | Widget v2 |
+|---|---|
+| Diagnostic défaut (`tduo.fault_diagnostic`) | **Refactor minimal** : la table `FAULT_LABELS` 114 codes est déjà à jour (variable JS `FAULT_LABELS` du widget). Lit `evt_*` keys (flux séparé du payload nested, cf. Section 3.5). Mise à jour si nouveaux codes défaut firmware ou nouveau format `evt_device`. |
+| Topbar | **Inchangé** |
+
+#### États `configuration`, `notifications_admin`, `profil`, `menu`
+
+**Intouchés**. Hors scope payload v2.
+
+### 7.4 Stratégie de refactor des 6 widgets TDUO non déployés
+
+Les 6 widgets `tduo.{hub_info, dhw_card, heating_loop_card, pac_synoptic, boiler_synoptic, tduo_tile}` sont les briques de la refonte. Chacun doit :
+
+1. **Datasource principal** = `pac_v2` (1 seul timeseries key, value = json_v complet)
+2. **Datasource secondaire** = attributs SERVER_SCOPE pour les valeurs constantes (versions, consignes, unités calo)
+3. **Controller JS** : `onDataUpdated` parse `pac_v2` jsonb, extrait les sous-champs pertinents
+4. **Template HTML** : couleur/disposition propres à chaque widget
+5. **Settings** : paramètres widget (ex `hpIndex` pour PAC Synoptic, multi-instance sur `default`)
+6. **Gestion units** : afficher `time` en h/min/s correctement (cf. Section 3.3.2 point 1 A1)
+7. **Codes status** : utiliser la même table que `fault_diagnostic.FAULT_LABELS` pour `pac_v2.HPs[i].HP.status` et `.boil.status` (réutilisable, factoriser)
+
+### 7.5 Composants à archiver
+
+- **6 versions de dev** `tduo.events_history{2..7}` (seul `events_history` v1 utilisé en prod)
+- Tous les widgets markdown_card inline du dashboard remplacés par leur version TDUO v2 (les `widget_id` actuels `a1b2c3d4-*` doivent disparaître du JSON dashboard)
+
+### 7.6 Stratégie de déploiement
+
+Étant donné Option B Section 4 (double écriture flat + json_v en parallèle) :
+
+1. **Phase 3.1** : refactor des 6 widgets `tduo.*` non déployés (lecture `pac_v2`). Les widgets existent déjà comme coquilles vides ; on remplit leur controller + template.
+2. **Phase 3.2** : refactor des 3 widgets `tduo.*` déjà déployés (`usage_pie`, `events_history`, `fault_diagnostic`) — modifications mineures.
+3. **Phase 3.3** : modifier le JSON du dashboard pour remplacer les widgets markdown_card par les widgets TDUO v2 dans les états `default` et `donnees_HP1`. Backup avant modif.
+4. **Phase 3.4** : déployer sur un device pilote (`2602000001`), valider visuellement.
+5. **Phase 3.5** : déployer sur tout le parc. Les anciennes clés flat (HP1_*, dhw_*, etc.) restent écrites pour rollback (Option B).
+6. **Phase 3.6** : une fois validation OK ≥ 7 jours, retirer la connexion `mark active → save TS (per-id device)` (Section 4.9). Volume `ts_kv` chute × ~250.
+7. **Phase 3.7** : archiver les 6 versions `events_history{2..7}` (delete widget_type).
+
+### 7.7 Évolution future (hors scope ce spec)
+
+- Ajouter un état `historique_pac` avec graphes temporels par HP (Chart.js sur fenêtre 1 mois)
+- Ajouter un état `bilan` avec cumuls énergie (lecture `pac_v2.heat.calo.hKwh` + `caloM.hKwh`) — décodage selon unités Modbus (`hKwhU`)
+- Visualisation 3D synoptique chaufferie si pertinent
 
 ## 8. Rotation stockage : 3 ans glissants + année en cours
 
@@ -1068,32 +1183,35 @@ Pas de batch endpoint, pas de throttle : le rate limit entre proxy et TB est lev
 
 | Composant | Type | Action |
 |---|---|---|
-| Rule chain "PAC Hybride Router" | TB rule chain | **Remplacer** (Section 4) |
-| Device profile "PAC Hybride" : default rule chain | TB device profile | Pointer vers "PAC Hybride Router v2" |
+| Rule chain "PAC Hybride Router" | TB rule chain | **Étendre** : +5 nodes (Filter HPs + TBEL split + Msg Type Switch + Save Attrs + Save TS pac_v2) via REST API JSON (Section 4) |
 | Device profile "PAC Hybride" : alarms | TB device profile | Supprimer les 13 orphelines |
-| Device profile "PAC Hybride" : default storage TTL | TB device profile | Mettre à 0 (illimité) |
-| Dashboard "Mes Installations" : state `default` | TB dashboard | Refonte widgets : Hub Info + Heating Loop + DHW + N×PAC + Boiler |
-| Dashboard "Mes Installations" : state `donnees_HP1` | TB dashboard | 1 × PAC Synoptic plein écran |
-| Dashboard "Mes Installations" : state `historique` | TB dashboard | Charts Chart.js lisant array `pac_v2` |
-| Widget bundle `tduo.*` (6 widgets) | TB widget | **Refactor** : datasources sur `pac_v2.*` |
-| Widget `usage_pie` (custom JS) | TB widget | Refactor si lit du flat, sinon supprimer |
+| Device profile "PAC Hybride" : default storage TTL | TB device profile | Mettre à 0 (illimité), géré par cron Section 8 |
+| Dashboard "Mes Installations" : state `default` | TB dashboard | Remplacement intégral 8 markdown_card inline → 4 PAC Synoptic v2 + Hub Info v2 + DHW Card v2 + Heating Loop Card v2 + Boiler Synoptic v2 (cond.) (Section 7.3) |
+| Dashboard "Mes Installations" : state `donnees_HP1` | TB dashboard | Refonte : PAC Synoptic v2 + Boiler Synoptic v2 plein écran + Chart.js custom + Usage Pie v2 (Section 7.3) |
+| Dashboard "Mes Installations" : state `historique` | TB dashboard | Refactor `tduo.events_history` (FAULT_LABELS lookup, evt_id seconds×1000) |
+| Dashboard "Mes Installations" : state `fault_diagnostic` | TB dashboard | Refactor minimal `tduo.fault_diagnostic` (FAULT_LABELS déjà à jour) |
+| Widgets bundle `tduo.{hub_info, dhw_card, heating_loop_card, pac_synoptic, boiler_synoptic, tduo_tile}` | TB widget bundle | **Refactor controller + template** : lecture `pac_v2` json_v + attrs SERVER_SCOPE (Section 7.4) |
+| Widget `tduo.usage_pie` | TB widget | **Refactor** : lit `pac_v2.HPs[hpIndex].HP.time` (s) + `.boil.time` (s), gestion conversion s/h selon point 1 A1 |
+| Widget `tduo.events_history` | TB widget | **Refactor** : interprète `evt_fault` via FAULT_LABELS, convertit `evt_id` s × 1000 pour Date |
+| Widget `tduo.fault_diagnostic` | TB widget | **Refactor minimal** : tab FAULT_LABELS 114 codes déjà à jour, ajouter logique evt_device si nouveaux codes |
+| Widget bundle `tduo.events_history{2..7}` (6 versions dev) | TB widget | **Archiver** après validation `tduo.events_history` v2 |
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
-| Automate (générateur payload v2) | Code automate, repo séparé | **Développer** (Section 9.1, M1-M10) |
-| Proxy | Code séparé (déjà déployé) | **Activer le mode v2 via toggle config** (Section 9.2, P1-P8). Code de parse `dateTime` + wrap déjà présent dans le proxy, juste à activer |
-| Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (parle uniquement Modbus à l'automate maintenant) |
+| Automate (générateur payload v2) | Code automate, repo séparé | **Déjà déployé** sur 2602000001/2 (Section 9.1, M1-M10) |
+| Proxy `telemetry-proxy 0.1.0` | Code séparé sur `10.77.0.74` | **Déjà actif** avec `tb_format=true` pour device `tduo` (Section 9.2). Parse `dateTime` + wrap `{ts, values}` opérationnel |
+| Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (Modbus uniquement vers automate) |
 
 ### Intouchés
 
 | Composant | Raison |
 |---|---|
-| Widget `events_history` | Lit `evt_*` qui reste flat |
-| Widget `fault_diagnostic` | Idem |
-| Widget `system.map` | Lit attribut `location` indépendant |
+| Widget `system.map` (sur `default`) | Lit attribut `location` indépendant du payload v2 |
+| Widgets statiques (Topbar, Navbar, HTML Card, HTML Value Card, Timeline, Action button) | Déco/navigation, pas de télémétrie |
+| États `menu`, `configuration`, `notifications_admin`, `profil` | Hors scope payload v2 (settings utilisateur / iframes externes) |
 | Iframes `notifications_admin` | Indépendant, lien externe |
 | Pipeline `tb-notify` | Indépendant, déclenche sur evt_* |
 | Rule chain "Root Rule Chain" | Indépendante de "PAC Hybride Router" |
-| Branche `Switch=false` de "PAC Hybride Router v2" | Préserve le routage flat pour devices anciens et POST `evt_*` séparés |
+| Branche `save TS (per-id device)` de "PAC Hybride Router" | **Conservée** (Option B Section 4) — sert flat ancien format + evt_* dispatch via la même chaîne |
 
 ## 11. Décisions différées
 
