@@ -53,7 +53,7 @@ Pour la migration v2 (Phases 1+), la rule chain TBEL split-attributes-from-paylo
 Quatre couches distinctes :
 
 - **Firmware PAC** : acquisition métier, expose ses données en Modbus local. Ne parle pas HTTP.
-- **Automate** : agrège Modbus, construit le JSON nested v2 (Section 3) **avec un champ `dateTime` string** (`"dd/MM/yy HH:mm:ss"` UTC, formaté depuis le RTC). POSTe vers le proxy à cadence **1/min** en régime normal (20 s en mode live, Section 5). L'automate **ne calcule pas** d'epoch ms — il envoie juste la string.
+- **Automate** : agrège Modbus, construit le JSON nested v2 (Section 3) **avec un champ `dateTime` string** (`"dd/MM/yy HH:mm:ss"` UTC, formaté depuis le RTC). POSTe vers le proxy à cadence **1 POST/min fixe**. L'automate **ne calcule pas** d'epoch ms — il envoie juste la string.
 - **Proxy** (`telemetry-proxy` 0.1.0 Rust, déjà déployé) : parse `dateTime` UTC en epoch ms et enveloppe en `{ts, values}` avant forward à TB. Le `ts` parsé devient le timestamp officiel de la ligne `ts_kv`. Si TB est injoignable, le proxy garde le sample en cache SQLite local (déjà parsé) et flushe en POST individuels à la reconnexion (Section 9.2 P8). Pas de batch ni throttle (rate limit proxy → TB levé sur ce déploiement). **L'historique de la panne est intégralement préservé** : chaque sample atterrit dans `ts_kv` au `ts` d'acquisition d'origine.
 - **TB device dispatcher** (`heatPumpHybride`, profile `default`) : reçoit la télémétrie de tous les automates sur un seul token TB. Une rule chain lit l'`installation_id` du body et redispatche le payload vers le vrai device PAC (profile `pac hybride`). Trace de passage écrite via `evt_dispatch`. **C'est ce mécanisme qui sépare les installations sans démultiplier les configs proxy.**
 
@@ -71,7 +71,7 @@ ThingsBoard reçoit aujourd'hui des POST de télémétrie **flat** (~275 keys pa
 
 Le plan de stockage (memo [project-thingsboard-storage-optim]) a acté une migration vers `json_v` + attributs SERVER_SCOPE, gain stockage ×13.
 
-Ce document spécifie **le contrat firmware → TB**, **le routing rule chain**, **le mode live**, **la refonte dashboard**, **la rotation stockage**, et **les exigences firmware** pour la v2.
+Ce document spécifie **le contrat firmware → TB**, **le routing rule chain**, **la refonte dashboard**, **la rotation stockage**, et **les exigences firmware** pour la v2. Le mode live (cadence dynamique) est différé (Section 11).
 
 ## 2. Goals & non-goals
 
@@ -79,7 +79,7 @@ Ce document spécifie **le contrat firmware → TB**, **le routing rule chain**,
 
 - Définir le contrat JSON nested envoyé par firmware (1 POST = 1 ligne `ts_kv` au lieu de 275)
 - Spécifier la rule chain "PAC Hybride Router v2" qui split telemetry / attributs SERVER_SCOPE
-- Permettre une cadence dynamique 1 post/min (normal) ↔ 1 post/20 s (mode live quand un client regarde)
+- ~~Permettre une cadence dynamique 1 post/min (normal) ↔ 1 post/20 s (mode live quand un client regarde)~~ — **différé** (Section 11), cadence 1/min fixe
 - Refactorer les 6 widgets TDUO existants pour lire le nouveau payload
 - Acter la rotation stockage : 3 ans glissants + année en cours, via DROP PARTITION mensuelle
 - Cutover **par device** via OTA (pas de flag day global)
@@ -714,68 +714,13 @@ Quand les widgets dashboard auront été refactorisés pour lire `pac_v2` json_v
 3. Volume `ts_kv` chute de ~247 lignes/sample à ~1 ligne/sample → gain ×~250 sur ce flux.
 4. Les attributs SERVER_SCOPE produits par le TBEL split deviennent la seule source pour les versions / consignes / unités calo.
 
-## 5. Mode live
+## 5. Mode live — DIFFÉRÉ
 
-### Mécanique
-
-Un utilisateur ouvre le state `default` (Unité) ou `donnees_HP1` (Données détaillées PAC) du dashboard "Mes Installations". Le widget custom JS au mount :
-
-1. Écrit `SHARED_SCOPE live=true` + `liveTs=Date.now()` via `ctx.attributeService.saveEntityAttributes()`
-2. Démarre un setInterval 60 s qui rewrite `liveTs=Date.now()` tant que `document.visibilityState === 'visible'`
-3. Au unmount / blur / visibilitychange→hidden / beforeunload : écrit `SHARED_SCOPE live=false`
-
-### Côté automate
-
-L'automate lit `live` **dans la réponse de son POST telemetry au proxy**. Le proxy a forwardé la requête à TB (sans rien de spécial) puis a injecté `live` dans la réponse à partir de sa connaissance locale :
-
-```
-POST <proxy_host>/api/v1/{token}/telemetry
-  body : { "ts": <ms>, "values": { ... payload v2 ... } }
-  → 200 OK
-  → response body : { "shared": { "live": true | false } }
-```
-
-- Si `shared.live === true` : cadence = 20 s
-- Si `shared.live === false`, absent, ou body de réponse vide : cadence = 60 s
-
-Le proxy maintient sa connaissance de `live` via un canal séparé vers TB (Section 9.2 P7). L'automate ne voit jamais la mécanique de discovery.
-
-### Sécurité timeout (côté TB)
-
-Une nouvelle rule chain dédiée "Live Timeout Sweep" tourne en cron 1×/min :
-
-```
-[Generator node, originator=tenant, cron */1 * * * *]
-    │
-    ▼
-[Fetch all PAC Hybride devices with attribute live=true]
-    │
-    ▼
-[Filter : liveTs < (Date.now() - 180000)]   ← 3 min
-    │
-    ▼
-[Save Attribute SHARED_SCOPE live=false]
-```
-
-Garantit que `live` retombe à false même si le client a fermé brutalement son browser sans déclencher `beforeunload`.
-
-### Coût réseau
-
-Côté **automate ↔ proxy** :
-
-| Mode | POSTs/min | Notes |
-|---|---|---|
-| Normal | 1 | réponse proxy contient `{"shared":{"live":false}}` |
-| Live | 3 (cadence 20 s) | réponse proxy contient `{"shared":{"live":true}}` |
-
-Côté **proxy ↔ TB** (option P7-a) : pour chaque POST forwardé, 1 GET attributes en parallèle. Soit 2× le trafic vers TB par rapport au seul POST. Reste sur le canal cloud, ne touche pas le LAN automate.
-
-### Attributs SHARED_SCOPE introduits
-
-- `live` (boolean) : flag mode live actif
-- `liveTs` (long, epoch ms) : keep-alive du widget, MAJ toutes les 60 s
-
-**Seuls** attributs SHARED_SCOPE du projet. Aucun setpoint en SHARED.
+> **Statut (2026-05-29 point 3)** : Le mode live (cadence dynamique 1/min ↔ 20 s déclenchée par la présence d'un utilisateur sur la page détail) **n'est pas implémenté**. Décision utilisateur : pas dans cette phase, à reconsidérer dans plusieurs jours.
+>
+> **Cadence opérationnelle** : **1 POST / min fixe**. L'automate envoie en continu à cette cadence, le dashboard rafraîchit toutes les minutes avec le dernier `pac_v2`.
+>
+> Le design complet (widget keep-alive SHARED_SCOPE, rule chain "Live Timeout Sweep" cron, discovery proxy P7) est archivé en **Section 11 — Décisions différées** pour réactivation future. Aucun attribut `SHARED_SCOPE` n'est utilisé dans le contrat v2 actuel.
 
 ## 6. Migration : proxy d'abord, puis cutover payload v2 par device via OTA
 
@@ -785,7 +730,7 @@ Deux phases distinctes :
 
 **Phase 0 — Proxy** (avant tout autre changement). Mise en place du proxy en mode pur passthrough pour le **format flat actuel**. À la fin de la phase, tous les devices passent par le proxy mais envoient toujours du flat ; TB reçoit exactement la même chose qu'aujourd'hui. Le proxy n'a pas encore besoin de gérer `live` puisque le firmware actuel ne fait pas de mode live.
 
-**Phase 1+ — Payload v2** (rule chain + widgets + automate v2). Une fois Phase 0 stable, on déploie tout le reste (Sections 3-5, 7, 8). Le proxy se met à gérer `live` quand le premier automate v2 entre en service.
+**Phase 1+ — Payload v2** (rule chain + widgets + automate v2). Une fois Phase 0 stable, on déploie tout le reste (Sections 3, 4, 7, 8). Le mode live (Section 5) est différé (cadence 1/min fixe).
 
 ### Phase 0 — Proxy ✅ DONE 2026-05-28
 
@@ -797,7 +742,7 @@ Le proxy était déjà déployé en mode legacy (passthrough). La bascule en mod
 | P0.2 | Test scénario cache offline : `systemctl stop thingsboard` 5 min, vérifier cache, restart, vérifier replay | Cache passé 0 → 11 entrées pendant la coupure 16:55-17:00 UTC. Replay automatique en ~60 s. Devices `2602000001`/`2602000002` reçoivent 5 samples × 247 keys au `ts` d'origine | ✅ DONE |
 | P0.3 | Validation rollback toggle | Pas effectué — mode v2 jugé stable, kept ON | ✅ N/A |
 | P0.4 | Rollout sur tous les devices du parc | Le proxy n'a qu'1 entrée `devices.tduo` qui couvre les 2 automates actifs (`2602000001`, `2602000002`). Le 3e (`2610000001`) et le 4e (`2602000003`) déjà alignés sur la même URL d'ingest | ✅ DONE |
-| P0.5 | Activer la logique `live` discovery (P6/P7) dans le proxy | Reporté : sera fait quand le mode live des dashboards arrivera (Phase 1+ Section 5) | ⏳ TODO |
+| P0.5 | ~~Activer la logique `live` discovery (P6/P7) dans le proxy~~ | **Différé** — mode live drop (Section 11) | ⏸️ DIFFÉRÉ |
 | P0.6 | Bugs d'affichage UI proxy `https://bootloader.tsmart.fr/proxy/ui` | À investiguer/corriger | ⏳ TODO |
 
 ### Phase 1+ — Cutover payload v2 (par device via OTA)
@@ -808,10 +753,9 @@ Pas de shadow write. La rule chain gère simultanément les deux formats (nested
 |---|---|---|
 | J0 | Deploy rule chain v2 (les 2 branches actives, aucun device en nested encore) | Revert rule chain version |
 | J0 | Deploy widgets TDUO refactorisés sur dashboard | Revert dashboard json |
-| J0 | Deploy rule chain "Live Timeout Sweep" (cron) | Désactiver le node |
 | J0 | Setup cron PG `tb-ts_kv-drop-old-year.sh` (Section 8) | Désactiver le cron |
 | J+1 | Pilot OTA automate v2 sur 1 device test | Revert firmware sur ce device |
-| J+1 | Validation : ligne `pac_v2` apparaît dans `ts_kv`, attributs présents dans `attribute_kv`, proxy retourne `live` correctement | n/a |
+| J+1 | Validation : ligne `pac_v2` apparaît dans `ts_kv`, attributs SERVER_SCOPE présents dans `attribute_kv` | n/a |
 | J+1 | Widget pilote sur le device test : Hub Info + Heating Loop + DHW + N×PAC affichent les bonnes valeurs ; ouverture du state `default` fait passer la cadence à 20 s | n/a |
 | J+2 | Rollout OTA progressif (10% → 50% → 100% du parc) | Revert firmware lot par lot |
 | J+7 | Cleanup device profile : suppression des 13 alarms orphelines | Recréer les alarms si besoin |
@@ -852,8 +796,8 @@ Un device peut être rebasculé en firmware ancien (flat) à tout moment : la br
 | State ID | Nom affiché | Root | Action |
 |---|---|---|---|
 | `menu` | Menu | **true** | Pas de changement obligatoire ; optionnel : tile résumé TDUO Tile en mode "summary" si utile |
-| `default` | Unité | false | **Refonte complète** : Hub Info + Heating Loop Card + DHW Card + N × PAC Synoptic + Boiler Synoptic (conditionnel sur présence chaudière) — déclenche mode live |
-| `donnees_HP1` | Données détaillées PAC | false | **Refonte** : 1 × PAC Synoptic en pleine page (lit `pac_v2.HPs[selected].*`) — déclenche mode live |
+| `default` | Unité | false | **Refonte complète** : Hub Info + Heating Loop Card + DHW Card + N × PAC Synoptic + Boiler Synoptic (conditionnel sur présence chaudière) |
+| `donnees_HP1` | Données détaillées PAC | false | **Refonte** : 1 × PAC Synoptic en pleine page (lit `pac_v2.HPs[selected].*`) |
 | `configuration` | Configuration | false | Hors scope payload v2 (saisie user/account, pas device setpoint) |
 | `fault_diagnostic` | Diagnostic défaut | false | **Intouché** (lit `evt_*` qui reste flat) |
 | `historique` | Historique | false | **Refonte** : Chart.js custom lisant array `pac_v2` sur fenêtre temporelle, avec extraction côté JS de `pac_v2.heat.tOut`, etc. |
@@ -951,7 +895,7 @@ POST https://<proxy_host>/api/v1/{token}/telemetry
 Content-Type: application/json
 ```
 
-`<proxy_host>` est l'adresse du proxy (LAN local typiquement). Le proxy forwarde vers `thingsboard.tsmart.fr` sans modification d'URL. Pas de query param spécial : le proxy injecte `live` dans la réponse à partir de sa propre connaissance.
+`<proxy_host>` est l'adresse du proxy (LAN local typiquement). Le proxy forwarde vers `thingsboard.tsmart.fr` sans modification d'URL. Pas de query param spécial.
 
 Body wrappé `{ ts, values }` (Section 3) pour préserver le timestamp d'acquisition côté automate :
 
@@ -962,8 +906,7 @@ Body wrappé `{ ts, values }` (Section 3) pour préserver le timestamp d'acquisi
 #### M2 — Cadence
 
 - **Mode normal** : 1 POST / 60 s
-- **Mode live** : 1 POST / 20 s
-- Cadence ajustée à chaque cycle à partir du `shared.live` lu dans la réponse du POST précédent
+- **Cadence fixe** (mode live différé en Section 5/11)
 
 #### M3 — Format `dateTime`
 
@@ -991,18 +934,9 @@ Avantage : pas de gestion d'array dynamique côté automate, parsing trivial cô
 
 Toujours présents dans le JSON. Valeurs à `0` si non applicables au `modType`.
 
-#### M6 — Mode live : depuis la réponse du proxy
+#### M6 — Mode live (DIFFÉRÉ)
 
-À chaque POST telemetry, l'automate lit le body de réponse retourné par le proxy :
-
-```json
-{ "shared": { "live": true | false } }
-```
-
-- `live === true` → cadence prochain POST = 20 s
-- `live === false`, absent, body vide, ou erreur réseau → cadence 60 s par défaut
-
-Le proxy est responsable du maintien de `live`. L'automate ne fait jamais d'appel séparé à TB pour ça.
+Voir Section 5 / Section 11. L'automate ignore tout body de réponse spécifique, traite le 200 OK standard.
 
 #### M7 — Encodage
 
@@ -1072,7 +1006,7 @@ Quand TB est joignable :
 2. Parse + wrap (P1)
 3. Forward HTTPS à TB avec le body wrappé
 4. Receive response TB
-5. Forward response à l'automate (réponse contient `{"shared":{"live":...}}` géré par P7)
+5. Forward response à l'automate (200 OK standard ; pas d'injection `live` — mode live différé)
 
 Latence ajoutée : ~1 ms de parsing + 1 hop TCP.
 
@@ -1082,7 +1016,7 @@ Quand TB est injoignable (timeout, 5xx, erreur DNS) :
 1. Receive POST de l'automate
 2. Effectuer la transformation P1 immédiatement (parse + wrap) — le `ts` est figé dès l'arrivée
 3. **Persister** le body wrappé `{ts, values}` sur disque local du proxy (FIFO)
-4. Répondre 200 OK à l'automate avec body neutre `{"shared":{"live":false}}` — l'automate reste en cadence normale 60 s
+4. Répondre 200 OK à l'automate (body neutre, mode live différé)
 5. En tâche de fond, retenter `GET https://thingsboard.tsmart.fr/` (healthcheck léger) avec backoff exponentiel (60 s, 120 s, 240 s, max 600 s)
 6. À la reconnexion TB : flusher les samples cachés en POST individuels FIFO (Section P8). Pas de batch, pas de throttle (le rate limit entre proxy et TB est levé sur ce déploiement)
 7. **Historique préservé** : 1 h de panne = 60 samples bufferisés = 60 lignes `ts_kv` distinctes à leurs `ts` d'acquisition respectifs après flush
@@ -1098,29 +1032,9 @@ TB **n'a pas** de mécanisme natif de déduplication sur `ts`. Si le proxy rejou
 
 Mitigation : le proxy maintient un compteur de séquence ou un hash du body pour éviter le re-POST d'une même requête au sein d'une session. Détail d'implémentation, hors spec.
 
-#### P6 — Réponse `shared.live` quand TB est down
+#### P6 et P7 — Mode live (DIFFÉRÉ)
 
-Pendant un buffering, le proxy ne connaît pas la valeur réelle de `live` côté TB. Politique par défaut : répondre `{"shared":{"live":false}}` → l'automate reste en cadence 60 s (mode normal) tant que la connexion TB n'est pas rétablie. Garde le buffer plus contenu (60 s de cycle au lieu de 20 s).
-
-#### P7 — Discovery de `live` côté TB
-
-Le proxy maintient en mémoire, par device qu'il sert, la valeur courante de `shared.live`. Stratégies, par ordre de préférence :
-
-**(a) GET attributes piggyback sur chaque POST** : à chaque POST de l'automate qui est forwardé avec succès à TB, le proxy fire **en parallèle** un `GET /api/v1/{token}/attributes?sharedKeys=live` vers TB et stocke le résultat dans son cache local. La réponse au POST est constituée à partir de ce cache (valeur précédente). Latence = 0 pour l'automate (la réponse retourne quand TB répond au POST). Coût : double les requêtes proxy → TB (mais reste sur le canal cloud, l'automate ne le voit pas).
-
-```
-Automate POST ─► Proxy ─┬─► TB (POST telemetry)
-                        └─► TB (GET attributes?sharedKeys=live)  ─► cache[token].live
-Proxy ─► Automate { "shared": { "live": cache[token].live } }
-```
-
-**(b) Polling périodique** : le proxy fait un GET attributes toutes les N secondes (ex : 30 s) en arrière-plan, indépendamment des POSTs. Plus simple ; latence de propagation jusqu'à N secondes.
-
-**(c) WebSocket subscription** : le proxy ouvre une WS vers TB et s'abonne aux mises à jour d'attributs SHARED pour les devices servis. Push instantané. Plus complexe (gestion de la reconnexion WS), mais le plus efficace pour beaucoup de devices.
-
-**Recommandation** : option (a) pour la v1 du proxy — simple, sans timer séparé, propagation immédiate au prochain POST. Migration vers (c) si volume devient un problème.
-
-Au démarrage froid (cache vide) : `cache[token].live = false` par défaut, premier GET au prochain POST initialise.
+Voir Section 11. Le proxy ne fait actuellement **aucune** logique `live` : ni discovery vers TB, ni injection dans la réponse à l'automate. Toggle `tb_format=true` actif pour `dateTime`+wrap mais sans gestion `live`.
 
 #### P8 — Flush du cache
 
@@ -1155,7 +1069,6 @@ Pas de batch endpoint, pas de throttle : le rate limit entre proxy et TB est lev
 | Composant | Type | Action |
 |---|---|---|
 | Rule chain "PAC Hybride Router" | TB rule chain | **Remplacer** (Section 4) |
-| Rule chain "Live Timeout Sweep" | TB rule chain | **Créer** (Section 5) |
 | Device profile "PAC Hybride" : default rule chain | TB device profile | Pointer vers "PAC Hybride Router v2" |
 | Device profile "PAC Hybride" : alarms | TB device profile | Supprimer les 13 orphelines |
 | Device profile "PAC Hybride" : default storage TTL | TB device profile | Mettre à 0 (illimité) |
@@ -1191,7 +1104,69 @@ Hors scope de cette spec, à trancher au moment où le palier se pose :
 - **Nouvelles alarmes** sur le payload v2 : ex `pac_v2.HPs[*].HP.status` en code erreur, `pac_v2.press` hors plage, "Offline" basée sur absence de POST > 5×cadence courante. À spécifier après cutover.
 - **Migration cleanup historique flat** : à T+1 an du cutover, décider si on DROP les partitions `ts_kv_2026_*` antérieures au cutover (libère ~50% du volume actuel) ou si on les garde pour comparaisons.
 - **6e TDUO `TDUO Tile`** : usage exact à déterminer (probablement template inclus par les 5 autres, à confirmer en lisant le descriptor).
-- **Extension TB `postTelemetry?withSharedKeys=live`** : initialement prévue (patch sur `DeviceApiController.java` côté fork yahtec) pour éviter au client un GET attributes séparé. Décision actuelle : c'est le **proxy** qui gère cette injection (Section 9.2 P7), pas TB. Avantage : aucune modification de code TB, pas de risque de conflit merge LTS. Inconvénient : 1 GET attributes supplémentaire proxy→TB par POST. Si la charge cloud devient problématique, réintroduire l'extension TB devient une option (le code design reste valable, archivé dans l'historique git de cette spec).
+- **Extension TB `postTelemetry?withSharedKeys=live`** : initialement prévue (patch sur `DeviceApiController.java` côté fork yahtec) pour éviter au client un GET attributes séparé. Décision actuelle : pas implémentée puisque le mode live lui-même est différé (voir ci-dessous). Le design Java reste valable, archivé dans l'historique git de cette spec.
+
+### 11.1 Mode live — design archivé (différé 2026-05-29)
+
+Décision utilisateur : **pas dans cette phase, à reconsidérer dans plusieurs jours**. Cadence actuelle = 1 POST/min fixe.
+
+Le design complet ci-dessous est conservé pour réactivation future sans avoir à le re-concevoir.
+
+#### Mécanique côté dashboard
+
+Un utilisateur ouvre un state qui doit "vivre" en temps réel (typiquement `default` ou `donnees_HP1` du dashboard "Mes Installations"). Le widget custom JS au mount :
+
+1. Écrit `SHARED_SCOPE live=true` + `liveTs=Date.now()` via `ctx.attributeService.saveEntityAttributes()`
+2. Démarre un setInterval 60 s qui rewrite `liveTs=Date.now()` tant que `document.visibilityState === 'visible'`
+3. Au unmount / blur / visibilitychange→hidden / beforeunload : écrit `SHARED_SCOPE live=false`
+
+#### Mécanique côté automate
+
+L'automate lit `live` **dans la réponse de son POST telemetry au proxy** (le proxy injecte la valeur depuis sa connaissance interne) :
+
+- Si `shared.live === true` → cadence = 20 s
+- Sinon → cadence = 60 s (par défaut)
+
+#### Sécurité timeout côté TB
+
+Rule chain dédiée "Live Timeout Sweep" cron 1×/min :
+
+```
+[Generator cron */1 * * * *]
+    → [Fetch devices with live=true]
+    → [Filter liveTs < now - 180000]
+    → [Save Attribute SHARED_SCOPE live=false]
+```
+
+Garantit le retour à `false` même si le browser se ferme brutalement.
+
+#### Discovery proxy → TB
+
+3 stratégies pour que le proxy maintienne sa connaissance de `live` :
+
+| Stratégie | Latence propagation | Coût proxy→TB | Complexité |
+|---|---|---|---|
+| (a) GET attributes piggyback sur chaque POST | 1 cycle (~60 s) | 2× requêtes (POST + GET) | Faible |
+| (b) Polling périodique GET attributes toutes les N s | N secondes | 1 GET / N s par device | Moyenne |
+| (c) WebSocket subscription | instantané | 1 WS persistant par tenant | Élevée |
+
+**Recommandation à la réactivation** : option (a) pour v1 (simple, pas de timer séparé). Migration vers (c) si volume devient un problème.
+
+#### Attributs SHARED_SCOPE introduits
+
+- `live` (boolean)
+- `liveTs` (long, epoch ms keep-alive widget MAJ toutes les 60 s)
+
+Tout le reste du contrat v2 actuel n'utilise **aucun** attribut SHARED. Si le mode live est réactivé, ces 2 attributs s'ajoutent.
+
+#### Composants à créer à la réactivation
+
+1. Rule chain "Live Timeout Sweep" (~3-4 nodes : Generator cron + Fetch devices + Filter + Save Attribute)
+2. Widget custom JS keep-alive sur les states détail (~30 lignes JS)
+3. Logique discovery proxy P7-a (modif binary Rust telemetry-proxy ou wrapper externe)
+4. (Optionnel) Extension TB `postTelemetry?withSharedKeys=live` si proxy P7 devient trop coûteux
+
+Sans cette réactivation : cadence 1/min fixe, dashboard rafraîchit toutes les minutes avec le dernier `pac_v2`.
 
 ## 12. Risques et mitigations
 
@@ -1201,21 +1176,20 @@ Hors scope de cette spec, à trancher au moment où le palier se pose :
 | Widget TDUO refactorisé affiche valeurs incohérentes | Visuel dashboard pilote J+1 | Revert widget bundle vers version précédente ; la donnée `pac_v2` reste écrite |
 | Firmware nested mal formé en production | Switch détecte HPs mais script échoue ; alarme TB sur Failure queue | OTA revert au firmware précédent sur ce device ; branche flat compat prend le relais automatiquement |
 | Attribute_kv str_v > limite | `SELECT max(length(str_v))` régulièrement | Réduire ATTR_PATHS dans le script TBEL, redéployer rule chain à chaud |
-| Live Timeout Sweep manque de tourner | Devices restent en cadence 20 s sans client | Surveillance via log de la rule chain ; option (c) firmware-side check `liveTs` < 3 min comme ceinture+bretelles |
 | Cron DROP PARTITION échoue (verrou, espace) | `/var/log/tb-ts_kv-drop.log` | Alerte log + tentative manuelle ; impact = on garde 1 année de plus, pas critique |
 
 ## 13. Acceptance criteria
 
 Le projet est considéré terminé quand :
 
-- 100% des devices PAC Hybride du parc envoient en format nested v2 (vérifiable via `SELECT count(*) FROM ts_kv WHERE key = 'pac_v2' GROUP BY entity_id`)
-- Aucune ligne `ts_kv` flat n'est plus écrite (hors `evt_*`) après J+30 du dernier OTA
-- Les 33 attributs SERVER_SCOPE sont présents sur chaque device : 6 (métadonnées root, incluant nHp) + 9 (consignes heat) + 1 (dhw.tSet) + 5 (unités calo) + 12 (versions par HP × 4 fixe)
-- Le proxy retourne dans la réponse à l'automate `{"shared":{"live":<bool>}}` reflétant l'état courant en TB ; pendant une indisponibilité TB, retourne `{"shared":{"live":false}}` (mode normal)
-- L'automate POSTe au proxy avec body bare contenant `dateTime` en string (pas de `ts` epoch). Le proxy parse `dateTime` et wrap en `{ts, values}` avant forward à TB. Les samples (live ou rejoués après reconnexion) apparaissent dans `ts_kv` à leur `ts` d'acquisition d'origine, pas au timestamp de réception réseau
+- 100 % des devices PAC Hybride du parc envoient en format nested v2 (vérifiable via `SELECT count(*) FROM ts_kv WHERE key = 'pac_v2' GROUP BY entity_id`)
+- Pendant la transition (Phase 1+), double écriture flat + json_v `pac_v2` (Option B Section 4). Après Phase 3 widgets refactorisés, plus aucune ligne `ts_kv` flat n'est écrite (hors `evt_*`)
+- Les 37 attributs SERVER_SCOPE sont présents sur chaque device (cf. Section 3.6 récap)
+- L'automate POSTe au proxy avec body bare contenant `dateTime` en string (pas de `ts` epoch). Le proxy parse `dateTime` et wrap en `{ts, values}` avant forward à TB. Les samples (réception normale ou rejoués après reconnexion TB) apparaissent dans `ts_kv` à leur `ts` d'acquisition d'origine, pas au timestamp de réception réseau
 - Le rejeu après reconnexion envoie chaque sample en POST individuel sans batch ni throttle ; toutes les lignes `ts_kv` historiques sont écrites correctement
 - Le state `default` et `donnees_HP1` affichent correctement les valeurs depuis `pac_v2` sur les 6 widgets TDUO refactorisés
-- Le mode live est observable : cadence passe à 20 s quand un client ouvre `default` ou `donnees_HP1`, retombe à 60 s 3 min après la fermeture
 - Le state `historique` affiche un chart 1 an en < 3 s
 - Le script de rotation `tb-ts_kv-drop-old-year.sh` a été testé sur un mois fictif (création + drop manuel d'un partition de test)
 - Les 13 alarmes orphelines sont supprimées du device profile
+
+> **Mode live exclu des acceptance criteria** — différé (Section 11.1). Cadence 1/min fixe.
