@@ -1,0 +1,13 @@
+# /etc/cron.d/tb-storage-rotation
+#
+# Yearly drop of ts_kv partitions older than (current year - 4).
+# Runs on Jan 1st at 02:00 server time (UTC sur ce serveur).
+#
+# Politique : retention de l'annee en cours + 3 dernieres annees completes.
+# Source : spec docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md Section 8.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# m h dom mon dow user command
+0 2 1 1 * root /usr/local/bin/tb-ts_kv-drop-old-year.sh
