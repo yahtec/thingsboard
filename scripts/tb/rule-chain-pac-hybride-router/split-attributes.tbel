@@ -1,0 +1,67 @@
+// scripts/tb/rule-chain-pac-hybride-router/split-attributes.tbel
+//
+// Receives a nested v2 msg (msg.HPs present guaranteed by upstream Filter node).
+// The ts is already in metadata.ts (from {ts, values} wrapper injected by proxy).
+// Output : 2 messages — POST_ATTRIBUTES_REQUEST (SERVER_SCOPE) + POST_TELEMETRY_REQUEST (pac_v2 json_v).
+//
+// Source de verite : spec docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md
+//                    Section 4.3 — 28 ATTR_PATHS finalises point 2 (2026-05-29).
+// 37 attributs au runtime avec HPs x 4 instances.
+
+var ATTR_PATHS = [
+  "id", "rel", "type", "nHp", "relCm2",
+  "dhw.tSet",
+  "heat.slope", "heat.foot", "heat.tMax",
+  "heat.dayBgEte", "heat.monthBgEte",
+  "heat.dayEndEte", "heat.monthEndEte",
+  "heat.tCut", "heat.tRes",
+  "heat.calo.qeU", "heat.calo.qeTotU",
+  "heat.calo.pwrU", "heat.calo.hKwhU", "heat.calo.cKwhU",
+  "caloM.qeU", "caloM.qeTotU",
+  "caloM.pwrU", "caloM.hKwhU", "caloM.cKwhU",
+  "HPs.relStm", "HPs.relEsp", "HPs.relScr"
+];
+
+var attrs = {};
+var payload = clone(msg);
+
+foreach (path : ATTR_PATHS) {
+  var parts = path.split(".");
+
+  // HPs.* case : applique sur chaque element du array (longueur fixe 4)
+  if (parts[0] == "HPs") {
+    var leaf = parts[1];
+    if (payload.HPs != null) {
+      for (var i = 0; i < payload.HPs.length; i++) {
+        if (payload.HPs[i][leaf] != null) {
+          attrs["HP" + (i+1) + "_" + leaf] = payload.HPs[i][leaf];
+          payload.HPs[i].remove(leaf);
+        }
+      }
+    }
+    continue;
+  }
+
+  // Generic dotted-path
+  var ref = payload;
+  var ok = true;
+  for (var j = 0; j < parts.length - 1; j++) {
+    if (ref[parts[j]] == null) { ok = false; break; }
+    ref = ref[parts[j]];
+  }
+  if (!ok) continue;
+  var leafName = parts[parts.length - 1];
+  if (ref[leafName] != null) {
+    attrs[parts.join("_")] = ref[leafName];   // heat.calo.qeU -> heat_calo_qeU
+    ref.remove(leafName);
+  }
+}
+
+return [
+  { msg: attrs,
+    metadata: metadata.merge({"scope": "SERVER_SCOPE"}),
+    msgType: "POST_ATTRIBUTES_REQUEST" },
+  { msg: { pac_v2: payload },
+    metadata: metadata,
+    msgType: "POST_TELEMETRY_REQUEST" }
+];
