@@ -1021,6 +1021,154 @@ Le script `tb-ts_kv-drop-old-year.sh` cible **uniquement** les partitions `ts_kv
 
 Voir Section 11 — "Migration cleanup historique flat". Décision à T+1 an du cutover Option B : DROP les partitions `ts_kv_2026_*` antérieures au cutover (libère ~50 % du volume) ou les garder pour comparaisons historiques.
 
+### 8.5 Compactage rétroactif v1 → v2 des partitions historiques
+
+> **Décision (2026-05-29 point 5+)** : transformer la donnée existante v1 (flat, 247 lignes par sample) en format v2 (1 ligne `pac_v2` json_v par sample) pour deux bénéfices :
+>
+> 1. **Visibilité historique dans les widgets v2** — les widgets refactorisés (Section 7) ne lisent que `pac_v2` ; sans rétro-compactage, ils ne verraient pas l'historique pré-cutover.
+> 2. **Réduction du stockage actuel** — économie ~92 % par sample sur les partitions traitées (~500 MB libérés / mois / device).
+
+#### Objectif
+
+Pour chaque sample historique `(entity_id, ts)` dans `ts_kv_YYYY_MM` :
+
+- Récupérer toutes les ~247 lignes flat de ce sample
+- Reconstruire la structure nested `pac_v2` (inverse du flatten dispatcher)
+- Insérer **1 ligne** avec `key = pac_v2` (`key_id` via `key_dictionary`) et `json_v = <payload reconstruit>` au même `ts`
+- Supprimer les ~247 lignes flat d'origine
+- Net : –246 lignes par sample, ~36 KB libérés par sample
+
+#### Mapping flat → nested (inverse du dispatcher)
+
+| Préfixe flat | Path pac_v2 | Notes |
+|---|---|---|
+| `HP{1..4}_<champ>` | `HPs[N-1].HP.<champ>` ou direct sous `HPs[N-1].<champ>` (comm, relStm, etc.) | N = index 1..4 |
+| `HP{1..4}_invert_<champ>` | `HPs[N-1].invert.<champ>` | |
+| `HP{1..4}_boil_<champ>` | `HPs[N-1].boil.<champ>` | |
+| `HP{1..4}_pump_<champ>` | `HPs[N-1].pump.<champ>` | |
+| `heat_calo_<champ>` | `heat.calo.<champ>` | |
+| `heat_<champ>` | `heat.<champ>` | |
+| `dhw_pump{1..4}_<champ>` | `dhw.pump{1..4}.<champ>` | |
+| `dhw_<champ>` | `dhw.<champ>` | |
+| `caloM_<champ>` | `caloM.<champ>` | |
+| `pump{1,2}M_<champ>` | `pump{1,2}M.<champ>` | |
+| `id`, `rel`, `type`, `nHp`, `tExt`, `TinM`, `press`, `commCm2`, `relCm2`, `date`, `time`, `dateTime` | top-level direct sous `pac_v2` | |
+| `evt_*` | **SKIP** | Restent en flat sur leur device (flux séparé, Section 3.5) |
+
+Le mapping est inverse de l'opération `parts.join("_")` du TBEL split (Section 4.3). Les valeurs sont prises depuis la colonne appropriée (`dbl_v`, `long_v`, `str_v`, `bool_v`) selon `value_type`.
+
+#### Algorithme (par device, par mois)
+
+```sql
+-- À implémenter en PL/pgSQL ou script externe (Python/Rust).
+-- Pseudo-SQL :
+
+FOR ts_unique IN (
+  SELECT DISTINCT ts
+  FROM ts_kv_2026_MM
+  WHERE entity_id = <device_uuid>
+  ORDER BY ts
+) LOOP
+
+  -- 1. Récupérer tous les couples (key, value) pour ce sample
+  WITH flat_keys AS (
+    SELECT d.key, k.dbl_v, k.long_v, k.str_v, k.bool_v
+    FROM ts_kv_2026_MM k
+    JOIN key_dictionary d ON k.key = d.key_id
+    WHERE k.entity_id = <device_uuid>
+      AND k.ts = ts_unique
+      AND d.key NOT LIKE 'evt_%'
+  )
+
+  -- 2. Reconstruire le payload nested via jsonb_build_object + jsonb_set
+  -- (logique d'aggregation : grouper par préfixe HP{N}_, dhw_, heat_, caloM_, pump1M_, pump2M_)
+  -- (résultat = pac_v2 jsonb)
+
+  -- 3. INSERT
+  INSERT INTO ts_kv_2026_MM (entity_id, key, ts, json_v)
+  VALUES (<device_uuid>, <pac_v2_key_id>, ts_unique, <pac_v2_jsonb>);
+
+  -- 4. DELETE des lignes flat
+  DELETE FROM ts_kv_2026_MM
+  WHERE entity_id = <device_uuid>
+    AND ts = ts_unique
+    AND key != <pac_v2_key_id>
+    AND key NOT IN (SELECT key_id FROM key_dictionary WHERE key LIKE 'evt_%');
+
+END LOOP;
+```
+
+#### Stratégie d'exécution
+
+1. **Idempotence** : avant traitement d'un sample, vérifier si `pac_v2` row existe déjà au `ts` — si oui, skip (le compactage a déjà tourné OU c'est un sample post-cutover).
+2. **Granularité** : partition par partition (mois par mois), device par device. ~14k samples × 247 lignes = ~3.5M rows à traiter par mois par device. Batches de ~1000 samples avec `COMMIT` intermédiaire pour libérer WAL.
+3. **Transactionnel** : `BEGIN ; INSERT ; DELETE ; COMMIT` par sample (ou par petit batch). Si crash : reprend où c'était.
+4. **Tolérance trous** : un sample avec quelques keys manquantes (ex 240 au lieu de 247) produit quand même un `pac_v2` valide avec sous-objets partiels. Pas de blocage.
+5. **Pas de lock long** : utiliser `SELECT ... FOR UPDATE SKIP LOCKED` pour permettre les écritures parallèles (la rule chain v2 continue d'écrire en flat pendant le compactage des historiques).
+6. **Ordre temporel** : commencer par les partitions les **plus anciennes** (avril 2026, mai 2026 pré-cutover) en premier, progresser vers le présent. Maximise le gain disque rapide.
+7. **Performance attendue** : ~10-100 samples / s sur PG16 avec index. ~14k samples / device / mois = ~3-25 min par device par mois.
+
+#### Validation par batch
+
+Pour chaque batch de samples compactés, exécuter en parallèle :
+
+```sql
+-- Vérifier que tous les samples flat ont bien un pac_v2 correspondant
+SELECT count(*) AS samples_with_pac_v2,
+       count(*) FILTER (WHERE has_pac_v2) AS converted,
+       count(*) FILTER (WHERE NOT has_pac_v2) AS missing
+FROM (
+  SELECT entity_id, ts,
+         EXISTS(SELECT 1 FROM ts_kv_2026_MM k2
+                WHERE k2.entity_id = base.entity_id
+                  AND k2.ts = base.ts
+                  AND k2.key = (SELECT key_id FROM key_dictionary WHERE key='pac_v2')) AS has_pac_v2
+  FROM (SELECT DISTINCT entity_id, ts FROM ts_kv_2026_MM
+        WHERE entity_id = <device_uuid>) base
+) sub;
+```
+
+Attendu : `missing = 0` (sauf si compactage en cours, alors la valeur baisse au fil du temps).
+
+#### Rollback
+
+- **Avant le DELETE des flat** : si le `pac_v2` inséré est invalide (structure incorrecte, taille > limite), supprimer la ligne `pac_v2` et conserver le flat. Le sample reste compactable au prochain passage.
+- **Après le DELETE des flat** : pas de rollback possible côté DB (le flat est effacé). Mitigation : **backup pg_dump des partitions** `ts_kv_2026_*` avant lancement du compactage, conservé localement ~1 mois.
+
+#### Ordre d'exécution dans la migration
+
+```
+Phase 1.0 : Deploy nouvelle rule chain (Section 4) → parallel save commence (flat + pac_v2 sur nouveaux samples)
+Phase 1.X : Compactage rétroactif (Section 8.5) sur les partitions PRÉ-Phase 1.0  ← AJOUT
+Phase 3.x : Refactor widgets (Section 7)
+Phase 3.6 : Retrait connexion mark active → save TS flat (les nouveaux samples n'ont plus que pac_v2)
+```
+
+Le compactage rétroactif peut tourner en arrière-plan **dès Phase 1.0**, avant la refonte widgets. Il libère progressivement de l'espace sans bloquer le reste de la migration.
+
+#### Volume libéré estimé
+
+| Partition | Lignes avant | Lignes après | Bytes libérés (approx) |
+|---|---|---|---|
+| `ts_kv_2026_04` (3 PACs, 30 jours) | ~4 M | ~16k | **~640 MB** |
+| `ts_kv_2026_05` (3 PACs, 31 jours, partielle) | ~6 M | ~25k | **~960 MB** |
+| **Total parc actuel sur partitions pré-cutover** | | | **~1-2 GB libérés** |
+
+Pour 60 PACs sur 1 an pré-cutover : ~50-100 GB libérés. Significatif.
+
+#### Implémentation concrète (Phase 1.X)
+
+À écrire dans `scripts/server/compact-v1-to-v2.py` (ou `.sh`/`.sql`) :
+
+- Connexion PG sécurisée (creds via `~/.pgpass` ou env)
+- Boucle par device PAC Hybride (UUID lus depuis `device`)
+- Boucle par partition mensuelle (`ts_kv_YYYY_MM`)
+- Boucle par sample, transformation, insert + delete
+- Logging `/var/log/tb-compact-v1-to-v2.log` (avancement, erreurs)
+- Pas de cron automatique : lancement manuel sur 1 device pilote en premier, puis scriptage du parc complet après validation OK.
+
+À déployer en Phase 1.X du plan d'implémentation (entre Phase 1 rule chain et Phase 3 widgets), pour que les widgets v2 voient l'historique entièrement compacté.
+
 ## 9. Exigences automate + proxy
 
 ### 9.1 Automate (générateur du payload)
@@ -1221,6 +1369,7 @@ Pas de batch endpoint, pas de throttle : le rate limit entre proxy et TB est lev
 | Widget bundle `tduo.events_history{2..7}` (6 versions dev) | TB widget | **Archiver** après validation `tduo.events_history` v2 |
 | Server-side script `/usr/local/bin/tb-ts_kv-drop-old-year.sh` | Bash | **Créer** (Section 8) |
 | Cron `/etc/cron.d/tb-storage-rotation` | cron | **Créer** (Section 8) |
+| Script `scripts/server/compact-v1-to-v2.py` (ou équivalent) | Python/Bash | **Créer** (Section 8.5) — compactage rétroactif des partitions historiques v1 → pac_v2 json_v |
 | Automate (générateur payload v2) | Code automate, repo séparé | **Déjà déployé** sur 2602000001/2 (Section 9.1, M1-M10) |
 | Proxy `telemetry-proxy 0.1.0` | Code séparé sur `10.77.0.74` | **Déjà actif** avec `tb_format=true` pour device `tduo` (Section 9.2). Parse `dateTime` + wrap `{ts, values}` opérationnel |
 | Firmware PAC | Code embedded, repo séparé | **Inchangé** côté HTTP (Modbus uniquement vers automate) |
@@ -1332,6 +1481,7 @@ Le projet est considéré terminé quand :
 - Le state `default` et `donnees_HP1` affichent correctement les valeurs depuis `pac_v2` sur les 6 widgets TDUO refactorisés
 - Le state `historique` affiche un chart 1 an en < 3 s
 - Le script de rotation `tb-ts_kv-drop-old-year.sh` a été testé sur un mois fictif (création + drop manuel d'un partition de test)
+- Le script de **compactage rétroactif** (Section 8.5) a tourné sur toutes les partitions pré-Phase 1.0 ; les widgets v2 voient l'historique avant cutover ; volume `ts_kv` historique réduit d'au moins 50 %
 - Les 13 alarmes orphelines sont supprimées du device profile
 
 > **Mode live exclu des acceptance criteria** — différé (Section 11.1). Cadence 1/min fixe.
