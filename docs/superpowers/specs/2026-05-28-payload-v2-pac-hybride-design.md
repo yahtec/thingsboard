@@ -987,7 +987,9 @@ echo "$(date -Iseconds) — done" >> "${LOG}"
 
 - Default Storage TTL du device profile **PAC Hybride** : `0` (illimité) — c'est le script PG qui gère la rotation, pas le worker TB.
 
-### Volume attendu (post-migration)
+### Volume attendu (post-Phase 3.6)
+
+Calcul cible quand la connexion `mark active → save TS (per-id device)` est retirée (Phase 3.6, fin de l'Option B) — 1 seule ligne `pac_v2` json_v par sample :
 
 | Parc | Cadence | Payload | Lignes/an/device | Bytes/an/device | Bytes/an total (4 ans gardés) |
 |---|---|---|---|---|---|
@@ -996,6 +998,28 @@ echo "$(date -Iseconds) — done" >> "${LOG}"
 | 60 PACs (cible long terme) | 1/min | ~3.2 KB | 525 600 | ~1.7 GB | ~400 GB |
 
 Pour 60 PACs il faudra envisager le SBS resize Scaleway (voir [project-thingsboard-storage-optim]).
+
+### Volume transitoire pendant Option B (Phase 1 → Phase 3.6)
+
+Tant que les widgets ne sont pas refactorisés (Section 7), la double écriture flat + json_v est active :
+
+- 247 lignes flat × ~158 octets PK btree + 1 ligne `pac_v2` × ~3.2 KB ≈ **~42 KB/sample**
+- ~22 GB/an/device pendant la transition (×13 vs cible)
+- 3 PACs sur quelques semaines de transition ≈ ~5 à 15 GB transitoire supplémentaire (selon durée Phase 3)
+
+Tolérable sur la VM actuelle (40 GB SBS partition `ts_kv_2026_05` à ~7 GB début mai). À surveiller via `df -h /var/lib/postgresql` et `SELECT pg_size_pretty(pg_total_relation_size('ts_kv_2026_MM'))`.
+
+### Partitions hors scope du cron
+
+Le script `tb-ts_kv-drop-old-year.sh` cible **uniquement** les partitions `ts_kv_YYYY_MM` mensuelles. Les tables suivantes ne sont **pas** nettoyées par ce cron :
+
+- `ts_kv_indefinite` : partition fourre-tout pour les `ts` hors plage des partitions mensuelles. Avec le proxy parsant `dateTime` correctement, devrait rester quasi vide. À surveiller via `SELECT count(*) FROM ts_kv_indefinite` périodiquement ; si volume non négligeable, ajouter une logique de purge dédiée.
+- `ts_kv_latest` : 1 ligne par couple (entity, key) — pas de croissance temporelle, pas de cleanup nécessaire.
+- `key_dictionary` : références aux noms de clés historiques. À conserver tel quel pour cohérence des outils d'exploration historique.
+
+### Cleanup historique flat post Phase 3.6 (décision différée)
+
+Voir Section 11 — "Migration cleanup historique flat". Décision à T+1 an du cutover Option B : DROP les partitions `ts_kv_2026_*` antérieures au cutover (libère ~50 % du volume) ou les garder pour comparaisons historiques.
 
 ## 9. Exigences automate + proxy
 
