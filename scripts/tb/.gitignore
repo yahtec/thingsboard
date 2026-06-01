@@ -1,0 +1,9 @@
+# Auto-generated backups before destructive operations on TB entities.
+# Useful for forensic / local rollback but not for the shared repo.
+backup/
+widgets/tduo-backup/
+dashboard/backup/
+
+# Recovery / preview intermediate files (regenerated on demand).
+dashboard/dash-recovered.json
+*.preview.*.json
