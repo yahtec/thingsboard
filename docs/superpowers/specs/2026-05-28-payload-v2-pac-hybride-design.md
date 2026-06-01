@@ -560,8 +560,10 @@ Résultat 13 + 5 = 18 nodes. Pour chaque POST reçu :
 
 - **POST nested v2** (avec champ `HPs`) :
   - 247 lignes `ts_kv` flat (branche save TS, inchangée)
-  - 1 ligne `attribute_kv` par attribut SERVER_SCOPE (no-op si valeur inchangée — TB déduplique)
-  - 1 ligne `ts_kv` avec `key=pac_v2` et `value_json = <payload nested sans attrs>` (nouvelle branche)
+  - 1 ligne `ts_kv` avec `key=pac_v2` et `value_json = <payload nested>` (nouvelle branche)
+  - ~~1 ligne `attribute_kv` par attribut SERVER_SCOPE~~ → **différé** (voir note ci-dessous, 2026-05-29)
+
+> **Note 2026-05-29 — split attrs différé.** Le déploiement initial sur prod (TB 4.3.1.1) a buté sur le runtime TBEL : un retour multi-messages (POST_ATTRIBUTES_REQUEST + POST_TELEMETRY_REQUEST) avec metadata partagée échoue silencieusement à l'exécution (Last Rule Node = TBEL split-attributes v2, pas de stack trace). Init OK, compilation OK, mais runtime KO. Cause non identifiée. Solution retenue : TBEL minimal `return [{ msg: { pac_v2: msg }, metadata: metadata, msgType: "POST_TELEMETRY_REQUEST" }];` qui émet uniquement pac_v2 (payload complet, pas de split). MsgType Switch routes vers Save TS pac_v2. La branche `Save Attrs SERVER_SCOPE` reste en place mais inactive. Le gain stockage ×13 est partiellement atteint : ~247 keys → 1 key/sample (pac_v2 ~2.6 KB JSON). L'extraction d'attrs sera reprise dans une itération future (peut nécessiter passage à `TbJsTransformNode` au lieu de TBEL).
 - **POST evt_*** (bundle défaut, pas de `HPs`) :
   - Sauvegardé en flat ts_kv via la branche existante `save TS (per-id device)` — les keys `evt_date`, `evt_time`, `evt_fault`, etc. apparaissent sur le device PAC
   - La branche TBEL split n'est **pas activée** (filter gating)

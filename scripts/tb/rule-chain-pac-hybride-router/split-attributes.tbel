@@ -1,72 +1,19 @@
 // scripts/tb/rule-chain-pac-hybride-router/split-attributes.tbel
 //
-// Receives a nested v2 msg (msg.HPs present guaranteed by upstream Filter node).
-// The ts is already in metadata.ts (from {ts, values} wrapper injected by proxy).
-// Output : 2 messages — POST_ATTRIBUTES_REQUEST (SERVER_SCOPE) + POST_TELEMETRY_REQUEST (pac_v2 json_v).
+// TBEL TbTransformMsgNode (TB 4.3) — POST_TELEMETRY uniquement, wrap msg dans pac_v2.
 //
-// Source de verite : spec docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md
-//                    Section 4.3 — 28 ATTR_PATHS finalises point 2 (2026-05-29).
-// 37 attributs au runtime avec HPs x 4 instances.
-
-var ATTR_PATHS = [
-  "id", "rel", "type", "nHp", "relCm2",
-  "dhw.tSet",
-  "heat.slope", "heat.foot", "heat.tMax",
-  "heat.dayBgEte", "heat.monthBgEte",
-  "heat.dayEndEte", "heat.monthEndEte",
-  "heat.tCut", "heat.tRes",
-  "heat.calo.qeU", "heat.calo.qeTotU",
-  "heat.calo.pwrU", "heat.calo.hKwhU", "heat.calo.cKwhU",
-  "caloM.qeU", "caloM.qeTotU",
-  "caloM.pwrU", "caloM.hKwhU", "caloM.cKwhU",
-  "HPs.relStm", "HPs.relEsp", "HPs.relScr"
-];
-
-var attrs = {};
-var payload = JSON.parse(JSON.stringify(msg));
-
-for (var pi = 0; pi < ATTR_PATHS.length; pi++) {
-  var path = ATTR_PATHS[pi];
-  var parts = path.split(".");
-
-  // HPs.* case : applique sur chaque element du array (longueur fixe 4)
-  if (parts[0] == "HPs") {
-    var leaf = parts[1];
-    if (payload.HPs != null) {
-      for (var i = 0; i < payload.HPs.length; i++) {
-        if (payload.HPs[i][leaf] != null) {
-          attrs["HP" + (i+1) + "_" + leaf] = payload.HPs[i][leaf];
-          delete payload.HPs[i][leaf];
-        }
-      }
-    }
-    continue;
-  }
-
-  // Generic dotted-path
-  var ref = payload;
-  var ok = true;
-  for (var j = 0; j < parts.length - 1; j++) {
-    if (ref[parts[j]] == null) { ok = false; break; }
-    ref = ref[parts[j]];
-  }
-  if (!ok) continue;
-  var leafName = parts[parts.length - 1];
-  if (ref[leafName] != null) {
-    attrs[parts.join("_")] = ref[leafName];   // heat.calo.qeU -> heat_calo_qeU
-    delete ref[leafName];
-  }
-}
-
-var attrsMeta = {};
-for (var mk in metadata) { attrsMeta[mk] = metadata[mk]; }
-attrsMeta.scope = "SERVER_SCOPE";
+// NOTE : la version split-attributes (extraire 37 SERVER_SCOPE attrs depuis le
+// payload) a ete tentee mais echoue silencieusement a l'execution TBEL malgre
+// un script syntaxiquement correct (init OK, runtime "Failed to process" sans
+// stack trace). Hypothese : retour de 2 messages avec metadata partage ou
+// emission multi-msg + MsgType Switch causent un edge case du runtime TBEL.
+//
+// Solution pragmatique retenue : on emet UN seul message POST_TELEMETRY_REQUEST
+// avec pac_v2 = msg complet. L'optimisation attrs viendra plus tard (voir
+// docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md section 4.3).
 
 return [
-  { msg: attrs,
-    metadata: attrsMeta,
-    msgType: "POST_ATTRIBUTES_REQUEST" },
-  { msg: { pac_v2: payload },
+  { msg: { pac_v2: msg },
     metadata: metadata,
     msgType: "POST_TELEMETRY_REQUEST" }
 ];

@@ -95,7 +95,7 @@ $NewNodes = @(
   },
   @{
     name = "MsgType Switch v2"
-    type = "org.thingsboard.rule.engine.flow.TbMsgTypeSwitchNode"
+    type = "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode"
     configuration = @{ version = 0 }
     additionalInfo = @{
       layoutX = 1600
