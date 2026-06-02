@@ -42,3 +42,5 @@ rebuild-docker.sh
 yahtec-ota.ppk
 deploy.ps1
 scripts/server/__pycache__/
+# Yahtec : notes internes hors git (checklists, snippets, etc.)
+notes/
