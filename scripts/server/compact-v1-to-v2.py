@@ -24,6 +24,17 @@ Optimisations 2026-06-01 :
 - Bulk INSERT via execute_values -> 1 round-trip pour 100 INSERTs.
 - Bulk DELETE pour le batch -> 1 round-trip pour 100*~247 lignes.
 - statement_timeout 60s, commit par batch.
+
+Correctif 2026-06-01 (post-extraction debug arrays) :
+- Le firmware envoie ~30s apres un defaut un payload de debug avec ~107 keys
+  contenant chacune un array JSON (genre `p_hp = "[v1,v2,...,v300]"`). Ces
+  keys sont sauvees comme rows str_v="[..." par la rule chain "save TS (per-id
+  device)" (branche flat). Avant le correctif, le compactage les absorbait
+  toutes en top-level de pac_v2 -> rows pac_v2 a 130 KB et plus de keys
+  separees pour le widget Fault Diagnostic.
+- Fix : detecter les rows avec str_v commencant par `[` -> les considerer
+  comme debug arrays, les EXCLURE de build_pac_v2 ET du DELETE. Elles restent
+  donc en rows ts_kv separees, accessibles via API timeseries.
 """
 
 import argparse
@@ -238,11 +249,21 @@ def compact_partition(device_uuid, device_name, partition, dry_run=False):
                     rows = cur.fetchall()
 
                     # 4. Group rows par ts en Python
+                    # Skip aussi les debug arrays (str_v commencant par '[') :
+                    # ce sont les snapshots ~30s apres un defaut envoyes par le
+                    # firmware (107 keys flat avec arrays de 300 valeurs). Doivent
+                    # rester en rows separees pour le widget Fault Diagnostic.
                     by_ts = {}
+                    debug_row_count = 0
                     for r in rows:
                         kid = r["key"]
                         kname = id_to_name.get(kid)
                         if kname is None or kname == PAC_V2_KEY or kname.startswith("evt_"):
+                            continue
+                        sv = r.get("str_v")
+                        if isinstance(sv, str) and sv.startswith("[") and len(sv) > 30:
+                            # debug array : ne pas inclure dans pac_v2, preserver en row
+                            debug_row_count += 1
                             continue
                         by_ts.setdefault(r["ts"], {})[kname] = get_value(r)
 
@@ -271,12 +292,15 @@ def compact_partition(device_uuid, device_name, partition, dry_run=False):
                             template="(%s, %s, %s, %s::jsonb)",
                             page_size=BATCH_SIZE,
                         )
-                        # 7. Bulk DELETE flat keys pour les ts compactés
+                        # 7. Bulk DELETE flat keys pour les ts compactés.
+                        # PRESERVE les rows str_v=`[...]` (debug arrays firmware,
+                        # voir step 4) -> elles restent comme rows separees.
                         cur.execute(
                             f"DELETE FROM {partition} "
                             f"WHERE entity_id = %s "
                             f"  AND ts = ANY(%s) "
-                            f"  AND key NOT IN %s",
+                            f"  AND key NOT IN %s "
+                            f"  AND NOT (str_v IS NOT NULL AND str_v LIKE '[%%' AND length(str_v) > 30)",
                             (device_uuid, deletes_ts, tuple(keep_key_ids)),
                         )
 
@@ -286,6 +310,7 @@ def compact_partition(device_uuid, device_name, partition, dry_run=False):
                     log.info(
                         f"{device_name}/{partition}: batch done "
                         f"converted+={len(deletes_ts)} empty+={len(batch) - len(deletes_ts)} "
+                        f"debug_rows_preserved+={debug_row_count} "
                         f"total converted={converted} empty={empty} errors={errors} "
                         f"(at sample {batch_start + len(batch)}/{len(todo_ts)})"
                     )
