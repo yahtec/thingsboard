@@ -1,0 +1,221 @@
+/* Layout responsive — cssjs de TB strippe @media, on pilote le wrap via flex-basis.
+   Objectif plein ecran : navbar + (col-left fine | 4 PAC + ECS + Chauffage sur 1 ligne). */
+
+.tb-markdown-view {
+    height: 100% !important;
+    min-height: 100% !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 0 !important;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+.tb-markdown-view *, .tb-markdown-view *:before, .tb-markdown-view *:after {
+    box-sizing: border-box;
+}
+.tb-markdown-view > * { width: 100%; }
+
+.schema-page {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px;
+    background: #f5f5f5;
+    box-sizing: border-box;
+}
+
+/* Zone principale : col-left + col-right cote a cote, wrap sur etroit.
+   align-content + align-items flex-start : en mode wrap mobile, les lignes
+   ne sont pas etirees pour remplir la hauteur du widget (sinon col-left
+   devient une grande zone blanche vide). */
+.schema-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    gap: 10px;
+}
+
+/* flex-basis 160px : col-left passe en pleine largeur quand le conteneur ne peut plus
+   aligner col-left (160px) + col-right (~440px) cote a cote. max-width borne en desktop. */
+.col-left {
+    flex: 1 1 160px;
+    min-width: 0;
+    max-width: 220px;
+    background: white;
+    border-radius: 6px;
+    border-left: 3px solid #c62828;
+    padding: 12px 10px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    box-sizing: border-box;
+}
+
+.common-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #c62828;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #eee;
+}
+
+.common-row {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 8px;
+}
+.common-label {
+    font-size: 10px;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.common-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+}
+
+/* flex-grow eleve pour prendre tout l'espace restant. */
+.col-right {
+    flex: 9999 1 300px;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* Grille de blocs : wrap plutot que scroll horizontal. */
+.schema-scroll {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    min-width: 0;
+    width: 100%;
+}
+
+/* flex-basis 150px + pas de max-width contraignant → 6 blocs peuvent tenir sur 1 ligne
+   des que le conteneur fait ~950px+ (6 × 150 + gaps). En-dessous, wrap progressif. */
+.bloc {
+    flex: 1 1 150px;
+    min-width: 0;
+    max-width: 260px;
+    background: white;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.pac-bloc { border-top: 3px solid #1976d2; }
+.ecs-bloc { border-top: 3px solid #7b1fa2; }
+.heat-bloc { border-top: 3px solid #c62828; }
+
+.bloc-title {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 7px 10px;
+    color: white;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    flex: 0 0 auto;
+}
+.pac-bloc .bloc-title { background: #1976d2; }
+.ecs-bloc .bloc-title { background: #7b1fa2; }
+.heat-bloc .bloc-title { background: #c62828; }
+
+.bloc-body {
+    padding: 7px 10px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #c62828;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 3px;
+    margin-top: 3px;
+}
+
+.separator {
+    height: 1px;
+    background: #eee;
+    margin: 5px 0;
+}
+
+.data-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 0;
+    font-size: 12px;
+    gap: 6px;
+}
+.dl {
+    color: #666;
+    font-size: 11px;
+    flex: 1 1 0%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dv {
+    font-weight: 600;
+    color: #333;
+    font-size: 12px;
+    white-space: nowrap;
+    -webkit-font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums;
+}
+.temp-red { color: #c62828; }
+.temp-blue { color: #1976d2; }
+
+.badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pac-bloc {
+    cursor: pointer;
+    transition: box-shadow 0.2s, transform 0.15s;
+    -webkit-tap-highlight-color: rgba(25, 118, 210, 0.15);
+}
+.pac-bloc:hover {
+    box-shadow: 0 4px 16px rgba(25, 118, 210, 0.25);
+    transform: translateY(-2px);
+}
+.pac-bloc:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 4px rgba(25, 118, 210, 0.35);
+}
+.pac-bloc:focus-visible {
+    outline: 2px solid #1976d2;
+    outline-offset: 2px;
+}
+
+.detail-link {
+    text-align: right;
+    font-size: 10px;
+    font-weight: 600;
+    color: #1976d2;
+    margin-top: 6px;
+    letter-spacing: 0.3px;
+}

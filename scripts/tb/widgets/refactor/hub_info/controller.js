@@ -8,6 +8,57 @@
 // Source de verite : spec docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md
 //                    Section 7.3 "default" -> Hub Info v2
 
+// Global click handler pour la navigation [data-navtarget] (boutons Defaut /
+// Parametrage / Mes installations dans la Navbar). Origine : le listener
+// etait inline dans les markdown_cards "PAC HP1..4" qui sont supprimes par
+// la Phase 3.3 -- on le replace ici dans Hub Info (toujours present sur
+// l'etat default). Garde idempotente pour eviter double-binding si plusieurs
+// instances de hub_info coexistent.
+if (typeof window !== 'undefined' && !window.__tduoNavBound) {
+    window.__tduoNavBound = true;
+    var __navGoState = function(stateId, params) {
+        var p = Object.assign({}, params || {});
+        // Recuperer l'entityId courant pour le preserver entre etats
+        try {
+            var raw = new URL(window.location.href).searchParams.get('state');
+            if (raw) {
+                var arr = JSON.parse(atob(decodeURIComponent(raw)));
+                for (var i = arr.length - 1; i >= 0; i--) {
+                    var pp = arr[i] && arr[i].params;
+                    if (pp && pp.entityId && pp.entityId.id) { p.entityId = pp.entityId; break; }
+                }
+            }
+        } catch (e) {}
+        var b64 = btoa(JSON.stringify([{id: stateId, params: p}]));
+        window.location.assign(window.location.pathname + '?state=' + encodeURIComponent(b64));
+    };
+    document.addEventListener('click', function(ev) {
+        var t = ev.target; if (!t || !t.closest) return;
+        var navEl = t.closest('[data-navtarget]');
+        if (navEl) { ev.preventDefault(); __navGoState(navEl.getAttribute('data-navtarget')); return; }
+        var bloc = t.closest('.pac-bloc[data-hp]');
+        if (!bloc) return;
+        var n = parseInt(bloc.getAttribute('data-hp'), 10);
+        if (!n) return;
+        ev.preventDefault();
+        __navGoState('donnees_HP1', { hpIndex: n, hp: n });
+    });
+    document.addEventListener('keydown', function(ev) {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        var t = ev.target; if (!t || !t.classList) return;
+        if (t.classList.contains('pac-bloc')) {
+            var n = parseInt(t.getAttribute('data-hp'), 10); if (!n) return;
+            ev.preventDefault();
+            __navGoState('donnees_HP1', { hpIndex: n, hp: n });
+            return;
+        }
+        if (t.hasAttribute && t.hasAttribute('data-navtarget')) {
+            ev.preventDefault();
+            __navGoState(t.getAttribute('data-navtarget'));
+        }
+    });
+}
+
 self.onInit = function() {
     var ctx = self.ctx;
     var mode = (ctx.settings && ctx.settings.mode) || 'hero';

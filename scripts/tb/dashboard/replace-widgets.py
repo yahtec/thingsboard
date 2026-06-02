@@ -194,15 +194,20 @@ def main():
             print(f'  SKIP {wid} (widget def not found)')
             continue
         w = widgets[wid]
-        # Update widget definition
+        # Update widget definition (incl. top-level col/row/sizeX/sizeY -- some
+        # TB versions use these as the source of truth instead of the layout entry).
         w['type'] = r['desc_type']
         w['typeFullFqn'] = r['fqn']
         w['typeId'] = {'entityType': 'WIDGET_TYPE', 'id': fqn_resolved[r['fqn']]}
         w['config'] = build_widget_config(r['title'], r['settings'])
+        w['col'] = r['layout']['col']
+        w['row'] = r['layout']['row']
+        w['sizeX'] = r['layout']['sizeX']
+        w['sizeY'] = r['layout']['sizeY']
         for legacy in ('bundleAlias', 'typeAlias'):
             if legacy in w:
                 w[legacy] = ''
-        # Update layout
+        # Update layout entry (state-specific)
         lyt = states[r['state']]['layouts']['main']['widgets']
         if wid in lyt:
             lyt[wid].update(r['layout'])
@@ -215,6 +220,16 @@ def main():
             if wid in lyt:
                 lyt[wid].update(new_lyt)
                 print(f"  ADJUST {wid} [{state}] layout={new_lyt}")
+
+    # autoFillHeight=True sur l'etat default compresse les widgets dans le
+    # viewport (chaque row se reduit a ~30px au lieu de 70px). Avec 26 rows
+    # de widgets TDUO landscape, ca rend tout illisible. On force la page a
+    # scroller pour preserver les hauteurs naturelles.
+    grid = states['default']['layouts']['main'].get('gridSettings', {})
+    if grid.get('autoFillHeight'):
+        grid['autoFillHeight'] = False
+        states['default']['layouts']['main']['gridSettings'] = grid
+        print("  GRID default: autoFillHeight=True -> False (preserve widget heights, page scrolls)")
 
     print('\n=== Step 4: POST ===')
     if args.dry_run:

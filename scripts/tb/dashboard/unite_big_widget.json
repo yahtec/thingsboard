@@ -1,0 +1,404 @@
+{
+  "id": "8e973f94-8b9b-6a1e-2d3b-e0a21d7036d6",
+  "col": 0,
+  "row": 0,
+  "type": "latest",
+  "sizeX": 5,
+  "sizeY": 3.5,
+  "config": {
+    "color": "rgba(0, 0, 0, 0.87)",
+    "title": "Markdown/HTML Card",
+    "margin": "0",
+    "actions": {
+      "elementClick": [
+        {
+          "id": "55409580-06d5-0651-76b1-108d117fa667",
+          "icon": "more_horiz",
+          "name": "vers_HP1",
+          "type": "openDashboardState",
+          "setEntityId": false,
+          "openInPopover": false,
+          "openRightLayout": false,
+          "openInSeparateDialog": false,
+          "stateEntityParamName": "pac-bloc-1",
+          "targetDashboardStateId": "donnees_HP1",
+          "showWidgetActionFunction": "return true;",
+          "useShowWidgetActionFunction": null
+        }
+      ]
+    },
+    "padding": "0px",
+    "iconSize": "24px",
+    "pageSize": 1024,
+    "settings": {
+      "markdownCss": "/* Layout responsive — cssjs de TB strippe @media, on pilote le wrap via flex-basis.\n   Objectif plein ecran : navbar + (col-left fine | 4 PAC + ECS + Chauffage sur 1 ligne). */\n\n.tb-markdown-view {\n    height: 100% !important;\n    min-height: 100% !important;\n    overflow-y: auto !important;\n    overflow-x: hidden !important;\n    padding: 0 !important;\n    box-sizing: border-box;\n    font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif;\n    -webkit-font-smoothing: antialiased;\n    -moz-osx-font-smoothing: grayscale;\n}\n.tb-markdown-view *, .tb-markdown-view *:before, .tb-markdown-view *:after {\n    box-sizing: border-box;\n}\n.tb-markdown-view > * { width: 100%; }\n\n.schema-page {\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n    padding: 8px;\n    background: #f5f5f5;\n    box-sizing: border-box;\n}\n\n/* Zone principale : col-left + col-right cote a cote, wrap sur etroit.\n   align-content + align-items flex-start : en mode wrap mobile, les lignes\n   ne sont pas etirees pour remplir la hauteur du widget (sinon col-left\n   devient une grande zone blanche vide). */\n.schema-body {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: flex-start;\n    align-content: flex-start;\n    gap: 10px;\n}\n\n/* flex-basis 160px : col-left passe en pleine largeur quand le conteneur ne peut plus\n   aligner col-left (160px) + col-right (~440px) cote a cote. max-width borne en desktop. */\n.col-left {\n    flex: 1 1 160px;\n    min-width: 0;\n    max-width: 220px;\n    background: white;\n    border-radius: 6px;\n    border-left: 3px solid #c62828;\n    padding: 12px 10px;\n    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);\n    box-sizing: border-box;\n}\n\n.common-title {\n    font-size: 12px;\n    font-weight: 700;\n    color: #c62828;\n    text-transform: uppercase;\n    letter-spacing: 0.5px;\n    margin-bottom: 10px;\n    padding-bottom: 6px;\n    border-bottom: 1px solid #eee;\n}\n\n.common-row {\n    display: flex;\n    flex-direction: column;\n    margin-bottom: 8px;\n}\n.common-label {\n    font-size: 10px;\n    color: #999;\n    text-transform: uppercase;\n    letter-spacing: 0.3px;\n}\n.common-value {\n    font-size: 14px;\n    font-weight: 600;\n    color: #333;\n}\n\n/* flex-grow eleve pour prendre tout l'espace restant. */\n.col-right {\n    flex: 9999 1 300px;\n    min-width: 0;\n    box-sizing: border-box;\n}\n\n/* Grille de blocs : wrap plutot que scroll horizontal. */\n.schema-scroll {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: stretch;\n    gap: 8px;\n    min-width: 0;\n    width: 100%;\n}\n\n/* flex-basis 150px + pas de max-width contraignant → 6 blocs peuvent tenir sur 1 ligne\n   des que le conteneur fait ~950px+ (6 × 150 + gaps). En-dessous, wrap progressif. */\n.bloc {\n    flex: 1 1 150px;\n    min-width: 0;\n    max-width: 260px;\n    background: white;\n    border-radius: 6px;\n    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);\n    overflow: hidden;\n    display: flex;\n    flex-direction: column;\n}\n\n.pac-bloc { border-top: 3px solid #1976d2; }\n.ecs-bloc { border-top: 3px solid #7b1fa2; }\n.heat-bloc { border-top: 3px solid #c62828; }\n\n.bloc-title {\n    font-size: 12px;\n    font-weight: 700;\n    padding: 7px 10px;\n    color: white;\n    text-transform: uppercase;\n    letter-spacing: 0.4px;\n    flex: 0 0 auto;\n}\n.pac-bloc .bloc-title { background: #1976d2; }\n.ecs-bloc .bloc-title { background: #7b1fa2; }\n.heat-bloc .bloc-title { background: #c62828; }\n\n.bloc-body {\n    padding: 7px 10px;\n    flex: 1 1 auto;\n    min-height: 0;\n}\n\n.section-label {\n    font-size: 10px;\n    font-weight: 600;\n    color: #c62828;\n    text-transform: uppercase;\n    letter-spacing: 0.3px;\n    margin-bottom: 3px;\n    margin-top: 3px;\n}\n\n.separator {\n    height: 1px;\n    background: #eee;\n    margin: 5px 0;\n}\n\n.data-row {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    padding: 2px 0;\n    font-size: 12px;\n    gap: 6px;\n}\n.dl {\n    color: #666;\n    font-size: 11px;\n    flex: 1 1 0%;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n.dv {\n    font-weight: 600;\n    color: #333;\n    font-size: 12px;\n    white-space: nowrap;\n    -webkit-font-variant-numeric: tabular-nums;\n    font-variant-numeric: tabular-nums;\n}\n.temp-red { color: #c62828; }\n.temp-blue { color: #1976d2; }\n\n.badge {\n    font-size: 10px;\n    font-weight: 600;\n    color: white;\n    padding: 2px 6px;\n    border-radius: 10px;\n    text-transform: uppercase;\n    letter-spacing: 0.3px;\n    display: inline-block;\n    max-width: 100%;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.pac-bloc {\n    cursor: pointer;\n    transition: box-shadow 0.2s, transform 0.15s;\n    -webkit-tap-highlight-color: rgba(25, 118, 210, 0.15);\n}\n.pac-bloc:hover {\n    box-shadow: 0 4px 16px rgba(25, 118, 210, 0.25);\n    transform: translateY(-2px);\n}\n.pac-bloc:active {\n    transform: translateY(0);\n    box-shadow: 0 1px 4px rgba(25, 118, 210, 0.35);\n}\n.pac-bloc:focus-visible {\n    outline: 2px solid #1976d2;\n    outline-offset: 2px;\n}\n\n.detail-link {\n    text-align: right;\n    font-size: 10px;\n    font-weight: 600;\n    color: #1976d2;\n    margin-top: 6px;\n    letter-spacing: 0.3px;\n}\n",
+      "markdownTextPattern": "### Markdown/HTML card\n - **Current entity**: ${entityName}.\n - **Current value**: ${Temperature}.",
+      "markdownTextFunction": "// Markdown/HTML value function — state \"default\" (titre \"Unité\")\n// Rendu identique au précédent, mais :\n//   - plus de dépendance au widget 2ed70b47 (qui définissait window.navState_*)\n//   - nav via URL pushState (pattern w1_pac_info.js) câblée en event delegation sur document,\n//     pour survivre aux re-renders liés aux changements de breakpoint desktop/mobile\n//   - blocs PAC utilisent data-hp au lieu de onclick inline\n//   - target state : toujours 'donnees_HP1' avec hpIndex en param (les widgets détail lisent hpIndex)\n\nvar e = data[0] || {};\n\nvar STATUS_HP = {\n    '0': { label: 'Arret', color: '#9e9e9e' },\n    '1': { label: 'Attente debit eau', color: '#fb8c00' },\n    '2': { label: 'Init detendeur', color: '#fb8c00' },\n    '3': { label: 'Demarrage compr.', color: '#fb8c00' },\n    '4': { label: 'En service', color: '#43a047' },\n    '5': { label: 'Defaut', color: '#e53935' },\n    '6': { label: 'Defaut gaz', color: '#e53935' },\n    '7': { label: 'Anti court-cycle', color: '#fb8c00' },\n    '8': { label: 'Arret en cours', color: '#fb8c00' },\n    '9': { label: 'Degivrage', color: '#1e88e5' },\n    '10': { label: 'Pump down', color: '#fb8c00' }\n};\n\nvar STATUS_BOIL = {\n    '0': { label: 'Arret', color: '#9e9e9e' },\n    '1': { label: 'Attente debit eau', color: '#fb8c00' },\n    '2': { label: 'Preventilation', color: '#fb8c00' },\n    '3': { label: 'Preventilation', color: '#fb8c00' },\n    '4': { label: 'Preventilation', color: '#fb8c00' },\n    '5': { label: 'En service', color: '#43a047' },\n    '6': { label: 'Attente redemar.', color: '#fb8c00' },\n    '7': { label: 'Stop maxi SD', color: '#e53935' },\n    '8': { label: 'Defaut', color: '#e53935' },\n    '9': { label: 'Nouveau cycle', color: '#fb8c00' },\n    '10': { label: 'Defaut gaz', color: '#e53935' }\n};\n\nvar TYPE_LABELS = {\n    '0': 'Sans module',\n    '1': 'Chauffage',\n    '2': 'ECS',\n    '3': 'Chauffage + ECS'\n};\n\nfunction gs(map, val) {\n    var s = map[String(val)];\n    return s || { label: 'Code ' + val, color: '#9e9e9e' };\n}\nfunction badge(map, val) {\n    var s = gs(map, val);\n    return '<span class=\"badge\" style=\"background:' + s.color + '\">' + s.label + '</span>';\n}\nfunction fv(val, unit) {\n    if (val === null || val === undefined || val === '') return '--';\n    var n = parseFloat(val);\n    return isNaN(n) ? '--' : n.toFixed(1) + (unit || '');\n}\nfunction debit(val) {\n    var lh = parseFloat(val || 0);\n    if (isNaN(lh)) lh = 0;\n    return (lh / 1000).toFixed(2) + ' m3/h';\n}\nfunction row(label, val) {\n    return '<div class=\"data-row\"><span class=\"dl\">' + label + '</span><span class=\"dv\">' + val + '</span></div>';\n}\nfunction rowT(label, val, cls) {\n    return '<div class=\"data-row\"><span class=\"dl\">' + label + '</span><span class=\"dv ' + cls + '\">' + fv(val, ' C') + '</span></div>';\n}\n\nfunction buildPAC(e, n) {\n    var p = 'HP' + n + '_';\n    var h = '';\n    h += '<div class=\"bloc pac-bloc\" data-hp=\"' + n + '\" role=\"button\" tabindex=\"0\" aria-label=\"Voir details PAC ' + n + '\">';\n    h += '<div class=\"bloc-title\">PAC Hybride n' + n + '</div>';\n    h += '<div class=\"bloc-body\">';\n    h += '<div class=\"section-label\">Pompe a chaleur</div>';\n    h += row('Statut', badge(STATUS_HP, e[p + 'status']));\n    h += rowT('T entree', e[p + 'tIn'], 'temp-blue');\n    h += rowT('T sortie PAC', e[p + 'tOut'], 'temp-red');\n    h += row('Frequence', fv(e[p + 'invert_freq'], ' Hz'));\n    h += '<div class=\"separator\"></div>';\n    h += '<div class=\"section-label\">Chaudiere</div>';\n    h += row('Statut', badge(STATUS_BOIL, e[p + 'boil_status']));\n    h += rowT('T entree', e[p + 'tOut'], 'temp-blue');\n    h += rowT('T sortie', e[p + 'boil_tOut'], 'temp-red');\n    h += row('Vitesse bruleur', fv(e[p + 'boil_rpm'], ' rpm'));\n    h += '<div class=\"separator\"></div>';\n    h += '<div class=\"section-label\">Module</div>';\n    h += row('Debit eau', debit(e[p + 'boil_qe']));\n    h += '<div class=\"detail-link\">Voir détails →</div>';\n    h += '</div></div>';\n    return h;\n}\n\nfunction buildECS(e) {\n    var h = '';\n    h += '<div class=\"bloc ecs-bloc\">';\n    h += '<div class=\"bloc-title\">Module ECS</div>';\n    h += '<div class=\"bloc-body\">';\n    h += rowT('T depart', e['dhw_tOut'], 'temp-red');\n    h += rowT('T retour', e['dhw_tIn'], 'temp-blue');\n    h += rowT('T ballon', e['dhw_tTank'], '');\n    h += row('Consigne', fv(e['dhw_tSet'], ' C'));\n    h += '</div></div>';\n    return h;\n}\n\nfunction buildChauffage(e) {\n    var h = '';\n    h += '<div class=\"bloc heat-bloc\">';\n    h += '<div class=\"bloc-title\">Module Chauffage</div>';\n    h += '<div class=\"bloc-body\">';\n    h += rowT('T depart', e['heat_tOut'], 'temp-red');\n    h += rowT('T retour', e['heat_tIn'], 'temp-blue');\n    h += row('Consigne', fv(e['heat_setpoint'], ' C'));\n    h += row('Position V3V', fv(e['heat_posV3V'], ' %'));\n    h += '</div></div>';\n    return h;\n}\n\nvar nHp = parseInt(e['nHp'] || 1);\nvar type = parseInt(e['type'] || 0);\n\nvar _entName = (data[0] && data[0].entityName) || '--';\nwindow.__tduoInstallName = _entName;\nvar _entLabel = (data[0] && data[0].entityLabel) || '';\n\nvar html = '<div class=\"schema-page\">';\n\n\n// Navbar : widget separe (Navbar HTML Card row=0). Le handler click/keydown\n// ci-dessous ecoute [data-navtarget] au niveau document, donc capte aussi les\n// clics emis par le widget navbar - meme s'il est remonte independamment.\n\nhtml += '<div class=\"schema-body\">';\n\nhtml += '<div class=\"col-left\">';\nhtml += '<div class=\"common-title\">Données générales</div>';\nhtml += '<div class=\"common-row\"><span class=\"common-label\">Date</span><span class=\"common-value\">' + (e['date'] || '--') + '</span></div>';\nhtml += '<div class=\"common-row\"><span class=\"common-label\">Heure</span><span class=\"common-value\">' + (e['time'] || '--') + '</span></div>';\nhtml += '<div class=\"common-row\"><span class=\"common-label\">T° extérieure</span><span class=\"common-value\">' + fv(e['tExt'], ' C') + '</span></div>';\nhtml += '<div class=\"common-row\"><span class=\"common-label\">Pression</span><span class=\"common-value\">' + fv(e['press'], ' bar') + '</span></div>';\nhtml += '<div class=\"common-row\"><span class=\"common-label\">Nb PAC</span><span class=\"common-value\">' + (e['nHp'] || '--') + '</span></div>';\nhtml += '<div class=\"common-row\"><span class=\"common-label\">Configuration</span><span class=\"common-value\">' + (TYPE_LABELS[String(type)] || '--') + '</span></div>';\nhtml += '</div>';\n\nhtml += '<div class=\"col-right\"><div class=\"schema-scroll\">';\nfor (var i = 1; i <= nHp; i++) {\n    html += buildPAC(e, i);\n}\nif (type === 2 || type === 3) {\n    html += buildECS(e);\n}\nif (type === 1 || type === 3) {\n    html += buildChauffage(e);\n}\nhtml += '</div></div>';  // /.schema-scroll, /.col-right\nhtml += '</div>';  // /.schema-body\nhtml += '</div>';  // /.schema-page\n\n// Event delegation : on attache un unique listener au document (survit aux re-renders\n// markdown lors des changements desktop/mobile). Le flag evite les doublons.\nsetTimeout(function() {\n    if (window.__tduoDefaultNavWired) return;\n    window.__tduoDefaultNavWired = true;\n\n    function getCurrentEntityIdParam() {\n        // Lit l'entityId du state actuel dans l'URL — propagation indispensable\n        // pour que les widgets de donnees_HP1 (alias Chaufferie sélectionnée,\n        // type stateEntity) résolvent vers le bon device. Sinon ils retombent\n        // sur defaultStateEntity = Yahtec.\n        try {\n            var raw = new URL(window.location.href).searchParams.get('state');\n            if (!raw) return null;\n            var arr = JSON.parse(atob(decodeURIComponent(raw)));\n            for (var i = arr.length - 1; i >= 0; i--) {\n                var p = arr[i] && arr[i].params;\n                if (p && p.entityId && p.entityId.id) return p.entityId;\n            }\n        } catch (e) {}\n        return null;\n    }\n\n    function goState(stateId, params) {\n        var p = Object.assign({}, params || {});\n        if (!p.entityId) {\n            var eid = getCurrentEntityIdParam();\n            if (eid) p.entityId = eid;\n        }\n        var stateB64 = btoa(JSON.stringify([{ id: stateId, params: p }]));\n        window.history.pushState({}, '', window.location.pathname + '?state=' + encodeURIComponent(stateB64));\n        var evt = document.createEvent('Event');\n        evt.initEvent('popstate', true, true);\n        window.dispatchEvent(evt);\n    }\n\n    function navPac(n) {\n        // Target state fixe donnees_HP1, hpIndex en param : les widgets detail\n        // (w1_pac_info, w2_pac_chart, w3_boiler_info, w4_boiler_chart) lisent hpIndex\n        goState('donnees_HP1', { hpIndex: n, hp: n });\n    }\n\n    document.addEventListener('click', function(ev) {\n        var t = ev.target;\n        if (!t || !t.closest) return;\n        var navEl = t.closest('[data-navtarget]');\n        if (navEl) {\n            ev.preventDefault();\n            goState(navEl.getAttribute('data-navtarget'));\n            return;\n        }\n        var bloc = t.closest('.pac-bloc[data-hp]');\n        if (!bloc) return;\n        var n = parseInt(bloc.getAttribute('data-hp'), 10);\n        if (!n) return;\n        ev.preventDefault();\n        navPac(n);\n    });\n\n    // Accessibilite clavier (Enter / Space)\n    document.addEventListener('keydown', function(ev) {\n        if (ev.key !== 'Enter' && ev.key !== ' ') return;\n        var t = ev.target;\n        if (!t || !t.classList) return;\n        if (t.classList.contains('pac-bloc')) {\n            var n = parseInt(t.getAttribute('data-hp'), 10);\n            if (!n) return;\n            ev.preventDefault();\n            navPac(n);\n            return;\n        }\n        if (t.hasAttribute && t.hasAttribute('data-navtarget')) {\n            ev.preventDefault();\n            goState(t.getAttribute('data-navtarget'));\n        }\n    });\n}, 0);\n\nreturn html;\n",
+      "useMarkdownTextFunction": true,
+      "applyDefaultMarkdownStyle": false
+    },
+    "iconColor": "rgba(0, 0, 0, 0.87)",
+    "showTitle": false,
+    "widgetCss": "",
+    "dropShadow": true,
+    "showLegend": false,
+    "titleStyle": {
+      "fontSize": "16px",
+      "fontWeight": 400
+    },
+    "datasources": [
+      {
+        "name": "",
+        "type": "entity",
+        "dataKeys": [
+          {
+            "name": "tExt",
+            "type": "timeseries",
+            "color": "#2196f3",
+            "label": "tExt",
+            "settings": {}
+          },
+          {
+            "name": "press",
+            "type": "timeseries",
+            "color": "#4caf50",
+            "label": "press",
+            "settings": {}
+          },
+          {
+            "name": "date",
+            "type": "timeseries",
+            "color": "#f44336",
+            "label": "date",
+            "settings": {}
+          },
+          {
+            "name": "time",
+            "type": "timeseries",
+            "color": "#ffc107",
+            "label": "time",
+            "settings": {}
+          },
+          {
+            "name": "nHp",
+            "type": "timeseries",
+            "color": "#607d8b",
+            "label": "nHp",
+            "settings": {}
+          },
+          {
+            "name": "type",
+            "type": "timeseries",
+            "color": "#9c27b0",
+            "label": "type",
+            "settings": {}
+          },
+          {
+            "name": "HP1_tIn",
+            "type": "timeseries",
+            "color": "#8bc34a",
+            "label": "HP1_tIn",
+            "settings": {}
+          },
+          {
+            "name": "HP1_tOut",
+            "type": "timeseries",
+            "color": "#3f51b5",
+            "label": "HP1_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP1_boil_tOut",
+            "type": "timeseries",
+            "color": "#e91e63",
+            "label": "HP1_boil_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP1_status",
+            "type": "timeseries",
+            "color": "#ffeb3b",
+            "label": "HP1_status",
+            "settings": {}
+          },
+          {
+            "name": "HP1_boil_status",
+            "type": "timeseries",
+            "color": "#03a9f4",
+            "label": "HP1_boil_status",
+            "settings": {}
+          },
+          {
+            "name": "HP1_invert_freq",
+            "type": "timeseries",
+            "color": "#ff9800",
+            "label": "HP1_invert_freq",
+            "settings": {}
+          },
+          {
+            "name": "HP1_boil_rpm",
+            "type": "timeseries",
+            "color": "#673ab7",
+            "label": "HP1_boil_rpm",
+            "settings": {}
+          },
+          {
+            "name": "HP1_boil_qe",
+            "type": "timeseries",
+            "color": "#cddc39",
+            "label": "HP1_boil_qe",
+            "settings": {}
+          },
+          {
+            "name": "HP2_tIn",
+            "type": "timeseries",
+            "color": "#009688",
+            "label": "HP2_tIn",
+            "settings": {}
+          },
+          {
+            "name": "HP2_tOut",
+            "type": "timeseries",
+            "color": "#795548",
+            "label": "HP2_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP2_boil_tOut",
+            "type": "timeseries",
+            "color": "#00bcd4",
+            "label": "HP2_boil_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP2_status",
+            "type": "timeseries",
+            "color": "#ff5722",
+            "label": "HP2_status",
+            "settings": {}
+          },
+          {
+            "name": "HP2_boil_status",
+            "type": "timeseries",
+            "color": "#9e9e9e",
+            "label": "HP2_boil_status",
+            "settings": {}
+          },
+          {
+            "name": "HP2_invert_freq",
+            "type": "timeseries",
+            "color": "#2962ff",
+            "label": "HP2_invert_freq",
+            "settings": {}
+          },
+          {
+            "name": "HP2_boil_rpm",
+            "type": "timeseries",
+            "color": "#00c853",
+            "label": "HP2_boil_rpm",
+            "settings": {}
+          },
+          {
+            "name": "HP2_boil_qe",
+            "type": "timeseries",
+            "color": "#d50000",
+            "label": "HP2_boil_qe",
+            "settings": {}
+          },
+          {
+            "name": "HP3_tIn",
+            "type": "timeseries",
+            "color": "#ffab00",
+            "label": "HP3_tIn",
+            "settings": {}
+          },
+          {
+            "name": "HP3_tOut",
+            "type": "timeseries",
+            "color": "#455a64",
+            "label": "HP3_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP3_boil_tOut",
+            "type": "timeseries",
+            "color": "#aa00ff",
+            "label": "HP3_boil_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP3_status",
+            "type": "timeseries",
+            "color": "#64dd17",
+            "label": "HP3_status",
+            "settings": {}
+          },
+          {
+            "name": "HP3_boil_status",
+            "type": "timeseries",
+            "color": "#304ffe",
+            "label": "HP3_boil_status",
+            "settings": {}
+          },
+          {
+            "name": "HP3_invert_freq",
+            "type": "timeseries",
+            "color": "#c51162",
+            "label": "HP3_invert_freq",
+            "settings": {}
+          },
+          {
+            "name": "HP3_boil_rpm",
+            "type": "timeseries",
+            "color": "#ffd600",
+            "label": "HP3_boil_rpm",
+            "settings": {}
+          },
+          {
+            "name": "HP3_boil_qe",
+            "type": "timeseries",
+            "color": "#0091ea",
+            "label": "HP3_boil_qe",
+            "settings": {}
+          },
+          {
+            "name": "HP4_tIn",
+            "type": "timeseries",
+            "color": "#ff6d00",
+            "label": "HP4_tIn",
+            "settings": {}
+          },
+          {
+            "name": "HP4_tOut",
+            "type": "timeseries",
+            "color": "#6200ea",
+            "label": "HP4_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP4_boil_tOut",
+            "type": "timeseries",
+            "color": "#aeea00",
+            "label": "HP4_boil_tOut",
+            "settings": {}
+          },
+          {
+            "name": "HP4_status",
+            "type": "timeseries",
+            "color": "#00bfa5",
+            "label": "HP4_status",
+            "settings": {}
+          },
+          {
+            "name": "HP4_boil_status",
+            "type": "timeseries",
+            "color": "#5d4037",
+            "label": "HP4_boil_status",
+            "settings": {}
+          },
+          {
+            "name": "HP4_invert_freq",
+            "type": "timeseries",
+            "color": "#00b8d4",
+            "label": "HP4_invert_freq",
+            "settings": {}
+          },
+          {
+            "name": "HP4_boil_rpm",
+            "type": "timeseries",
+            "color": "#dd2c00",
+            "label": "HP4_boil_rpm",
+            "settings": {}
+          },
+          {
+            "name": "HP4_boil_qe",
+            "type": "timeseries",
+            "color": "#616161",
+            "label": "HP4_boil_qe",
+            "settings": {}
+          },
+          {
+            "name": "dhw_tOut",
+            "type": "timeseries",
+            "color": "#1e88e5",
+            "label": "dhw_tOut",
+            "settings": {}
+          },
+          {
+            "name": "dhw_tIn",
+            "type": "timeseries",
+            "color": "#43a047",
+            "label": "dhw_tIn",
+            "settings": {}
+          },
+          {
+            "name": "dhw_tTank",
+            "type": "timeseries",
+            "color": "#e53935",
+            "label": "dhw_tTank",
+            "settings": {}
+          },
+          {
+            "name": "dhw_tSet",
+            "type": "timeseries",
+            "color": "#ffb300",
+            "label": "dhw_tSet",
+            "settings": {}
+          },
+          {
+            "name": "heat_tOut",
+            "type": "timeseries",
+            "color": "#546e7a",
+            "label": "heat_tOut",
+            "settings": {}
+          },
+          {
+            "name": "heat_tIn",
+            "type": "timeseries",
+            "color": "#8e24aa",
+            "label": "heat_tIn",
+            "settings": {}
+          },
+          {
+            "name": "heat_setpoint",
+            "type": "timeseries",
+            "color": "#7cb342",
+            "label": "heat_setpoint",
+            "settings": {}
+          },
+          {
+            "name": "heat_posV3V",
+            "type": "timeseries",
+            "color": "#3949ab",
+            "label": "heat_posV3V",
+            "settings": {}
+          },
+          {
+            "name": "nom_residence",
+            "type": "attribute",
+            "color": "#888",
+            "label": "nom_residence",
+            "settings": {}
+          }
+        ],
+        "entityAliasId": "79b58a10-d4bf-f798-68ca-0476518eb725",
+        "alarmFilterConfig": {
+          "statusList": [
+            "ACTIVE"
+          ]
+        }
+      }
+    ],
+    "widgetStyle": {},
+    "titleTooltip": "",
+    "showTitleIcon": false,
+    "backgroundColor": "#F5F5F5",
+    "enableFullscreen": false,
+    "noDataDisplayMessage": ""
+  },
+  "typeId": {
+    "id": "5ff7fcd0-3d7d-11f1-8ec8-ef2af873172d",
+    "entityType": "WIDGET_TYPE"
+  },
+  "typeFullFqn": "system.cards.markdown_card"
+}
