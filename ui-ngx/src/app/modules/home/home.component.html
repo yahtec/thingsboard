@@ -61,6 +61,51 @@
                    placeholder="{{ 'common.enter-search' | translate }}"/>
           </mat-form-field>
         </div>
+        <!-- Yahtec : bouton "Retour au tableau de bord" visible sur pages TB natives
+             (/profile, etc.) pour les CUSTOMER_USER (qui n'ont pas la sidebar). -->
+        <button *ngIf="!yahtecOnDashboard && !yahtecOnSupervision && !isAdmin" type="button"
+                class="tb-yahtec-btn tb-yahtec-standalone" (click)="yahtecGoToDashboard()"
+                [attr.aria-label]="'Tableau de bord'" [class.!hidden]="displaySearchMode()">
+          <mat-icon class="material-icons">home</mat-icon>
+          <span class="tb-yahtec-label">Tableau de bord</span>
+        </button>
+        <!-- Yahtec : boutons Supervision flotte + Mes Installations retires.
+             L'acces se fait via la liste des dashboards (filtree pour les non-admin). -->
+        <!-- Yahtec : barre de navigation custom integree a la TB toolbar.
+             Visible uniquement sur le dashboard "Mes Installations". -->
+        <div *ngIf="yahtecOnDashboard" class="tb-yahtec-nav flex flex-row" [class.!hidden]="displaySearchMode()">
+          <button *ngIf="yahtecShowRetour" type="button"
+                  class="tb-yahtec-btn" (click)="yahtecGoBack()" [attr.aria-label]="'Retour'">
+            <mat-icon class="material-icons">arrow_back</mat-icon>
+            <span class="tb-yahtec-label">Retour</span>
+          </button>
+          <button *ngIf="yahtecShowDefaut" type="button"
+                  class="tb-yahtec-btn" (click)="yahtecNavTo('historique')" [attr.aria-label]="'Defaut'">
+            <mat-icon class="material-icons">warning</mat-icon>
+            <span class="tb-yahtec-label">Défaut</span>
+          </button>
+          <button *ngIf="yahtecShowParam" type="button"
+                  class="tb-yahtec-btn" (click)="yahtecNavTo('configuration')" [attr.aria-label]="'Parametrage'">
+            <mat-icon class="material-icons">settings</mat-icon>
+            <span class="tb-yahtec-label">Paramétrage</span>
+          </button>
+          <span *ngIf="(yahtecShowRetour || yahtecShowDefaut || yahtecShowParam) && (yahtecShowAccueil || yahtecShowProfil || yahtecShowComptes)" class="tb-yahtec-sep"></span>
+          <button *ngIf="yahtecShowAccueil" type="button"
+                  class="tb-yahtec-btn" (click)="yahtecNavTo('menu')" [attr.aria-label]="'Accueil'">
+            <mat-icon class="material-icons">home</mat-icon>
+            <span class="tb-yahtec-label">Accueil</span>
+          </button>
+          <button *ngIf="yahtecShowProfil" type="button"
+                  class="tb-yahtec-btn" (click)="yahtecNavTo('profil')" [attr.aria-label]="'Profil'">
+            <mat-icon class="material-icons">person</mat-icon>
+            <span class="tb-yahtec-label">Profil</span>
+          </button>
+          <button *ngIf="yahtecShowComptes" type="button"
+                  class="tb-yahtec-btn" (click)="yahtecNavTo('notifications_admin')" [attr.aria-label]="'Comptes'">
+            <mat-icon class="material-icons">group</mat-icon>
+            <span class="tb-yahtec-label">Comptes</span>
+          </button>
+        </div>
         <!-- Yahtec: github badge gardé uniquement pour les administrateurs (navbar native TB). -->
         <tb-github-badge *ngIf="isAdmin" class="lt-md:!hidden"></tb-github-badge>
         <button [class.!hidden]="!searchEnabled"
@@ -74,8 +119,20 @@
                 mat-icon-button (click)="toggleFullscreen()">
           <mat-icon class="material-icons">{{ isFullscreen() ? 'fullscreen_exit' : 'fullscreen' }}</mat-icon>
         </button>
-        <tb-notification-bell></tb-notification-bell>
-        <tb-user-menu [displayUserInfo]="!displaySearchMode()" [adminMode]="isAdmin"></tb-user-menu>
+        <!-- Yahtec : cloche notification visible uniquement pour les admins TB (TENANT_ADMIN/SYS_ADMIN).
+             Cachee pour les CUSTOMER_USER (user et user admin via attribute is_admin). -->
+        <tb-notification-bell *ngIf="isAdmin"></tb-notification-bell>
+        <!-- Yahtec : tb-user-menu (avatar + nom + dropdown Compte/Deconnexion) visible
+             uniquement pour les admins TB. Customer users ont leur deconnexion via le
+             bouton Yahtec custom (.tb-yahtec-logout). -->
+        <tb-user-menu *ngIf="isAdmin" [displayUserInfo]="!displaySearchMode()" [adminMode]="isAdmin"></tb-user-menu>
+        <button *ngIf="!isAdmin" type="button"
+                class="tb-yahtec-btn tb-yahtec-standalone tb-yahtec-logout"
+                (click)="yahtecLogout()" [attr.aria-label]="'Deconnexion'"
+                [class.!hidden]="displaySearchMode()">
+          <mat-icon class="material-icons">exit_to_app</mat-icon>
+          <span class="tb-yahtec-label">Déconnexion</span>
+        </button>
       </mat-toolbar>
       <mat-progress-bar color="warn" style="z-index: 10; margin-bottom: -4px; width: 100%;" mode="indeterminate"
                         *ngIf="!hideLoadingBar && (isLoading$ | async)">

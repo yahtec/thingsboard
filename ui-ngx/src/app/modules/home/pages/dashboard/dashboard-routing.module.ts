@@ -15,18 +15,18 @@
 ///
 
 import { Injectable, NgModule } from '@angular/core';
-import { ActivatedRouteSnapshot, RouterModule, Routes } from '@angular/router';
+import { ActivatedRouteSnapshot, Router, RouterModule, Routes } from '@angular/router';
 
 import { EntitiesTableComponent } from '../../components/entity/entities-table.component';
 import { Authority } from '@shared/models/authority.enum';
 import { DashboardsTableConfigResolver } from './dashboards-table-config.resolver';
 import { DashboardPageComponent } from '@home/components/dashboard-page/dashboard-page.component';
 import { BreadCrumbConfig, BreadCrumbLabelFunction } from '@shared/components/breadcrumb';
-import { mergeMap, Observable, of } from 'rxjs';
+import { mergeMap, Observable, of, throwError } from 'rxjs';
 import { Dashboard } from '@app/shared/models/dashboard.models';
 import { DashboardService } from '@core/http/dashboard.service';
 import { DashboardUtilsService } from '@core/services/dashboard-utils.service';
-import { catchError, map } from 'rxjs/operators';
+import { catchError, map, tap } from 'rxjs/operators';
 import { UserSettingsService } from '@core/http/user-settings.service';
 import { UserDashboardAction } from '@shared/models/user-settings.models';
 import { Store } from '@ngrx/store';
@@ -34,6 +34,12 @@ import { AppState } from '@core/core.state';
 import { getCurrentAuthUser } from '@core/auth/auth.selectors';
 import { ConfirmOnExitGuard } from '@core/guards/confirm-on-exit.guard';
 import { MenuId } from '@core/services/menu.models';
+import { HttpClient } from '@angular/common/http';
+
+// Yahtec : dashboards reserves aux admins (TENANT_ADMIN OR CUSTOMER_USER avec is_admin=true)
+const YAHTEC_SUPERVISION_DASHBOARD_ID = '4aa4ccd0-422a-11f1-bbfe-e1395562cba0';
+const YAHTEC_MES_INSTALLATIONS_ID     = '0964da30-3e56-11f1-bbfe-e1395562cba0';
+const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>([YAHTEC_SUPERVISION_DASHBOARD_ID]);
 
 @Injectable()
 export class DashboardResolver  {
@@ -41,11 +47,52 @@ export class DashboardResolver  {
   constructor(private store: Store<AppState>,
               private dashboardService: DashboardService,
               private userSettingService: UserSettingsService,
-              private dashboardUtils: DashboardUtilsService) {
+              private dashboardUtils: DashboardUtilsService,
+              private http: HttpClient,
+              private router: Router) {
   }
 
   resolve(route: ActivatedRouteSnapshot): Observable<Dashboard> {
     const dashboardId = route.params.dashboardId;
+    // Yahtec : bloquer l'acces aux dashboards admin-only (Supervision flotte) pour
+    // les CUSTOMER_USER sans attribute is_admin=true. TENANT_ADMIN/SYS_ADMIN ont
+    // toujours acces.
+    if (YAHTEC_ADMIN_RESTRICTED_DASHBOARDS.has(dashboardId)) {
+      const authUser = getCurrentAuthUser(this.store);
+      if (authUser && authUser.authority === Authority.CUSTOMER_USER) {
+        return this.yahtecCheckCustomerAdmin(authUser.userId).pipe(
+          mergeMap(isAdmin => {
+            if (!isAdmin) {
+              this.router.navigate(['dashboards', YAHTEC_MES_INSTALLATIONS_ID]);
+              return throwError(() => new Error('Yahtec admin-only dashboard'));
+            }
+            return this.loadDashboard(dashboardId);
+          })
+        );
+      }
+    }
+    return this.loadDashboard(dashboardId);
+  }
+
+  // Yahtec : verifie is_admin=true en attribute USER. Cache result en sessionStorage.
+  private yahtecCheckCustomerAdmin(userId: string): Observable<boolean> {
+    try {
+      const cached = sessionStorage.getItem('yahtec.user.isAdmin');
+      if (cached === '1') return of(true);
+      if (cached === '0') return of(false);
+    } catch {}
+    return this.http.get<Array<{key: string; value: any}>>(
+      `/api/plugins/telemetry/USER/${userId}/values/attributes/SERVER_SCOPE?keys=is_admin`
+    ).pipe(
+      map((attrs: Array<{key: string; value: any}>) => (attrs || []).some(a => a.key === 'is_admin' && a.value === true)),
+      tap((isAdmin: boolean) => {
+        try { sessionStorage.setItem('yahtec.user.isAdmin', isAdmin ? '1' : '0'); } catch {}
+      }),
+      catchError(() => of(false))
+    );
+  }
+
+  private loadDashboard(dashboardId: string): Observable<Dashboard> {
     return this.dashboardService.getDashboard(dashboardId).pipe(
       mergeMap((dashboard) =>
         (getCurrentAuthUser(this.store).isPublic ? of(null) :

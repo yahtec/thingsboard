@@ -33,7 +33,7 @@ import { EntityAction } from '@home/models/entity/entity-component.models';
 import { forkJoin, Observable, of } from 'rxjs';
 import { select, Store } from '@ngrx/store';
 import { selectAuthUser } from '@core/auth/auth.selectors';
-import { map, mergeMap, take, tap } from 'rxjs/operators';
+import { catchError, map, mergeMap, take, tap } from 'rxjs/operators';
 import { AppState } from '@core/core.state';
 import { Authority } from '@app/shared/models/authority.enum';
 import { CustomerService } from '@core/http/customer.service';
@@ -82,6 +82,10 @@ import {
   ImportDashboardFileDialogComponent
 } from "@home/pages/dashboard/import-dashboard-file-dialog.component";
 import { PageLink } from "@shared/models/page/page-link";
+import { HttpClient } from '@angular/common/http';
+
+// Yahtec : dashboards admin-only (cf dashboard-routing.module.ts)
+const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>(['4aa4ccd0-422a-11f1-bbfe-e1395562cba0']);
 
 @Injectable()
 export class DashboardsTableConfigResolver {
@@ -98,7 +102,8 @@ export class DashboardsTableConfigResolver {
               private translate: TranslateService,
               private datePipe: DatePipe,
               private router: Router,
-              private dialog: MatDialog) {
+              private dialog: MatDialog,
+              private http: HttpClient) {
 
     this.config.entityType = EntityType.DASHBOARD;
     this.config.entityComponent = DashboardFormComponent;
@@ -210,10 +215,52 @@ export class DashboardsTableConfigResolver {
         this.dashboardService.getEdgeDashboards(this.config.componentsData.edgeId, pageLink, this.config.componentsData.dashboardsType);
     } else {
       this.config.entitiesFetchFunction = pageLink =>
-        this.dashboardService.getCustomerDashboards(this.config.componentsData.customerId, pageLink);
+        this.dashboardService.getCustomerDashboards(this.config.componentsData.customerId, pageLink).pipe(
+          mergeMap(page => this.yahtecFilterAdminDashboards(page))
+        );
       this.config.deleteEntity = id =>
         this.dashboardService.unassignDashboardFromCustomer(this.config.componentsData.customerId, id.id);
     }
+  }
+
+  // Yahtec : filtre les dashboards admin-only de la liste pour les CUSTOMER_USER sans
+  // is_admin=true. TENANT_ADMIN/SYS_ADMIN voient tout (mais cette branche ne s'execute
+  // que pour les non-tenant, cf 'else' au-dessus).
+  private yahtecFilterAdminDashboards<T extends { id?: { id: string } }>(page: any): Observable<any> {
+    if (!page || !page.data || !page.data.length) return of(page);
+    const hasRestricted = page.data.some(d => d.id && YAHTEC_ADMIN_RESTRICTED_DASHBOARDS.has(d.id.id));
+    if (!hasRestricted) return of(page);
+    return this.store.pipe(
+      select(selectAuthUser),
+      take(1),
+      mergeMap(authUser => {
+        if (!authUser || authUser.authority !== Authority.CUSTOMER_USER) return of(page);
+        return this.yahtecCheckCustomerAdmin(authUser.userId).pipe(
+          map(isAdmin => {
+            if (isAdmin) return page;
+            const filtered = page.data.filter(d => !d.id || !YAHTEC_ADMIN_RESTRICTED_DASHBOARDS.has(d.id.id));
+            return { ...page, data: filtered, totalElements: filtered.length };
+          })
+        );
+      })
+    );
+  }
+
+  private yahtecCheckCustomerAdmin(userId: string): Observable<boolean> {
+    try {
+      const cached = sessionStorage.getItem('yahtec.user.isAdmin');
+      if (cached === '1') return of(true);
+      if (cached === '0') return of(false);
+    } catch {}
+    return this.http.get<Array<{key: string; value: any}>>(
+      `/api/plugins/telemetry/USER/${userId}/values/attributes/SERVER_SCOPE?keys=is_admin`
+    ).pipe(
+      map((attrs: Array<{key: string; value: any}>) => (attrs || []).some(a => a.key === 'is_admin' && a.value === true)),
+      tap((isAdmin: boolean) => {
+        try { sessionStorage.setItem('yahtec.user.isAdmin', isAdmin ? '1' : '0'); } catch {}
+      }),
+      catchError(() => of(false))
+    );
   }
 
   configureCellActions(dashboardScope: string): Array<CellActionDescriptor<DashboardInfo>> {
