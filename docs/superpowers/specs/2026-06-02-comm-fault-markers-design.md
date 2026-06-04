@@ -1,7 +1,7 @@
 # Marqueurs visuels de défaut comm PAC sur le widget time-series ECharts
 
 **Date** : 2026-06-02
-**Statut** : Design approuvé sections 1-3, fichiers touchés en discussion
+**Statut** : Implémenté (plan d'impl `2026-06-02-comm-fault-markers-impl.md`)
 **Branche cible** : `yahtec-main`
 **Spec liée** : `2026-05-28-payload-v2-pac-hybride-design.md` § 3.5 (flux `evt_*`)
 
