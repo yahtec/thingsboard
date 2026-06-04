@@ -589,6 +589,7 @@ export class TbTimeSeriesChart {
     this.eventMarkerItems = (this.settings.eventMarkers || []).map(config => ({
       config,
       points: [],
+      lookbackPoints: [],
       intervals: [],
       lookbackInFlight: false
     }));
@@ -661,7 +662,7 @@ export class TbTimeSeriesChart {
       }));
 
     for (const item of this.eventMarkerItems) {
-      item.points = points;
+      item.points = item.lookbackPoints.length > 0 ? [...item.lookbackPoints, ...points] : points;
     }
   }
 
@@ -757,7 +758,8 @@ export class TbTimeSeriesChart {
           return;
         }
 
-        item.points = [...extra, ...item.points];
+        item.lookbackPoints = [...extra, ...item.lookbackPoints];
+        item.points = [...item.lookbackPoints, ...item.points];
         item.intervals = reconstructIntervals(item.points, {
           evtDeviceId: item.config.evtDeviceId,
           evtFaultCodes: item.config.evtFaultCodes
