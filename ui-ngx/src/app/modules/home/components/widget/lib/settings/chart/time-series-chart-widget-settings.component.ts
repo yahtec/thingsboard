@@ -133,6 +133,7 @@ export class TimeSeriesChartWidgetSettingsComponent extends WidgetSettingsCompon
 
       yAxes: [settings.yAxes, []],
       thresholds: [settings.thresholds, []],
+      eventMarkers: [settings.eventMarkers, []],
 
       dataZoom: [settings.dataZoom, []],
       stack: [settings.stack, []],
