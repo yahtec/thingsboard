@@ -182,6 +182,7 @@ export function mergeIntervals(intervals: ReconstructedInterval[]): Reconstructe
 export interface EventMarkerItem {
   config: TimeSeriesChartEventMarker;
   points: EventPoint[];
+  lookbackPoints: EventPoint[];
   intervals: ReconstructedInterval[];
   lookbackInFlight: boolean;
 }
