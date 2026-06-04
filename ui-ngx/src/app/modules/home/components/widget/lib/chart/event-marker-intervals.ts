@@ -124,17 +124,19 @@ export function reconstructGapIntervals(
 
   const thresholdMs = opts.gapThresholdSec * 1000;
   const effectiveEnd = Math.min(opts.windowEnd, opts.now);
+  const windowIsOpen = effectiveEnd === opts.now;
   const sorted = [...refs].sort((a, b) => a.ts - b.ts);
 
   if (sorted.length === 0) {
     return [{
       start: opts.windowStart,
       end: effectiveEnd,
-      ongoing: effectiveEnd >= opts.now
+      ongoing: windowIsOpen
     }];
   }
 
   const boundaries: number[] = [opts.windowStart, ...sorted.map(p => p.ts), effectiveEnd];
+  const lastBoundaryIdx = boundaries.length - 2;
   const intervals: ReconstructedInterval[] = [];
 
   for (let i = 0; i < boundaries.length - 1; i++) {
@@ -144,7 +146,7 @@ export function reconstructGapIntervals(
       intervals.push({
         start: a,
         end: b,
-        ongoing: b === opts.now && i === boundaries.length - 2
+        ongoing: windowIsOpen && i === lastBoundaryIdx
       });
     }
   }
