@@ -47,8 +47,15 @@ import {
   updateXAxisTimeWindow
 } from '@home/components/widget/lib/chart/time-series-chart.models';
 import {
+  reconstructIntervals,
+  reconstructGapIntervals,
+  mergeIntervals,
+  resolveMarkerColor,
   EventPoint,
-  ReconstructedInterval
+  EventMarkerGroupFilter,
+  NamedDataKey,
+  ReconstructedInterval,
+  ReferencePoint
 } from '@home/components/widget/lib/chart/event-marker-intervals';
 import {
   calculateAxisSize,
@@ -273,6 +280,8 @@ export class TbTimeSeriesChart {
         (this.timeSeriesChartOptions.visualMap as PiecewiseVisualMapOption).selected = this.visualMapSelectedRanges;
       }
       this.barRenderSharedContext.timeInterval = this.ctx.timeWindow.interval;
+      this.collectEventMarkerPoints();
+      this.reconstructEventMarkerIntervals();
       this.updateSeriesData(true);
       if (this.highlightedDataKey) {
         this.keyEnter(this.highlightedDataKey);
@@ -616,6 +625,137 @@ export class TbTimeSeriesChart {
     }
   }
 
+  private collectEventMarkerPoints(): void {
+    if (this.eventMarkerItems.length === 0) {
+      return;
+    }
+
+    const evtKeys = ['evt_id', 'evt_status', 'evt_fault', 'evt_device'];
+    const dataByKey: Record<string, Array<[number, any]>> = {};
+    for (const key of evtKeys) {
+      const series = this.ctx.data?.find(d => d.dataKey?.name === key);
+      dataByKey[key] = (series?.data as Array<[number, any]>) || [];
+    }
+
+    const byTs: Map<number, Partial<EventPoint> & { ts: number }> = new Map();
+    for (const key of evtKeys) {
+      for (const [ts, val] of dataByKey[key]) {
+        const entry = byTs.get(ts) || { ts };
+        (entry as any)[key] = Number(val);
+        byTs.set(ts, entry);
+      }
+    }
+
+    const points: EventPoint[] = Array.from(byTs.values())
+      .filter(e => e.evt_status !== undefined && e.evt_fault !== undefined && e.evt_device !== undefined)
+      .map(e => ({
+        ts: e.ts,
+        evt_id: (e.evt_id as number) || 0,
+        evt_status: e.evt_status as number,
+        evt_fault: e.evt_fault as number,
+        evt_device: e.evt_device as number
+      }));
+
+    for (const item of this.eventMarkerItems) {
+      item.points = points;
+    }
+  }
+
+  private reconstructEventMarkerIntervals(): void {
+    if (this.eventMarkerItems.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    const windowStart = this.ctx.defaultSubscription?.timeWindow?.minTime ?? 0;
+    const windowEnd = this.ctx.defaultSubscription?.timeWindow?.maxTime ?? now;
+
+    for (const item of this.eventMarkerItems) {
+      let evtIntervals: ReconstructedInterval[] = [];
+      let needLookback = false;
+      if ((item.config.evtFaultCodes?.length || 0) > 0) {
+        const filter: EventMarkerGroupFilter = {
+          evtDeviceId: item.config.evtDeviceId,
+          evtFaultCodes: item.config.evtFaultCodes
+        };
+        evtIntervals = reconstructIntervals(item.points, filter, {
+          now,
+          onOrphanResolution: () => { needLookback = true; }
+        });
+      }
+
+      let gapIntervals: ReconstructedInterval[] = [];
+      if (item.config.gapThresholdSec > 0 && item.config.gapReferenceKey) {
+        const refSeries = this.ctx.data?.find(d => d.dataKey?.name === item.config.gapReferenceKey);
+        const refs: ReferencePoint[] = ((refSeries?.data as Array<[number, any]>) || [])
+          .map(([ts, value]) => ({ ts, value: Number(value) }));
+        gapIntervals = reconstructGapIntervals(refs, {
+          gapThresholdSec: item.config.gapThresholdSec,
+          windowStart,
+          windowEnd,
+          now
+        });
+      }
+
+      item.intervals = mergeIntervals([...evtIntervals, ...gapIntervals]);
+
+      if (needLookback && !item.lookbackInFlight) {
+        this.triggerLookbackFor(item);
+      }
+    }
+  }
+
+  private triggerLookbackFor(_item: typeof this.eventMarkerItems[number]): void {
+    // Implementation in Task 8.
+  }
+
+  private buildEventMarkerSeries(): any[] {
+    if (this.eventMarkerItems.length === 0) {
+      return [];
+    }
+
+    const namedKeys: NamedDataKey[] = [];
+    for (const ds of (this.ctx.datasources || [])) {
+      for (const dk of (ds.dataKeys || [])) {
+        if (dk.color && dk.label) {
+          namedKeys.push({ label: dk.label, color: dk.color });
+        }
+      }
+    }
+
+    const now = Date.now();
+    return this.eventMarkerItems
+      .filter(item => item.intervals.length > 0)
+      .map(item => {
+        const color = resolveMarkerColor(item.config.color, item.config.evtDeviceId, namedKeys);
+        const decal = item.config.pattern === 'striped'
+          ? { symbol: 'rect', dashArrayX: [[10, 10]], dashArrayY: [4, 0], rotation: -Math.PI / 4 }
+          : null;
+        return {
+          type: 'line',
+          name: item.config.label,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          data: [],
+          showSymbol: false,
+          silent: true,
+          z: 0,
+          markArea: {
+            silent: false,
+            itemStyle: {
+              color,
+              opacity: item.config.opacity,
+              ...(decal ? { decal } : {})
+            },
+            label: { show: false, formatter: item.config.label },
+            data: item.intervals.map(iv => [
+              { xAxis: iv.start, name: item.config.label },
+              { xAxis: iv.ongoing ? now : iv.end }
+            ])
+          }
+        };
+      });
+  }
+
   private setupXAxes(): void {
     const mainXAxis = createTimeSeriesXAxis('main', this.settings.xAxis, this.ctx.defaultSubscription.timeWindow.minTime,
       this.ctx.defaultSubscription.timeWindow.maxTime, this.ctx.date, this.ctx.utilsService, this.darkMode);
@@ -942,6 +1082,13 @@ export class TbTimeSeriesChart {
       adjustTimeAxisExtentToData(this.timeSeriesChartOptions.xAxis[0], this.dataItems,
         this.ctx.defaultSubscription.timeWindow.minTime,
         this.ctx.defaultSubscription.timeWindow.maxTime);
+    }
+    const markerSeries = this.buildEventMarkerSeries();
+    if (markerSeries.length > 0) {
+      this.timeSeriesChartOptions.series = [
+        ...(this.timeSeriesChartOptions.series as any[]),
+        ...markerSeries
+      ];
     }
   }
 
