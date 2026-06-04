@@ -9810,7 +9810,21 @@
           "point-shape": "Forme du point",
           "point-size": "Taille du point"
         }
-      }
+      },
+      "event-markers": "Marqueurs d'événements",
+      "event-markers-hint": "Bandes colorées sur la courbe indiquant les périodes où une PAC est en défaut de communication (reconstruites depuis les clés evt_* du device, et/ou détection de gap télémétrie).",
+      "event-marker-label": "Libellé",
+      "event-marker-device-id": "evt_device (PAC)",
+      "event-marker-fault-codes": "Codes evt_fault (séparés par virgule)",
+      "event-marker-fault-codes-hint": "Ex : 15, 29, 38, 39, 40, 88 (Defaut communication). Vide pour désactiver le mode evt.",
+      "event-marker-gap-threshold": "Gap (s)",
+      "event-marker-gap-threshold-hint": "0 = désactivé. Recommandé : 600 (10 min).",
+      "event-marker-gap-reference-key": "Clé de référence (gap)",
+      "event-marker-gap-reference-key-hint": "Clé télémétrie dont l'absence indique un état offline",
+      "event-marker-color": "Couleur",
+      "event-marker-opacity": "Opacité",
+      "event-marker-pattern": "Motif",
+      "add-event-marker": "Ajouter un marqueur"
     },
     "wind-speed-direction": {
       "layout": "Disposition",

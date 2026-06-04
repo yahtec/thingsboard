@@ -1,0 +1,58 @@
+/**
+ * Copyright © 2016-2026 The Thingsboard Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.tb-time-series-event-markers-panel {
+  .markers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .marker-row {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  .marker-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+
+    .marker-index {
+      font-weight: 600;
+      color: rgba(0, 0, 0, 0.6);
+    }
+  }
+
+  .marker-row-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+
+    .flex-1 {
+      flex: 1 1 160px;
+      min-width: 160px;
+    }
+
+    .w-100 { width: 110px; }
+    .w-120 { width: 130px; }
+    .w-150 { width: 160px; }
+  }
+}
