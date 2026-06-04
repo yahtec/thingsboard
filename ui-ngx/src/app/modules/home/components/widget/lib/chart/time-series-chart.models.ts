@@ -565,6 +565,31 @@ export const timeSeriesChartThresholdDefaultSettings: TimeSeriesChartThreshold =
   labelBackground: 'rgba(255,255,255,0.56)'
 };
 
+export interface TimeSeriesChartEventMarker {
+  label: string;
+  // Mode "evt" — désactivé si evtFaultCodes vide
+  evtFaultCodes: number[];
+  evtDeviceId: number;
+  // Mode "gap" — désactivé si gapThresholdSec = 0
+  gapThresholdSec: number;
+  gapReferenceKey: string;
+  // Style commun
+  color: string | 'auto';
+  opacity: number;
+  pattern: 'solid' | 'striped';
+}
+
+export const timeSeriesChartEventMarkerDefaultSettings: TimeSeriesChartEventMarker = {
+  label: 'PAC1 hors ligne',
+  evtFaultCodes: [15, 29, 38, 39, 40, 88],
+  evtDeviceId: 50,
+  gapThresholdSec: 600,
+  gapReferenceKey: '',
+  color: 'auto',
+  opacity: 0.15,
+  pattern: 'solid'
+};
+
 export enum TimeSeriesChartNoAggregationBarWidthStrategy {
   group = 'group',
   separate = 'separate'
@@ -697,6 +722,7 @@ export const timeSeriesChartGridDefaultSettings: TimeSeriesChartGridSettings = {
 
 export interface TimeSeriesChartSettings extends TimeSeriesChartTooltipWidgetSettings, TimeSeriesChartComparisonSettings {
   thresholds: TimeSeriesChartThreshold[];
+  eventMarkers: TimeSeriesChartEventMarker[];
   darkMode: boolean;
   dataZoom: boolean;
   stack: boolean;
@@ -712,6 +738,7 @@ export interface TimeSeriesChartSettings extends TimeSeriesChartTooltipWidgetSet
 
 export const timeSeriesChartDefaultSettings: TimeSeriesChartSettings = {
   thresholds: [],
+  eventMarkers: [],
   darkMode: false,
   dataZoom: true,
   stack: false,
