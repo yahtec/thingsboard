@@ -101,3 +101,76 @@ export function resolveMarkerColor(
   const match = dataKeys.find(k => k.label.toLowerCase().includes(needle));
   return match ? match.color : AUTO_COLOR_FALLBACK;
 }
+
+export interface ReferencePoint {
+  ts: number;
+  value: number;
+}
+
+export interface GapReconstructOptions {
+  gapThresholdSec: number;
+  windowStart: number;
+  windowEnd: number;
+  now: number;
+}
+
+export function reconstructGapIntervals(
+  refs: ReferencePoint[],
+  opts: GapReconstructOptions
+): ReconstructedInterval[] {
+  if (opts.gapThresholdSec <= 0) {
+    return [];
+  }
+
+  const thresholdMs = opts.gapThresholdSec * 1000;
+  const effectiveEnd = Math.min(opts.windowEnd, opts.now);
+  const sorted = [...refs].sort((a, b) => a.ts - b.ts);
+
+  if (sorted.length === 0) {
+    return [{
+      start: opts.windowStart,
+      end: effectiveEnd,
+      ongoing: effectiveEnd >= opts.now
+    }];
+  }
+
+  const boundaries: number[] = [opts.windowStart, ...sorted.map(p => p.ts), effectiveEnd];
+  const intervals: ReconstructedInterval[] = [];
+
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const a = boundaries[i];
+    const b = boundaries[i + 1];
+    if (b - a > thresholdMs) {
+      intervals.push({
+        start: a,
+        end: b,
+        ongoing: b === opts.now && i === boundaries.length - 2
+      });
+    }
+  }
+
+  return intervals;
+}
+
+export function mergeIntervals(intervals: ReconstructedInterval[]): ReconstructedInterval[] {
+  if (intervals.length === 0) return [];
+
+  const sorted = [...intervals].sort((a, b) => a.start - b.start);
+  const merged: ReconstructedInterval[] = [sorted[0]];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    const cur = sorted[i];
+    if (cur.start <= last.end) {
+      merged[merged.length - 1] = {
+        start: last.start,
+        end: Math.max(last.end, cur.end),
+        ongoing: last.ongoing || cur.ongoing
+      };
+    } else {
+      merged.push(cur);
+    }
+  }
+
+  return merged;
+}
