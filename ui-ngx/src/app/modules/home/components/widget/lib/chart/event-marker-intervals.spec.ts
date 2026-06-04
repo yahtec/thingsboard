@@ -207,6 +207,14 @@ describe('reconstructGapIntervals', () => {
     });
     expect(out).toEqual([]);
   });
+
+  it('windowEnd < now → fenêtre fermée, aucun gap marqué ongoing', () => {
+    const refs: ReferencePoint[] = [{ ts: 1000, value: 1 }];
+    const out = reconstructGapIntervals(refs, {
+      gapThresholdSec: 2, windowStart: 1000, windowEnd: 8000, now: 10000
+    });
+    expect(out).toEqual([{ start: 1000, end: 8000, ongoing: false }]);
+  });
 });
 
 describe('mergeIntervals', () => {
