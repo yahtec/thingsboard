@@ -18,7 +18,9 @@ import {
   reconstructIntervals,
   EventMarkerGroupFilter,
   EventPoint,
-  ReconstructedInterval
+  ReconstructedInterval,
+  resolveMarkerColor,
+  NamedDataKey
 } from './event-marker-intervals';
 
 const PAC1_COMM: EventMarkerGroupFilter = {
@@ -113,5 +115,34 @@ describe('reconstructIntervals', () => {
     ];
     const out = reconstructIntervals(points, PAC1_COMM, { now: 5000 });
     expect(out).toEqual([{ start: 1000, end: 2000, ongoing: false }]);
+  });
+});
+
+describe('resolveMarkerColor', () => {
+  const keys: NamedDataKey[] = [
+    { label: 'PAC1.temp', color: '#ff0000' },
+    { label: 'PAC2.temp', color: '#00ff00' },
+    { label: 'Chaudiere.temp', color: '#0000ff' }
+  ];
+
+  it("evtDeviceId=50 → match 'PAC1' → couleur de la courbe correspondante", () => {
+    expect(resolveMarkerColor('auto', 50, keys)).toBe('#ff0000');
+  });
+
+  it("evtDeviceId=51 → match 'PAC2'", () => {
+    expect(resolveMarkerColor('auto', 51, keys)).toBe('#00ff00');
+  });
+
+  it('couleur explicite → retournée telle quelle (auto ignoré)', () => {
+    expect(resolveMarkerColor('#abcdef', 50, keys)).toBe('#abcdef');
+  });
+
+  it("aucun match auto → fallback gris #888888", () => {
+    expect(resolveMarkerColor('auto', 55, keys)).toBe('#888888');
+  });
+
+  it("match insensible à la casse", () => {
+    const lowerKeys: NamedDataKey[] = [{ label: 'pac1.t', color: '#123456' }];
+    expect(resolveMarkerColor('auto', 50, lowerKeys)).toBe('#123456');
   });
 });

@@ -77,3 +77,27 @@ export function reconstructIntervals(
 
   return intervals;
 }
+
+export interface NamedDataKey {
+  label: string;
+  color: string;
+}
+
+const AUTO_COLOR_FALLBACK = '#888888';
+
+export function resolveMarkerColor(
+  configured: string | 'auto',
+  evtDeviceId: number,
+  dataKeys: NamedDataKey[]
+): string {
+  if (configured !== 'auto') {
+    return configured;
+  }
+  const pacIndex = evtDeviceId - 49;
+  if (pacIndex < 1) {
+    return AUTO_COLOR_FALLBACK;
+  }
+  const needle = `pac${pacIndex}`;
+  const match = dataKeys.find(k => k.label.toLowerCase().includes(needle));
+  return match ? match.color : AUTO_COLOR_FALLBACK;
+}
