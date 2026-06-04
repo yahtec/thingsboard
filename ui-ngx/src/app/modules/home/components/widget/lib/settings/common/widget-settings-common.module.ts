@@ -103,6 +103,9 @@ import {
   TimeSeriesChartThresholdsPanelComponent
 } from '@home/components/widget/lib/settings/common/chart/time-series-chart-thresholds-panel.component';
 import {
+  TimeSeriesChartEventMarkersPanelComponent
+} from '@home/components/widget/lib/settings/common/chart/time-series-chart-event-markers-panel.component';
+import {
   TimeSeriesChartThresholdRowComponent
 } from '@home/components/widget/lib/settings/common/chart/time-series-chart-threshold-row.component';
 import { DataKeyInputComponent } from '@home/components/widget/lib/settings/common/key/data-key-input.component';
@@ -315,6 +318,7 @@ import { AxisScaleRowComponent } from './axis-scale-row.component';
     WidgetButtonToggleCustomStylePanelComponent,
     TimeSeriesChartAxisSettingsComponent,
     TimeSeriesChartThresholdsPanelComponent,
+    TimeSeriesChartEventMarkersPanelComponent,
     TimeSeriesChartThresholdRowComponent,
     TimeSeriesChartThresholdSettingsPanelComponent,
     TimeSeriesNoAggregationBarWidthSettingsComponent,
@@ -426,6 +430,7 @@ import { AxisScaleRowComponent } from './axis-scale-row.component';
     WidgetButtonToggleCustomStylePanelComponent,
     TimeSeriesChartAxisSettingsComponent,
     TimeSeriesChartThresholdsPanelComponent,
+    TimeSeriesChartEventMarkersPanelComponent,
     TimeSeriesChartThresholdRowComponent,
     TimeSeriesChartThresholdSettingsPanelComponent,
     TimeSeriesNoAggregationBarWidthSettingsComponent,

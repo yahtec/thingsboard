@@ -9820,7 +9820,21 @@
                 "point-shape": "Point shape",
                 "point-size": "Point size"
               }
-            }
+            },
+            "event-markers": "Event markers",
+            "event-markers-hint": "Colored bands on the chart indicating periods when a PAC is in communication fault (reconstructed from evt_* keys on the device, optionally combined with telemetry gap detection).",
+            "event-marker-label": "Label",
+            "event-marker-device-id": "evt_device (PAC)",
+            "event-marker-fault-codes": "evt_fault codes (comma-separated)",
+            "event-marker-fault-codes-hint": "Ex: 15, 29, 38, 39, 40, 88 (Defaut communication). Empty disables evt mode.",
+            "event-marker-gap-threshold": "Gap (s)",
+            "event-marker-gap-threshold-hint": "0 disables gap detection. Recommended: 600 (10 min).",
+            "event-marker-gap-reference-key": "Reference key (gap)",
+            "event-marker-gap-reference-key-hint": "Telemetry key whose missing samples indicate offline state",
+            "event-marker-color": "Color",
+            "event-marker-opacity": "Opacity",
+            "event-marker-pattern": "Pattern",
+            "add-event-marker": "Add marker"
         },
         "wind-speed-direction": {
             "layout": "Layout",
