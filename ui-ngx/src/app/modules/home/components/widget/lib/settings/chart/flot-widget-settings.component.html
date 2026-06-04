@@ -387,4 +387,8 @@
       </ng-template>
     </mat-expansion-panel>
   </div>
+  <tb-time-series-chart-event-markers-panel
+      *ngIf="chartType === 'graph'"
+      formControlName="eventMarkers">
+  </tb-time-series-chart-event-markers-panel>
 </ng-container>

@@ -26,6 +26,7 @@ import {
 } from '@shared/models/widget.models';
 import { DataKeyType } from '@shared/models/telemetry/telemetry.models';
 import { ComparisonDuration } from '@shared/models/time/time.models';
+import { TimeSeriesChartEventMarker } from './chart/time-series-chart.models';
 
 export declare type ChartType = 'line' | 'pie' | 'bar' | 'state' | 'graph';
 
@@ -179,6 +180,7 @@ export interface TbFlotLabelPatternSettings {
 export interface TbFlotGraphSettings extends TbFlotBaseSettings,
                                              TbFlotThresholdsSettings, TbFlotComparisonSettings, TbFlotCustomLegendSettings {
   smoothLines: boolean;
+  eventMarkers: TimeSeriesChartEventMarker[];
 }
 
 export declare type BarAlignment = 'left' | 'right' | 'center';
