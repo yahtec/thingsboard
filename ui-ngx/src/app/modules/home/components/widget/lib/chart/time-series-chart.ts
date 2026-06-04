@@ -28,6 +28,7 @@ import {
   TimeSeriesChartAxis,
   TimeSeriesChartDataItem,
   timeSeriesChartDefaultSettings,
+  TimeSeriesChartEventMarker,
   timeSeriesChartKeyDefaultSettings,
   TimeSeriesChartKeySettings,
   TimeSeriesChartNoAggregationBarWidthStrategy,
@@ -45,6 +46,10 @@ import {
   updateDarkMode,
   updateXAxisTimeWindow
 } from '@home/components/widget/lib/chart/time-series-chart.models';
+import {
+  EventPoint,
+  ReconstructedInterval
+} from '@home/components/widget/lib/chart/event-marker-intervals';
 import {
   calculateAxisSize,
   ECharts,
@@ -137,6 +142,12 @@ export class TbTimeSeriesChart {
   private yAxisList: TimeSeriesChartYAxis[] = [];
   private dataItems: TimeSeriesChartDataItem[] = [];
   private thresholdItems: TimeSeriesChartThresholdItem[] = [];
+  private eventMarkerItems: Array<{
+    config: TimeSeriesChartEventMarker;
+    points: EventPoint[];
+    intervals: ReconstructedInterval[];
+    lookbackInFlight: boolean;
+  }> = [];
 
   private hasVisualMap = false;
   private visualMapSelectedRanges: {[key: number]: boolean};
@@ -197,6 +208,7 @@ export class TbTimeSeriesChart {
     this.setupYAxes();
     this.setupData();
     this.setupThresholds();
+    this.setupEventMarkers();
     this.setupVisualMap();
     if (this.settings.showTooltip) {
       if (this.settings.tooltipShowDate) {
@@ -562,6 +574,46 @@ export class TbTimeSeriesChart {
       this.thresholdItems.push(thresholdItem);
     }
     this.subscribeForEntityThresholds(thresholdDatasources);
+  }
+
+  private setupEventMarkers(): void {
+    this.eventMarkerItems = (this.settings.eventMarkers || []).map(config => ({
+      config,
+      points: [],
+      intervals: [],
+      lookbackInFlight: false
+    }));
+
+    if (this.eventMarkerItems.length === 0) {
+      return;
+    }
+
+    const evtKeys = ['evt_id', 'evt_status', 'evt_fault', 'evt_device'];
+    const ds = this.ctx.datasources && this.ctx.datasources.find(d => d.type === 'entity');
+    if (!ds) {
+      return;
+    }
+
+    const anyEvtMode = this.eventMarkerItems.some(it => (it.config.evtFaultCodes?.length || 0) > 0);
+    const gapKeys = Array.from(new Set(
+      this.eventMarkerItems
+        .filter(it => it.config.gapThresholdSec > 0 && it.config.gapReferenceKey)
+        .map(it => it.config.gapReferenceKey)
+    ));
+
+    const keysToAdd = [...(anyEvtMode ? evtKeys : []), ...gapKeys];
+    for (const key of keysToAdd) {
+      if (!ds.dataKeys.some(k => k.name === key)) {
+        ds.dataKeys.push({
+          name: key,
+          type: DataKeyType.timeseries,
+          label: key,
+          color: 'transparent',
+          settings: { hidden: true },
+          hidden: true
+        } as DataKey);
+      }
+    }
   }
 
   private setupXAxes(): void {
