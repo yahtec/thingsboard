@@ -59,9 +59,22 @@ import tinycolor from 'tinycolor2';
 import { AggregationType, IntervalMath } from '@shared/models/time/time.models';
 import { CancelAnimationFrame } from '@core/services/raf.service';
 import { UtilsService } from '@core/services/utils.service';
-import { DataKeyType } from '@shared/models/telemetry/telemetry.models';
+import { DataKeyType, DataSortOrder } from '@shared/models/telemetry/telemetry.models';
 import { BehaviorSubject } from 'rxjs';
 import { getSourceTbUnitSymbol, isNotEmptyTbUnits } from '@shared/models/unit.models';
+import {
+  reconstructIntervals,
+  reconstructGapIntervals,
+  mergeIntervals,
+  resolveMarkerColor,
+  EventPoint,
+  EventMarkerGroupFilter,
+  NamedDataKey,
+  ReferencePoint,
+  EventMarkerItem
+} from '@home/components/widget/lib/chart/event-marker-intervals';
+import { TimeSeriesChartEventMarker } from '@home/components/widget/lib/chart/time-series-chart.models';
+import { AttributeService } from '@core/http/attribute.service';
 import Timeout = NodeJS.Timeout;
 
 const moment = moment_;
@@ -138,6 +151,9 @@ export class TbFlot {
 
   yMin$ = this.yMinSubject.asObservable();
   yMax$ = this.yMaxSubject.asObservable();
+
+  private eventMarkerItems: EventMarkerItem[] = [];
+  private attributeService: AttributeService;
 
   constructor(private ctx: WidgetContext, private readonly chartType: ChartType, private $flotElement?: JQuery<any>, settings?: TbFlotSettings) {
     this.chartType = this.chartType || 'line';
@@ -352,6 +368,9 @@ export class TbFlot {
       // Experimental
       this.animatedPie = this.settings.animatedPie === true;
     }
+
+    this.attributeService = this.ctx.$injector.get(AttributeService);
+    this.setupEventMarkers();
 
     if (this.ctx.defaultSubscription) {
       this.init(this.$flotElement || this.ctx.$container, this.ctx.defaultSubscription);
@@ -850,6 +869,17 @@ export class TbFlot {
   }
 
   private updateData() {
+    this.collectEventMarkerPoints();
+    this.reconstructEventMarkerIntervals();
+    const markerMarkings = this.buildEventMarkerMarkings();
+    if (markerMarkings.length > 0) {
+      const withoutOld = (this.options.grid.markings as any[] || []).filter((m: any) => !m.__evtMarker__);
+      const tagged = markerMarkings.map(m => ({ ...m, __evtMarker__: true }));
+      this.options.grid.markings = [...withoutOld, ...tagged];
+      if (this.plot) {
+        this.plot.getOptions().grid.markings = this.options.grid.markings;
+      }
+    }
     this.plot.setData(this.subscription.data);
     if (this.chartType !== 'pie') {
       this.plot.setupGrid();
@@ -1628,6 +1658,258 @@ export class TbFlot {
       const entityLabel = datasource ? datasource.entityLabel : null;
       this.ctx.actionsApi.handleWidgetAction($event, descriptors[0], entityId, entityName, item, entityLabel);
     }
+  }
+
+  // ─── Event-marker bands (Task FB) ───────────────────────────────────────────
+
+  private setupEventMarkers(): void {
+    const cfg = (this.settings as any).eventMarkers as TimeSeriesChartEventMarker[] | undefined;
+    this.eventMarkerItems = (cfg || []).map(config => ({
+      config,
+      points: [],
+      lookbackPoints: [],
+      intervals: [],
+      lookbackInFlight: false
+    }));
+
+    if (this.eventMarkerItems.length === 0) {
+      return;
+    }
+
+    const evtKeys = ['evt_id', 'evt_status', 'evt_fault', 'evt_device'];
+    const ds = this.ctx.datasources?.find(d => d.type === DatasourceType.entity);
+    if (!ds) {
+      return;
+    }
+
+    const anyEvtMode = this.eventMarkerItems.some(it => (it.config.evtFaultCodes?.length || 0) > 0);
+    const gapKeys = Array.from(new Set(
+      this.eventMarkerItems
+        .filter(it => it.config.gapThresholdSec > 0 && it.config.gapReferenceKey)
+        .map(it => it.config.gapReferenceKey)
+    ));
+
+    const keysToAdd = [...(anyEvtMode ? evtKeys : []), ...gapKeys];
+    for (const key of keysToAdd) {
+      if (!ds.dataKeys.some(k => k.name === key)) {
+        ds.dataKeys.push({
+          name: key,
+          type: 'timeseries',
+          label: key,
+          color: 'transparent',
+          settings: { hidden: true } as any,
+          _hash: Math.random()
+        } as unknown as DataKey);
+      }
+    }
+  }
+
+  private dataSeriesByName(key: string): Array<[number, any]> {
+    const series = this.subscription?.data?.find((d: any) => d.dataKey?.name === key);
+    return (series?.data as Array<[number, any]>) || [];
+  }
+
+  private collectEventMarkerPoints(): void {
+    if (this.eventMarkerItems.length === 0) {
+      return;
+    }
+    const evtKeys = ['evt_id', 'evt_status', 'evt_fault', 'evt_device'] as const;
+    const dataByKey: Record<string, Array<[number, any]>> = {};
+    for (const key of evtKeys) {
+      dataByKey[key] = this.dataSeriesByName(key);
+    }
+
+    const byTs: Map<number, Partial<EventPoint> & { ts: number }> = new Map();
+    for (const key of evtKeys) {
+      for (const [ts, val] of dataByKey[key]) {
+        const entry = byTs.get(ts) || { ts };
+        (entry as any)[key] = Number(val);
+        byTs.set(ts, entry);
+      }
+    }
+
+    const points: EventPoint[] = Array.from(byTs.values())
+      .filter(e => e.evt_status !== undefined && e.evt_fault !== undefined && e.evt_device !== undefined)
+      .map(e => ({
+        ts: e.ts,
+        evt_id: (e.evt_id as number) || 0,
+        evt_status: e.evt_status as number,
+        evt_fault: e.evt_fault as number,
+        evt_device: e.evt_device as number
+      }));
+
+    for (const item of this.eventMarkerItems) {
+      item.points = item.lookbackPoints.length > 0 ? [...item.lookbackPoints, ...points] : points;
+    }
+  }
+
+  private reconstructEventMarkerIntervals(): void {
+    if (this.eventMarkerItems.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    const windowStart = this.ctx.defaultSubscription?.timeWindow?.minTime ?? 0;
+    const windowEnd = this.ctx.defaultSubscription?.timeWindow?.maxTime ?? now;
+
+    for (const item of this.eventMarkerItems) {
+      let evtIntervals = [] as ReturnType<typeof reconstructIntervals>;
+      let needLookback = false;
+      if ((item.config.evtFaultCodes?.length || 0) > 0) {
+        const filter: EventMarkerGroupFilter = {
+          evtDeviceId: item.config.evtDeviceId,
+          evtFaultCodes: item.config.evtFaultCodes
+        };
+        evtIntervals = reconstructIntervals(item.points, filter, {
+          now,
+          onOrphanResolution: () => { needLookback = true; }
+        });
+      }
+
+      let gapIntervals = [] as ReturnType<typeof reconstructGapIntervals>;
+      if (item.config.gapThresholdSec > 0 && item.config.gapReferenceKey) {
+        const refs: ReferencePoint[] = this.dataSeriesByName(item.config.gapReferenceKey)
+          .map(([ts, value]) => ({ ts, value: Number(value) }));
+        gapIntervals = reconstructGapIntervals(refs, {
+          gapThresholdSec: item.config.gapThresholdSec,
+          windowStart,
+          windowEnd,
+          now
+        });
+      }
+
+      item.intervals = mergeIntervals([...evtIntervals, ...gapIntervals]);
+
+      if (needLookback && !item.lookbackInFlight) {
+        this.triggerLookbackFor(item);
+      }
+    }
+  }
+
+  private hexToRgba(hex: string, opacity: number): string {
+    if (hex.startsWith('rgba') || hex.startsWith('rgb')) {
+      return hex;
+    }
+    let h = hex.replace('#', '');
+    if (h.length === 3) {
+      h = h.split('').map(c => c + c).join('');
+    }
+    if (h.length !== 6) {
+      return `rgba(136, 136, 136, ${opacity})`;
+    }
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  }
+
+  private buildEventMarkerMarkings(): any[] {
+    if (this.eventMarkerItems.length === 0) {
+      return [];
+    }
+    const namedKeys: NamedDataKey[] = [];
+    for (const ds of (this.subscription?.datasources || [])) {
+      for (const dk of (ds.dataKeys || [])) {
+        if (dk.color && dk.label) {
+          namedKeys.push({ label: dk.label, color: dk.color });
+        }
+      }
+    }
+    const now = Date.now();
+    const out: any[] = [];
+    for (const item of this.eventMarkerItems) {
+      if (item.intervals.length === 0) {
+        continue;
+      }
+      const baseColor = resolveMarkerColor(item.config.color, item.config.evtDeviceId, namedKeys);
+      const rgba = this.hexToRgba(baseColor, item.config.opacity);
+      for (const iv of item.intervals) {
+        out.push({
+          xaxis: {
+            from: iv.start,
+            to: iv.ongoing ? now : iv.end
+          },
+          color: rgba,
+          lineWidth: 0
+        });
+      }
+    }
+    return out;
+  }
+
+  private applyEventMarkerMarkings(): void {
+    if (!this.plot) {
+      return;
+    }
+    const markerMarkings = this.buildEventMarkerMarkings();
+    const withoutOld = (this.options.grid.markings as any[] || []).filter((m: any) => !m.__evtMarker__);
+    const tagged = markerMarkings.map(m => ({ ...m, __evtMarker__: true }));
+    this.options.grid.markings = [...withoutOld, ...tagged];
+    this.plot.getOptions().grid.markings = this.options.grid.markings;
+    this.plot.setupGrid();
+    this.plot.draw();
+  }
+
+  private triggerLookbackFor(item: EventMarkerItem): void {
+    const ds = this.subscription?.datasources?.find(d => d.type === DatasourceType.entity);
+    const entityId = ds?.entity?.id;
+    if (!entityId) {
+      return;
+    }
+    const windowStart = this.ctx.defaultSubscription?.timeWindow?.minTime;
+    if (!windowStart) {
+      return;
+    }
+    item.lookbackInFlight = true;
+
+    this.attributeService.getEntityTimeseries(
+      entityId,
+      ['evt_id', 'evt_status', 'evt_fault', 'evt_device'],
+      0,
+      windowStart,
+      20,
+      AggregationType.NONE,
+      undefined,
+      DataSortOrder.DESC
+    ).subscribe({
+      next: (resp: any) => {
+        item.lookbackInFlight = false;
+        const byTs: Map<number, Partial<EventPoint> & { ts: number }> = new Map();
+        for (const key of ['evt_id', 'evt_status', 'evt_fault', 'evt_device'] as const) {
+          for (const dp of (resp[key] || [])) {
+            const ts = dp.ts;
+            const entry = byTs.get(ts) || { ts };
+            (entry as any)[key] = Number(dp.value);
+            byTs.set(ts, entry);
+          }
+        }
+        const extra: EventPoint[] = Array.from(byTs.values())
+          .filter(e => e.evt_status === 1
+                       && e.evt_device === item.config.evtDeviceId
+                       && item.config.evtFaultCodes.includes(e.evt_fault as number))
+          .map(e => ({
+            ts: e.ts,
+            evt_id: (e.evt_id as number) || 0,
+            evt_status: 1,
+            evt_fault: e.evt_fault as number,
+            evt_device: e.evt_device as number
+          }));
+
+        if (extra.length === 0) {
+          return;
+        }
+        item.lookbackPoints = [...extra, ...item.lookbackPoints];
+        item.points = [...item.lookbackPoints, ...item.points];
+        item.intervals = reconstructIntervals(item.points, {
+          evtDeviceId: item.config.evtDeviceId,
+          evtFaultCodes: item.config.evtFaultCodes
+        }, { now: Date.now() });
+
+        this.applyEventMarkerMarkings();
+      },
+      error: () => {
+        item.lookbackInFlight = false;
+      }
+    });
   }
 
 }
