@@ -82,6 +82,7 @@ export const flotDefaultSettings = (chartType: ChartType): Partial<TbFlotSetting
   if (chartType === 'graph') {
     settings.smoothLines = false;
     settings.shadowSize = 4;
+    settings.eventMarkers = [];
   }
   if (chartType === 'bar') {
     settings.defaultBarWidth = 600;
@@ -207,6 +208,7 @@ export class FlotWidgetSettingsComponent extends PageComponent implements OnInit
       // Common settings
       this.flotSettingsFormGroup.addControl('shadowSize', this.fb.control(4, [Validators.min(0)]));
       this.flotSettingsFormGroup.addControl('smoothLines', this.fb.control(false, []));
+      this.flotSettingsFormGroup.addControl('eventMarkers', this.fb.control([], []));
     } else if (this.chartType === 'bar') {
       // Common settings
       this.flotSettingsFormGroup.addControl('defaultBarWidth', this.fb.control(600, [Validators.min(0)]));
