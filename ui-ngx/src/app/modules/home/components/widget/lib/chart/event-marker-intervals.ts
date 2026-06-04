@@ -176,3 +176,12 @@ export function mergeIntervals(intervals: ReconstructedInterval[]): Reconstructe
 
   return merged;
 }
+
+import type { TimeSeriesChartEventMarker } from './time-series-chart.models';
+
+export interface EventMarkerItem {
+  config: TimeSeriesChartEventMarker;
+  points: EventPoint[];
+  intervals: ReconstructedInterval[];
+  lookbackInFlight: boolean;
+}
