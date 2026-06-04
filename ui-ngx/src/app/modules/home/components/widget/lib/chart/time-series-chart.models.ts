@@ -567,23 +567,20 @@ export const timeSeriesChartThresholdDefaultSettings: TimeSeriesChartThreshold =
 
 export interface TimeSeriesChartEventMarker {
   label: string;
-  // Mode "evt" — désactivé si evtFaultCodes vide
   evtFaultCodes: number[];
   evtDeviceId: number;
-  // Mode "gap" — désactivé si gapThresholdSec = 0
   gapThresholdSec: number;
   gapReferenceKey: string;
-  // Style commun
-  color: string | 'auto';
+  color: 'auto' | string;
   opacity: number;
   pattern: 'solid' | 'striped';
 }
 
 export const timeSeriesChartEventMarkerDefaultSettings: TimeSeriesChartEventMarker = {
-  label: 'PAC1 hors ligne',
-  evtFaultCodes: [15, 29, 38, 39, 40, 88],
-  evtDeviceId: 50,
-  gapThresholdSec: 600,
+  label: '',
+  evtFaultCodes: [],
+  evtDeviceId: 0,
+  gapThresholdSec: 0,
   gapReferenceKey: '',
   color: 'auto',
   opacity: 0.15,
