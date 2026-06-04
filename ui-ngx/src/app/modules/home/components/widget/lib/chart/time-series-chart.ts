@@ -53,6 +53,7 @@ import {
   resolveMarkerColor,
   EventPoint,
   EventMarkerGroupFilter,
+  EventMarkerItem,
   NamedDataKey,
   ReconstructedInterval,
   ReferencePoint
@@ -83,7 +84,7 @@ import { CallbackDataParams, PiecewiseVisualMapOption } from 'echarts/types/dist
 import { Renderer2 } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { AggregationType } from '@shared/models/time/time.models';
-import { DataKeyType } from '@shared/models/telemetry/telemetry.models';
+import { DataKeyType, DataSortOrder } from '@shared/models/telemetry/telemetry.models';
 import { WidgetSubscriptionOptions } from '@core/api/widget-api.models';
 import { DataKeySettingsFunction } from '@home/components/widget/lib/settings/common/key/data-keys.component.models';
 import { DeepPartial } from '@shared/models/common';
@@ -98,6 +99,7 @@ import {
 } from '@home/components/widget/lib/chart/time-series-chart-tooltip.models';
 import { UnitService } from '@core/services/unit.service';
 import { isNotEmptyTbUnits, TbUnit } from '@shared/models/unit.models';
+import { AttributeService } from '@core/http/attribute.service';
 
 export class TbTimeSeriesChart {
 
@@ -149,12 +151,9 @@ export class TbTimeSeriesChart {
   private yAxisList: TimeSeriesChartYAxis[] = [];
   private dataItems: TimeSeriesChartDataItem[] = [];
   private thresholdItems: TimeSeriesChartThresholdItem[] = [];
-  private eventMarkerItems: Array<{
-    config: TimeSeriesChartEventMarker;
-    points: EventPoint[];
-    intervals: ReconstructedInterval[];
-    lookbackInFlight: boolean;
-  }> = [];
+  private eventMarkerItems: EventMarkerItem[] = [];
+
+  private attributeService: AttributeService;
 
   private hasVisualMap = false;
   private visualMapSelectedRanges: {[key: number]: boolean};
@@ -211,6 +210,7 @@ export class TbTimeSeriesChart {
     const dashboardPageElement = $dashboardPageElement.length ? $($dashboardPageElement[$dashboardPageElement.length-1]) : null;
     this.darkMode = this.settings.darkMode || dashboardPageElement?.hasClass('dark');
     this.unitService = this.ctx.$injector.get(UnitService);
+    this.attributeService = this.ctx.$injector.get(AttributeService);
     this.setupXAxes();
     this.setupYAxes();
     this.setupData();
@@ -625,6 +625,11 @@ export class TbTimeSeriesChart {
     }
   }
 
+  private dataSeriesByName(key: string): Array<[number, any]> {
+    const series = this.ctx.data?.find(d => d.dataKey?.name === key);
+    return (series?.data as Array<[number, any]>) || [];
+  }
+
   private collectEventMarkerPoints(): void {
     if (this.eventMarkerItems.length === 0) {
       return;
@@ -633,8 +638,7 @@ export class TbTimeSeriesChart {
     const evtKeys = ['evt_id', 'evt_status', 'evt_fault', 'evt_device'];
     const dataByKey: Record<string, Array<[number, any]>> = {};
     for (const key of evtKeys) {
-      const series = this.ctx.data?.find(d => d.dataKey?.name === key);
-      dataByKey[key] = (series?.data as Array<[number, any]>) || [];
+      dataByKey[key] = this.dataSeriesByName(key);
     }
 
     const byTs: Map<number, Partial<EventPoint> & { ts: number }> = new Map();
@@ -685,8 +689,7 @@ export class TbTimeSeriesChart {
 
       let gapIntervals: ReconstructedInterval[] = [];
       if (item.config.gapThresholdSec > 0 && item.config.gapReferenceKey) {
-        const refSeries = this.ctx.data?.find(d => d.dataKey?.name === item.config.gapReferenceKey);
-        const refs: ReferencePoint[] = ((refSeries?.data as Array<[number, any]>) || [])
+        const refs: ReferencePoint[] = this.dataSeriesByName(item.config.gapReferenceKey)
           .map(([ts, value]) => ({ ts, value: Number(value) }));
         gapIntervals = reconstructGapIntervals(refs, {
           gapThresholdSec: item.config.gapThresholdSec,
@@ -704,8 +707,77 @@ export class TbTimeSeriesChart {
     }
   }
 
-  private triggerLookbackFor(_item: typeof this.eventMarkerItems[number]): void {
-    // Implementation in Task 8.
+  private triggerLookbackFor(item: EventMarkerItem): void {
+    const ds = this.ctx.datasources?.find(d => d.type === DatasourceType.entity);
+    const entityId = ds?.entity?.id;
+    if (!entityId) {
+      return;
+    }
+    const windowStart = this.ctx.defaultSubscription?.timeWindow?.minTime;
+    if (!windowStart) {
+      return;
+    }
+
+    item.lookbackInFlight = true;
+
+    this.attributeService.getEntityTimeseries(
+      entityId,
+      ['evt_id', 'evt_status', 'evt_fault', 'evt_device'],
+      0,
+      windowStart,
+      20,
+      AggregationType.NONE,
+      undefined,
+      DataSortOrder.DESC
+    ).subscribe({
+      next: (resp) => {
+        item.lookbackInFlight = false;
+        const byTs: Map<number, Partial<EventPoint> & { ts: number }> = new Map();
+        for (const key of ['evt_id', 'evt_status', 'evt_fault', 'evt_device'] as const) {
+          for (const dp of (resp[key] || [])) {
+            const ts = dp.ts;
+            const entry = byTs.get(ts) || { ts };
+            (entry as any)[key] = Number(dp.value);
+            byTs.set(ts, entry);
+          }
+        }
+        const extra: EventPoint[] = Array.from(byTs.values())
+          .filter(e => e.evt_status === 1
+                       && e.evt_device === item.config.evtDeviceId
+                       && item.config.evtFaultCodes.includes(e.evt_fault as number))
+          .map(e => ({
+            ts: e.ts,
+            evt_id: (e.evt_id as number) || 0,
+            evt_status: 1,
+            evt_fault: e.evt_fault as number,
+            evt_device: e.evt_device as number
+          }));
+
+        if (extra.length === 0) {
+          return;
+        }
+
+        const merged = [...extra, ...item.points];
+        item.intervals = reconstructIntervals(merged, {
+          evtDeviceId: item.config.evtDeviceId,
+          evtFaultCodes: item.config.evtFaultCodes
+        }, { now: Date.now() });
+
+        // Re-render: rebuild series and apply
+        this.timeSeriesChartOptions.series = [
+          ...((this.timeSeriesChartOptions.series as any[]) || []).filter(
+            (s: any) => !this.eventMarkerItems.some(i => i.config.label === s.name)
+          ),
+          ...this.buildEventMarkerSeries()
+        ];
+        if (this.timeSeriesChart) {
+          this.timeSeriesChart.setOption({ series: this.timeSeriesChartOptions.series });
+        }
+      },
+      error: () => {
+        item.lookbackInFlight = false;
+      }
+    });
   }
 
   private buildEventMarkerSeries(): any[] {
