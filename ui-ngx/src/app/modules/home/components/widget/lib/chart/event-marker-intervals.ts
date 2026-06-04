@@ -48,7 +48,7 @@ export function reconstructIntervals(
   const filtered = points
     .filter(p => p.evt_device === filter.evtDeviceId && codeSet.has(p.evt_fault))
     .map(p => ({
-      ts: (p.evt_id && p.evt_id > 0) ? p.evt_id * 1000 : p.ts,
+      ts: p.evt_id > 0 ? p.evt_id * 1000 : p.ts,
       status: p.evt_status
     }))
     .sort((a, b) => a.ts - b.ts);
