@@ -589,7 +589,7 @@ export class TbTimeSeriesChart {
     }
 
     const evtKeys = ['evt_id', 'evt_status', 'evt_fault', 'evt_device'];
-    const ds = this.ctx.datasources && this.ctx.datasources.find(d => d.type === 'entity');
+    const ds = this.ctx.datasources.find(d => d.type === DatasourceType.entity);
     if (!ds) {
       return;
     }
