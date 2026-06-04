@@ -757,8 +757,8 @@ export class TbTimeSeriesChart {
           return;
         }
 
-        const merged = [...extra, ...item.points];
-        item.intervals = reconstructIntervals(merged, {
+        item.points = [...extra, ...item.points];
+        item.intervals = reconstructIntervals(item.points, {
           evtDeviceId: item.config.evtDeviceId,
           evtFaultCodes: item.config.evtFaultCodes
         }, { now: Date.now() });

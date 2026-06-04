@@ -14,6 +14,8 @@
 /// limitations under the License.
 ///
 
+import type { TimeSeriesChartEventMarker } from './time-series-chart.models';
+
 export interface EventPoint {
   ts: number;
   evt_id: number;
@@ -176,8 +178,6 @@ export function mergeIntervals(intervals: ReconstructedInterval[]): Reconstructe
 
   return merged;
 }
-
-import type { TimeSeriesChartEventMarker } from './time-series-chart.models';
 
 export interface EventMarkerItem {
   config: TimeSeriesChartEventMarker;
