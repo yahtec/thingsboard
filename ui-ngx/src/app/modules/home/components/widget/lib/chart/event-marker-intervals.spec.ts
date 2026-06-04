@@ -20,7 +20,10 @@ import {
   EventPoint,
   ReconstructedInterval,
   resolveMarkerColor,
-  NamedDataKey
+  NamedDataKey,
+  reconstructGapIntervals,
+  mergeIntervals,
+  ReferencePoint
 } from './event-marker-intervals';
 
 const PAC1_COMM: EventMarkerGroupFilter = {
@@ -144,5 +147,107 @@ describe('resolveMarkerColor', () => {
   it("match insensible à la casse", () => {
     const lowerKeys: NamedDataKey[] = [{ label: 'pac1.t', color: '#123456' }];
     expect(resolveMarkerColor('auto', 50, lowerKeys)).toBe('#123456');
+  });
+});
+
+describe('reconstructGapIntervals', () => {
+
+  it('aucun gap si tous les points sont espacés en deçà du seuil', () => {
+    const refs: ReferencePoint[] = [
+      { ts: 1000, value: 1 },
+      { ts: 2000, value: 1 },
+      { ts: 3000, value: 1 }
+    ];
+    const out = reconstructGapIntervals(refs, {
+      gapThresholdSec: 2, windowStart: 1000, windowEnd: 3000, now: 5000
+    });
+    expect(out).toEqual([]);
+  });
+
+  it('un gap entre deux points si écart > seuil', () => {
+    const refs: ReferencePoint[] = [
+      { ts: 1000, value: 1 },
+      { ts: 6000, value: 1 }
+    ];
+    const out = reconstructGapIntervals(refs, {
+      gapThresholdSec: 2, windowStart: 1000, windowEnd: 6000, now: 10000
+    });
+    expect(out).toEqual([{ start: 1000, end: 6000, ongoing: false }]);
+  });
+
+  it("aucun point sur la fenêtre → la fenêtre entière est un gap", () => {
+    const out = reconstructGapIntervals([], {
+      gapThresholdSec: 60, windowStart: 1000, windowEnd: 5000, now: 5000
+    });
+    expect(out).toEqual([{ start: 1000, end: 5000, ongoing: true }]);
+  });
+
+  it('gap en cours : dernier point trop ancien par rapport à now', () => {
+    const refs: ReferencePoint[] = [{ ts: 1000, value: 1 }];
+    const out = reconstructGapIntervals(refs, {
+      gapThresholdSec: 2, windowStart: 1000, windowEnd: 10000, now: 10000
+    });
+    expect(out).toEqual([{ start: 1000, end: 10000, ongoing: true }]);
+  });
+
+  it("gap initial : premier point arrive longtemps après windowStart", () => {
+    const refs: ReferencePoint[] = [
+      { ts: 5000, value: 1 },
+      { ts: 6000, value: 1 }
+    ];
+    const out = reconstructGapIntervals(refs, {
+      gapThresholdSec: 2, windowStart: 1000, windowEnd: 6000, now: 6000
+    });
+    expect(out).toEqual([{ start: 1000, end: 5000, ongoing: false }]);
+  });
+
+  it('gapThresholdSec=0 → mode désactivé, jamais de gap', () => {
+    const out = reconstructGapIntervals([], {
+      gapThresholdSec: 0, windowStart: 1000, windowEnd: 5000, now: 5000
+    });
+    expect(out).toEqual([]);
+  });
+});
+
+describe('mergeIntervals', () => {
+
+  it('liste vide → vide', () => {
+    expect(mergeIntervals([])).toEqual([]);
+  });
+
+  it('intervalles disjoints → conservés tels quels (triés)', () => {
+    const out = mergeIntervals([
+      { start: 100, end: 200, ongoing: false },
+      { start: 50, end: 80, ongoing: false }
+    ]);
+    expect(out).toEqual([
+      { start: 50, end: 80, ongoing: false },
+      { start: 100, end: 200, ongoing: false }
+    ]);
+  });
+
+  it('intervalles chevauchants → fusionnés', () => {
+    const out = mergeIntervals([
+      { start: 100, end: 200, ongoing: false },
+      { start: 150, end: 250, ongoing: false }
+    ]);
+    expect(out).toEqual([{ start: 100, end: 250, ongoing: false }]);
+  });
+
+  it('intervalle ongoing fusionné → reste ongoing', () => {
+    const out = mergeIntervals([
+      { start: 100, end: 200, ongoing: false },
+      { start: 150, end: 300, ongoing: true }
+    ]);
+    expect(out).toEqual([{ start: 100, end: 300, ongoing: true }]);
+  });
+
+  it('chaîne de 3 chevauchants → 1 seul', () => {
+    const out = mergeIntervals([
+      { start: 100, end: 200, ongoing: false },
+      { start: 180, end: 280, ongoing: false },
+      { start: 260, end: 350, ongoing: false }
+    ]);
+    expect(out).toEqual([{ start: 100, end: 350, ongoing: false }]);
   });
 });
