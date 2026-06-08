@@ -1,0 +1,10 @@
+# /etc/logrotate.d/tb-ts_kv-drop
+/var/log/tb-ts_kv-drop.log {
+    yearly
+    rotate 5
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 644 root root
+}

@@ -1,0 +1,8 @@
+# /etc/cron.d/tb-storage-rotation
+#
+# ThingsBoard ts_kv partition rotation : drop year (current-4) every Jan 1st.
+# Policy: keep current year + 3 previous full years.
+# Spec: docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md §8
+#
+# m  h  dom mon dow user command
+  0  2  1   1   *   root /usr/local/bin/tb-ts_kv-drop-old-year.sh
