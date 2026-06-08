@@ -1,0 +1,73 @@
+// scripts/tb/rule-chain-pac-hybride-router/extract-attrs.tbel
+//
+// TBEL TbTransformMsgNode (TB 4.3) — extraction des 37 attrs SERVER_SCOPE
+// du payload pac_v2 nested. Émet UN SEUL message POST_ATTRIBUTES_REQUEST
+// (pas de multi-msg, évite le bug TB 4.3 — cf. memory feedback-tbel-quirks).
+//
+// Conforme Section 3.6 du spec 2026-05-28-payload-v2-pac-hybride-design.md.
+// Le node "Save Attrs SERVER_SCOPE v2" a updateAttributesOnlyOnValueChange=true
+// → dédup natif, no-op si valeur identique.
+
+var attrs = {};
+
+// --- Top-level (5) ---
+if (msg.id     != null) attrs.id = msg.id;
+if (msg.rel    != null) attrs.rel = msg.rel;
+if (msg.type   != null) attrs.type = msg.type;
+if (msg.nHp    != null) attrs.nHp = msg.nHp;
+if (msg.relCm2 != null) attrs.relCm2 = msg.relCm2;
+
+// --- dhw.tSet (1) ---
+if (msg.dhw != null && msg.dhw.tSet != null) attrs.dhw_tSet = msg.dhw.tSet;
+
+// --- heat consignes + dates été (9) ---
+if (msg.heat != null) {
+  if (msg.heat.slope       != null) attrs.heat_slope = msg.heat.slope;
+  if (msg.heat.foot        != null) attrs.heat_foot = msg.heat.foot;
+  if (msg.heat.tMax        != null) attrs.heat_tMax = msg.heat.tMax;
+  if (msg.heat.tCut        != null) attrs.heat_tCut = msg.heat.tCut;
+  if (msg.heat.tRes        != null) attrs.heat_tRes = msg.heat.tRes;
+  if (msg.heat.dayBgEte    != null) attrs.heat_dayBgEte = msg.heat.dayBgEte;
+  if (msg.heat.monthBgEte  != null) attrs.heat_monthBgEte = msg.heat.monthBgEte;
+  if (msg.heat.dayEndEte   != null) attrs.heat_dayEndEte = msg.heat.dayEndEte;
+  if (msg.heat.monthEndEte != null) attrs.heat_monthEndEte = msg.heat.monthEndEte;
+
+  // --- heat.calo unités Modbus (5) ---
+  if (msg.heat.calo != null) {
+    if (msg.heat.calo.qeU    != null) attrs.heat_calo_qeU    = msg.heat.calo.qeU;
+    if (msg.heat.calo.qeTotU != null) attrs.heat_calo_qeTotU = msg.heat.calo.qeTotU;
+    if (msg.heat.calo.pwrU   != null) attrs.heat_calo_pwrU   = msg.heat.calo.pwrU;
+    if (msg.heat.calo.hKwhU  != null) attrs.heat_calo_hKwhU  = msg.heat.calo.hKwhU;
+    if (msg.heat.calo.cKwhU  != null) attrs.heat_calo_cKwhU  = msg.heat.calo.cKwhU;
+  }
+}
+
+// --- caloM unités Modbus (5) ---
+if (msg.caloM != null) {
+  if (msg.caloM.qeU    != null) attrs.caloM_qeU    = msg.caloM.qeU;
+  if (msg.caloM.qeTotU != null) attrs.caloM_qeTotU = msg.caloM.qeTotU;
+  if (msg.caloM.pwrU   != null) attrs.caloM_pwrU   = msg.caloM.pwrU;
+  if (msg.caloM.hKwhU  != null) attrs.caloM_hKwhU  = msg.caloM.hKwhU;
+  if (msg.caloM.cKwhU  != null) attrs.caloM_cKwhU  = msg.caloM.cKwhU;
+}
+
+// --- HPs[0..3] versions firmware sous-cartes (12 attrs max, skip empty strings) ---
+if (msg.HPs != null) {
+  // TBEL = MVEL-based : pas de for...in, utiliser boucle classique
+  var i = 0;
+  for (i = 0; i < msg.HPs.length; i++) {
+    var hp = msg.HPs[i];
+    if (hp != null) {
+      var prefix = "HP" + (i + 1) + "_";
+      if (hp.relStm != null && hp.relStm != "") attrs[prefix + "relStm"] = hp.relStm;
+      if (hp.relEsp != null && hp.relEsp != "") attrs[prefix + "relEsp"] = hp.relEsp;
+      if (hp.relScr != null && hp.relScr != "") attrs[prefix + "relScr"] = hp.relScr;
+    }
+  }
+}
+
+return {
+  msg: attrs,
+  metadata: metadata,
+  msgType: "POST_ATTRIBUTES_REQUEST"
+};
