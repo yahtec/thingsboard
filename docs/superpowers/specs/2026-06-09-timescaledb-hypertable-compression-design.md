@@ -43,8 +43,18 @@ déployé et que les clients consulteront activement les données.
 1. `ts_kv` en hypertable TimescaleDB (chunks 7 jours).
 2. Compression colonnaire automatique des chunks anciens (~80-90% attendu).
 3. Rétention native glissante 3 ans (remplace le cron actuel).
-4. **Zéro régression** sur les widgets et les écritures.
-5. RAM-neutralité (VM contrainte à 3.9 GB).
+4. **Purge de la donnée legacy < 20 mai 2026** (flat pré-migration) — profite de la
+   recopie de migration pour ne PAS réimporter ces lignes. **evt_\* inclus** (décision
+   actée) → réversible via `ts_kv_old` conservé (voir §4, §6).
+5. **Zéro régression** sur les widgets et les écritures.
+6. RAM-neutralité (VM contrainte à 3.9 GB).
+
+### Constante de purge
+
+- **Cutoff = 2026-05-20 00:00:00 UTC = epoch `1779235200000` ms.**
+- Mesuré (2026-06-09) : `ts_kv` total **1 644 602** lignes ; **555 891** lignes < cutoff
+  (~34%, plus ancienne 2026-01-20), dont ~137 763 `evt_*` (`evt_dispatch` 137 461 +
+  clusters mi-mai). → ~**1 088 711** lignes recopiées dans l'hypertable.
 
 ### Non-objectifs (hors périmètre)
 
@@ -133,9 +143,11 @@ ALTER TABLE ts_kv RENAME TO ts_kv_old;                       -- partitions mensu
 -- recréer ts_kv (plain table, colonnes/PK identiques à schema-timescale.sql)
 CREATE TABLE ts_kv ( ... PRIMARY KEY (entity_id, key, ts) );
 SELECT create_hypertable('ts_kv','ts', chunk_time_interval => 604800000);  -- 7 jours
-INSERT INTO ts_kv SELECT * FROM ts_kv_old;                   -- ~650k lignes, < 1 min
--- GARDE-FOU : ne continuer QUE si les comptages sont égaux
---   assert count(ts_kv) == count(ts_kv_old)
+INSERT INTO ts_kv SELECT * FROM ts_kv_old
+  WHERE ts >= 1779235200000;                                 -- PURGE legacy < 20 mai (evt_* inclus)
+                                                             -- ~1.09M lignes recopiées (sur 1.64M)
+-- GARDE-FOU : ne continuer QUE si le comptage filtré correspond
+--   assert count(ts_kv) == count(*) FROM ts_kv_old WHERE ts >= 1779235200000
 ```
 
 > **`create_hypertable` exige une table vide** → on crée la nouvelle `ts_kv` vide,
@@ -143,7 +155,9 @@ INSERT INTO ts_kv SELECT * FROM ts_kv_old;                   -- ~650k lignes, < 
 >
 > **`ts_kv_old` n'est PAS supprimé dans cette fenêtre** (voir §6 rollback). Il est
 > conservé (~372 MB, 17 GB libres) jusqu'à validation confirmée, puis `DROP` au
-> nettoyage T+quelques jours.
+> nettoyage T+quelques jours. Il contient **l'intégralité** des données, y compris
+> les ~556k lignes < 20 mai purgées (et leurs `evt_*`) → **filet de récupération**
+> si l'events-history révèle un pairing cassé par la purge (voir §7-C).
 
 ### Étape 3 — Policies (voir §5)
 
@@ -242,6 +256,11 @@ ou écart de comptage.
 - **C. Lectures / widgets** 🔴 — dashboard « Mes Installations » (live + historique),
   widgets json_v (`pac_v2`, `dhw`, `heat`) et evt_* (events_history, fault_diagnostic) ;
   une valeur historique connue identique avant/après.
+- **C-bis. Pairing events-history après purge** 🔴 — ouvrir l'events-history et vérifier
+  qu'aucune résolution n'est orphelinée par la purge des `evt_*` < 20 mai. Si KO →
+  **récupération** : réinjecter les `evt_*` < cutoff depuis `ts_kv_old`
+  (`INSERT INTO ts_kv SELECT * FROM ts_kv_old WHERE ts < 1779235200000 AND key IN (<evt_* key_ids>)`)
+  sans rollback complet.
 - **D. Hypertable saine** 🔴 — `timescaledb_information.hypertables` liste `ts_kv` ;
   `count(ts_kv)` == comptage pré-migration.
 - **E. Policies fonctionnelles** 🟡 — jobs compression + rétention présents
@@ -275,5 +294,6 @@ json_v, widget SQL-direct nécessaire) dans
 | Replay proxy dans chunk compressé | Seuil compression 30 j = tampon (§5) |
 | Perte de données pendant migration | Transaction atomique + `ts_kv_old` conservé + `pg_dump` (§4, §6) |
 | Régression widgets | Validation 🔴 C avant de garder ; rollback Niveau 1 rapide |
+| Pairing events-history orphelin par la purge evt_* < 20 mai | `ts_kv_old` conservé = réinjection ciblée des evt_* sans rollback (§7-C-bis) |
 | Conflit cron rotation / TTL TB | Cron retiré + TTL TB off, rétention 100% native (§5) |
 | Montée de version TB future | Route A supportée ; mode `timescale` est un chemin officiel |
