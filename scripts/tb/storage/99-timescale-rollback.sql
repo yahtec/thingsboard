@@ -5,8 +5,9 @@
 --   sudo -u postgres psql -d thingsboard -v ON_ERROR_STOP=1 -f 99-timescale-rollback.sql
 \set ON_ERROR_STOP on
 BEGIN;
-DROP TABLE ts_kv;                       -- l'hypertable
-ALTER TABLE ts_kv_old RENAME TO ts_kv;  -- rebranche les partitions mensuelles d'origine
+DROP TABLE ts_kv;                          -- l'hypertable
+ALTER TABLE ts_kv_old RENAME TO ts_kv;     -- rebranche les partitions mensuelles d'origine
+ALTER INDEX ts_kv_old_pkey RENAME TO ts_kv_pkey;  -- restaure le nom d'index canonique
 COMMIT;
 
 -- Recuperation CIBLEE des evt_* purges sans rollback complet (si pairing casse) :

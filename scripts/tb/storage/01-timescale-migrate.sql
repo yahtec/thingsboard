@@ -11,6 +11,9 @@ BEGIN;
 
 -- 1. Mettre l'ancienne table partitionnee de cote (conservee comme filet)
 ALTER TABLE ts_kv RENAME TO ts_kv_old;
+-- Liberer le nom d'index ts_kv_pkey (les noms d'index sont uniques par schema)
+-- sinon le CREATE TABLE ci-dessous entre en collision.
+ALTER INDEX ts_kv_pkey RENAME TO ts_kv_old_pkey;
 
 -- 2. Nouvelle table plate, schema identique a schema-timescale.sql
 CREATE TABLE ts_kv (
@@ -44,5 +47,10 @@ BEGIN
   END IF;
   RAISE NOTICE 'OK comptage concordant : % lignes recopiees', n_new;
 END $$;
+
+-- 6. Restaurer le proprietaire applicatif (la table creee par postgres appartient
+--    a postgres ; TB se connecte en 'thingsboard' et doit posseder ts_kv comme avant).
+--    TimescaleDB propage le changement de owner aux chunks.
+ALTER TABLE ts_kv OWNER TO thingsboard;
 
 COMMIT;
