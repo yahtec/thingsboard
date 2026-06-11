@@ -587,9 +587,8 @@ function tH(v) {
     return n / 3600; // firmware emet des secondes -> heures
 }
 function infoFrame(title, innerHtml){
-  return '<div style="background:#f5f5f5;border-radius:8px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,0.1);box-sizing:border-box">'+
-    '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px">'+title+'</div>'+
-    innerHtml+'</div>';
+  var head = title ? '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px">'+title+'</div>' : '';
+  return '<div style="background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;padding:12px;box-sizing:border-box">'+head+innerHtml+'</div>';
 }
 function infoTable(rows){
   var body = rows.map(function(r,i){
@@ -599,12 +598,13 @@ function infoTable(rows){
       '<td style="font-size:14px;font-weight:bold;color:#333;text-align:right;white-space:nowrap;padding:4px 0;'+bb+'">'+r[1]+'</td>'+
       '</tr>';
   }).join('');
-  return '<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:6px;padding:6px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.08);box-sizing:border-box"><tbody>'+body+'</tbody></table>';
+  return '<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #eee;border-radius:6px;padding:6px 12px;box-sizing:border-box"><tbody>'+body+'</tbody></table>';
 }
 function infoSub(title){ return '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#888;margin:0 0 4px">'+title+'</div>'; }
 function buildPacInfo(e){
   e = e || {};
-  return infoFrame('PAC Hybride n'+P, '<div style="display:flex;justify-content:center"><div style="width:50%;min-width:240px">'+
+  return '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">PAC Hybride n'+P+'</div>'+
+    infoFrame('', '<div style="display:flex;justify-content:center"><div style="width:50%;min-width:240px">'+
     '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px;text-align:center">Données PAC '+P+'</div>'+
     infoTable([
     ['Fréquence compresseur', fv(e[pre+'invert_freq'],' Hz',1)],
