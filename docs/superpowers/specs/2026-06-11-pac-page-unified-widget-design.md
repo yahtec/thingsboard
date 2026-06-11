@@ -36,11 +36,11 @@ Sa `markdownTextFunction` (~1500-2000 lignes) s'organise en briques isolées :
 | Brique | Rôle | Origine |
 |---|---|---|
 | Helpers partagés | `PACV2_FLATTEN`, `PACV2_TO_SERIES`, `getToken`, `getTimeWindow` (lit `sessionStorage tduo.timeline.*` + `tduo.retroview.*`), `getAggInterval` | réutilisés tels quels des charts actuels |
-| Fetch unique | 1 GET `pac_v2` par tick (fenêtre + intervalle d'agrégation) → flatten → alimente charts + infos + donut | nouveau (factorise le cache fetch déjà introduit) |
+| Fetch unique (courbes+infos) | 1 GET `pac_v2` par tick (fenêtre timeline + intervalle d'agrégation) → flatten → alimente les 6 charts + les 2 infos. **Ne sert PAS le donut** (flux séparé) | nouveau (factorise le cache fetch déjà introduit) |
 | Moteur de courbes | `renderChart(svgId, seriesSpec, axisSpec, data, win, evt)` — moteur SVG actuel paramétré, **appelé 6×** | refactor du moteur existant (Fritsch-Carlson, axes multi-échelles, légende cliquable, tooltip, marqueurs evt) |
 | Constructeurs info | `buildPacInfo(flatLatest)`, `buildBoilerInfo(flatLatest)` | portés de PAC Info / Chaudière Info |
 | Contrôle Timeline | barre sticky (boutons 24h/7j/…, zoom, rétro-vision) ; écrit `sessionStorage` puis déclenche re-fetch/re-render | porté du widget Timeline (fn 3542 car.) |
-| Donut Usage | `renderUsage(agg)` — calcul du split PAC seule / chaudière seule / arrêt sur la fenêtre + rendu donut SVG. **Rendu conditionnel : admins + users tenant uniquement** (cf. Contrôle d'accès) | porté du controller `tenant.tduo.usage_pie` (20,6k car.) — calcul + rendu seulement |
+| Donut Usage | Module autonome : **propre plage** (sélecteur 30j déf., `localStorage`), **propres 3 mini-fetches** (delta compteurs `HP.time`+`boil.time`), split PAC/chaudière/arrêt, rendu donut SVG. **Gating admin/tenant + masquage rétro-vision déjà intégrés**. Flux indépendant du fetch des courbes | porté quasi tel quel du controller `tenant.tduo.usage_pie` (20,6k car.) |
 | Marqueurs evt | `__EVT_FETCH` (reconstruction d'intervalles défaut depuis `evt_*`) partagé une fois pour les 6 courbes | réutilisé du chart PAC actuel |
 
 ### Spécifications des 6 courbes (séries / axes)
@@ -58,18 +58,28 @@ Reprend exactement les choix validés cette session (v289-v293) :
 
 ## Flux de données
 
+Deux flux **indépendants** dans le widget :
+
+**(1) Courbes + infos — 1 seul fetch partagé** (fenêtre timeline) :
 ```
-sessionStorage (timeline state)
-        │  (barre timeline écrit buttonH / zoomPct / retroview.endTs)
+sessionStorage (tduo.timeline.buttonH/zoomPct + tduo.retroview.endTs)
+        │  (barre timeline écrit buttonH / zoomPct)
         ▼
 getTimeWindow() ──▶ fetch pac_v2 (1×/tick) ──▶ PACV2_TO_SERIES + flatten
-        │                                              │
         │                                              ├─▶ seriesData ──▶ renderChart ×6
-        │                                              ├─▶ dernier point ──▶ buildPacInfo / buildBoilerInfo
-        │                                              └─▶ agrégat statut ──▶ renderUsage (donut)
+        │                                              └─▶ dernier point ──▶ buildPacInfo / buildBoilerInfo
         ▼
 setInterval 30 s (boucle unique) re-fetch + re-render ; cleanup timers/observers au re-mount
 ```
+
+**(2) Donut Usage — flux séparé** (CORRECTION post-lecture du controller `usage_pie`) :
+Le donut **n'utilise pas** le fetch partagé. Il a sa **propre plage** (sélecteur 24h/7j/30j/90j/12m/perso,
+défaut **30 j**, mémorisée dans `localStorage tduo.usagePie.range`) et fait **3 mini-requêtes** (compteur
+firmware `HPn.HP.time` + `HPn.boil.time` au pré-début, premier-dans-fenêtre, et fin de plage) pour calculer
+un **delta de compteurs** → split PAC/chaudière/arrêt. C'est volontairement léger (évite de scanner ~500k
+points). Détection d'unité (secondes/heures/bascule) conservée. Le donut **se masque en mode rétro-vision**
+(`tduo.retroview.endTs` présent) et porte **déjà** son propre gating admin/tenant (cf. Contrôle d'accès) —
+les deux sont portés tels quels.
 
 ## Mise en page
 
