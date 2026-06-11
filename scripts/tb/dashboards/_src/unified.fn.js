@@ -180,9 +180,9 @@ function buildTimelineBar(){
     '<div style="font-size:12px;font-weight:700;text-transform:uppercase;color:#333;letter-spacing:0.5px">Fenetre</div>'+
     '<div class="u-tl-btns" style="display:flex;gap:4px">'+btns+'</div>'+
     '<div style="flex:1;min-width:220px;display:flex;gap:8px;align-items:center">'+
-      '<span style="font-size:11px;color:#888;min-width:24px">'+TL_MIN_ZOOM+'%</span>'+
-      '<input type="range" min="'+TL_MIN_ZOOM+'" max="100" value="100" step="1" class="u-tl-slider" style="flex:1;accent-color:#5c6bc0" />'+
-      '<span style="font-size:11px;color:#888;min-width:36px;text-align:right">100%</span>'+
+      '<span style="font-size:11px;color:#888;min-width:36px">100%</span>'+
+      '<input type="range" min="'+TL_MIN_ZOOM+'" max="100" value="100" step="1" class="u-tl-slider" style="flex:1;accent-color:#5c6bc0;transform:scaleX(-1)" />'+
+      '<span style="font-size:11px;color:#888;min-width:24px;text-align:right">'+TL_MIN_ZOOM+'%</span>'+
     '</div>'+
     '<div class="u-tl-label" style="font-size:12px;color:#333;min-width:170px;font-variant-numeric:tabular-nums"></div>'+
     /* TBV-DETAIL-BTN BEGIN */
