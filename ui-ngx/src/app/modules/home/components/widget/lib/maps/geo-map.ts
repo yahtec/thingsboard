@@ -51,10 +51,17 @@ export class TbGeoMap extends TbMap<GeoMapSettings> {
   }
 
   protected createMap(): Observable<L.Map> {
+    // Yahtec: sur ecran tactile, on desactive le panoramique au doigt pour que le
+    // glissement vertical fasse defiler la page au lieu de deplacer la carte
+    // (sinon la carte capte le scroll et bloque la navigation mobile).
+    // Le zoom par boutons +/- reste disponible, et le drag souris est intact sur desktop.
+    const isTouch = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
     const map = L.map(this.mapElement, {
       scrollWheelZoom: this.settings.zoomActions.includes(MapZoomAction.scroll),
       doubleClickZoom: this.settings.zoomActions.includes(MapZoomAction.doubleClick),
       zoomControl: this.settings.zoomActions.includes(MapZoomAction.controlButtons),
+      dragging: !isTouch,
       zoom: this.settings.defaultZoomLevel || DEFAULT_ZOOM_LEVEL,
       center: this.defaultCenterPosition
     }).setView(this.defaultCenterPosition, this.settings.defaultZoomLevel || DEFAULT_ZOOM_LEVEL);
