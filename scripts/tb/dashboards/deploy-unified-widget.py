@@ -57,7 +57,18 @@ def main():
 
     lay = conf['states']['donnees_HP1']['layouts']['main']['widgets']
     lay[WID_UNIFIED] = dict(LAYOUTS[args.phase])
-    print(f'  widget upsert + layout phase {args.phase}: {LAYOUTS[args.phase]}')
+    # Pousse les widgets legacy SOUS le widget unifie (rows >= 100), de facon
+    # idempotente : row<100 -> row%100+100 (stable si deja >=100). Evite le
+    # chevauchement gridster (unifie occupe rows 0..40) tant que legacy reste
+    # en place pour comparaison (retire en phase 5).
+    pushed = 0
+    for wid, l in lay.items():
+        if wid == WID_UNIFIED:
+            continue
+        if l.get('row', 0) < 100:
+            l['row'] = (l['row'] % 100) + 100
+            pushed += 1
+    print(f'  widget upsert + layout phase {args.phase}: {LAYOUTS[args.phase]} ; legacy pousses sous row 100: {pushed}')
 
     if args.dry_run:
         prev = os.path.join(HERE, f'preview-unified-p{args.phase}.json')
