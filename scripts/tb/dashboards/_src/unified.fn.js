@@ -280,7 +280,8 @@ setTimeout(function(){
   if (!window.__tbUnifiedRetroWired) {
     window.__tbUnifiedRetroWired = true;
     window.addEventListener('tduo:retroview', function(){
-      if (window.__tbPacUnified && typeof window.__tbPacUnified.refetch === 'function') window.__tbPacUnified.refetch();
+      if (window.__tbPacUnified && typeof window.__tbPacUnified.refetchAll === 'function') window.__tbPacUnified.refetchAll();
+      else if (window.__tbPacUnified && typeof window.__tbPacUnified.refetch === 'function') window.__tbPacUnified.refetch();
       if (typeof window.__renderUsage === 'function') { try { window.__renderUsage(); } catch(e){} }
     });
   }
@@ -580,39 +581,58 @@ setTimeout(function(){
 }, 200);
 
 // =====================================================================================
-// [F] startSharedLoop / renderAll / safe / showBanner
+// [F] startSharedLoop / renderCharts / renderInfo / safe / showBanner
 // =====================================================================================
 function startSharedLoop() {
   var DEVICE_ID = resolveDevice();
   if (!DEVICE_ID) { console.warn('[unified] no device'); return; }
-  window.__tbPacUnified.refetch = fetchShared;
   var EVT = { intervals: [], last: 0 };
-  function fetchShared() {
+
+  function infoEndTs(){ var rv = sessionStorage.getItem('tduo.retroview.endTs'); var t = rv ? parseInt(rv,10) : 0; return (t>0) ? t : Date.now(); }
+
+  function fetchCharts() {
     var win = getTimeWindow();
     var iv = getAggInterval(win);
+    var allKeys = []; CHARTS.concat(window.__CHARTS_BOIL||[]).forEach(function(c){ c.series.forEach(function(s){ allKeys.push(s.key); }); });
     var url = '/api/plugins/telemetry/DEVICE/' + DEVICE_ID +
       '/values/timeseries?keys=pac_v2&startTs=' + win.startTs + '&endTs=' + win.endTs +
       '&interval=' + iv + '&agg=NONE&limit=20000';
     fetch(url, { headers: { 'X-Authorization': 'Bearer ' + getToken() } })
       .then(function(r){ return r.json(); })
       .then(function(resp){
-        var pts = resp.pac_v2 || [];
-        var allKeys = []; CHARTS.concat(window.__CHARTS_BOIL||[]).forEach(function(c){ c.series.forEach(function(s){ allKeys.push(s.key); }); });
-        var seriesData = PACV2_TO_SERIES({pac_v2: pts}, allKeys);
-        var latestFlat = {};
-        if (pts.length) { try { var raw = pts[pts.length-1].value; latestFlat = PACV2_FLATTEN(typeof raw==='string'?JSON.parse(raw):raw); } catch(e){} }
-        fetchEvt(DEVICE_ID, win, EVT, function(){ renderAll(seriesData, latestFlat, win, EVT.intervals); });
-        renderAll(seriesData, latestFlat, win, EVT.intervals);
+        var seriesData = PACV2_TO_SERIES({pac_v2: resp.pac_v2 || []}, allKeys);
+        fetchEvt(DEVICE_ID, win, EVT, function(){ renderCharts(seriesData, win, EVT.intervals); });
+        renderCharts(seriesData, win, EVT.intervals);
       })
-      .catch(function(e){ showBanner('Erreur de chargement des données.'); console.warn('[unified] fetch', e); });
+      .catch(function(e){ showBanner('Erreur de chargement des courbes.'); console.warn('[unified] fetchCharts', e); });
   }
-  fetchShared();
-  window.__tbPacUnified.timer = setInterval(fetchShared, 30000);
+
+  function fetchInfo() {
+    var endTs = infoEndTs();
+    var url = '/api/plugins/telemetry/DEVICE/' + DEVICE_ID +
+      '/values/timeseries?keys=pac_v2&startTs=0&endTs=' + endTs + '&limit=1&orderBy=DESC&agg=NONE';
+    fetch(url, { headers: { 'X-Authorization': 'Bearer ' + getToken() } })
+      .then(function(r){ return r.json(); })
+      .then(function(resp){
+        var pts = resp.pac_v2 || [];
+        var latestFlat = {};
+        if (pts.length) { try { var raw = pts[0].value; latestFlat = PACV2_FLATTEN(typeof raw==='string'?JSON.parse(raw):raw); } catch(e){} }
+        renderInfo(latestFlat);
+      })
+      .catch(function(e){ console.warn('[unified] fetchInfo', e); });
+  }
+
+  window.__tbPacUnified.refetch = fetchCharts;                 // timeline change -> curves ONLY
+  window.__tbPacUnified.refetchAll = function(){ fetchCharts(); fetchInfo(); };
+  fetchCharts(); fetchInfo();
+  window.__tbPacUnified.timer = setInterval(function(){ fetchCharts(); fetchInfo(); }, 30000);
 }
-function renderAll(seriesData, latestFlat, win, evt) {
-  safe('pacinfo', function(){ var el=document.getElementById('u-pac-info'); if(el) el.innerHTML = buildPacInfo(latestFlat); });
-  CHARTS.forEach(function(c){ safe(c.id, function(){ renderChart(c, seriesData, win, evt); }); });
-  if (window.__renderBoiler) window.__renderBoiler(seriesData, latestFlat, win, evt);
+function renderCharts(seriesData, win, evt) {
+  CHARTS.concat(CHARTS_BOIL).forEach(function(c){ safe(c.id, function(){ renderChart(c, seriesData, win, evt); }); });
+}
+function renderInfo(latestFlat) {
+  safe('pacinfo', function(){ var el=document.getElementById('u-pac-info'); if(el) el.innerHTML=buildPacInfo(latestFlat); });
+  safe('boilinfo', function(){ var el=document.getElementById('u-boil-info'); if(el) el.innerHTML=buildBoilerInfo(latestFlat); });
 }
 function safe(tag, fn){ try { fn(); } catch(e){ var el=document.getElementById('u-err-'+tag); if(el) el.innerHTML='<div class="u-err">Section '+tag+' indisponible</div>'; console.warn('[unified]', tag, e); } }
 function showBanner(msg){ var el=document.getElementById('u-banner'); if(el){ el.textContent=msg; el.style.display='block'; } }
@@ -1054,11 +1074,6 @@ function buildBoilerInfo(e){
     '</div>';
   return '<div style="max-width:780px;margin:0 auto">'+infoFrame('Données Chaudière '+P, inner)+'</div>';
 }
-
-window.__renderBoiler = function(seriesData, latestFlat, win, evt){
-  safe('boilinfo', function(){ var el=document.getElementById('u-boil-info'); if(el) el.innerHTML=buildBoilerInfo(latestFlat); });
-  CHARTS_BOIL.forEach(function(c){ safe(c.id, function(){ renderChart(c, seriesData, win, evt); }); });
-};
 
 // =====================================================================================
 // [I] USAGE DONUT (autonome) -> window.__renderUsage
