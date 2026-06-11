@@ -171,9 +171,9 @@ var html = '<div class="u-root">'+
   '<div id="u-banner" class="u-err" style="display:none"></div>'+
   '<div class="u-scroll">'+
     '<div class="u-tl" id="u-timeline"></div>'+
-    '<div class="u-section"><div class="u-card" id="u-pac-info"></div><div id="u-err-pacinfo"></div>'+
+    '<div class="u-section"><div id="u-pac-info"></div><div id="u-err-pacinfo"></div>'+
       '<div class="u-grid">'+CHARTS.map(chartCard).join('')+'</div></div>'+
-    '<div class="u-section" id="u-boiler"><div class="u-card" id="u-boil-info"></div><div id="u-err-boilinfo"></div>'+
+    '<div class="u-section" id="u-boiler"><div id="u-boil-info"></div><div id="u-err-boilinfo"></div>'+
       '<div class="u-grid">'+CHARTS_BOIL.map(chartCard).join('')+'</div></div>'+
     '<div class="u-section" id="u-usage"></div>'+
   '</div></div>';
@@ -586,40 +586,55 @@ function tH(v) {
     if (!isFinite(n)) return v;
     return n / 3600; // firmware emet des secondes -> heures
 }
-function buildPacInfo(e) {
-    e = e || {};
-    var html = '';
-    html += '<h2 class="pac-hybride-title">PAC Hybride n'+P+'</h2>';
-    html += '<div class="values-block">';
-    html += buildValueRow('Fréquence compresseur', e[pre+'invert_freq'], ' Hz', 1);
-    html += buildValueRow('Puissance compresseur', e[pre+'invert_pwr'], ' W', 0);
-    html += buildValueRow('Vitesse ventilateur', e[pre+'rpm'], ' rpm', 0);
-    html += buildValueRow('Position détendeur', e[pre+'dpf'], '', 0);
-    html += buildValueRow('T° surchauffe', e[pre+'tOH'], '°C', 1);
-    html += buildValueRow('Temps de fonctionnement', tH(e[pre+'time']), ' h', 0);
-    html += '</div>';
-    return html;
+function infoFrame(title, innerHtml){
+  return '<div style="background:#f5f5f5;border-radius:8px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,0.1);box-sizing:border-box">'+
+    '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px">'+title+'</div>'+
+    innerHtml+'</div>';
+}
+function infoTable(rows){
+  var body = rows.map(function(r,i){
+    var bb = i < rows.length-1 ? 'border-bottom:1px solid #eee;' : '';
+    return '<tr>'+
+      '<td style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.3px;padding:4px 8px 4px 0;'+bb+'">'+r[0]+'</td>'+
+      '<td style="font-size:14px;font-weight:bold;color:#333;text-align:right;white-space:nowrap;padding:4px 0;'+bb+'">'+r[1]+'</td>'+
+      '</tr>';
+  }).join('');
+  return '<table style="width:100%;border-collapse:collapse;background:#fff;border-radius:6px;padding:6px 12px;box-shadow:0 1px 4px rgba(0,0,0,0.08);box-sizing:border-box"><tbody>'+body+'</tbody></table>';
+}
+function infoSub(title){ return '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#888;margin:0 0 4px">'+title+'</div>'; }
+function buildPacInfo(e){
+  e = e || {};
+  return infoFrame('PAC Hybride n'+P, infoTable([
+    ['Fréquence compresseur', fv(e[pre+'invert_freq'],' Hz',1)],
+    ['Puissance compresseur', fv(e[pre+'invert_pwr'],' W',0)],
+    ['Vitesse ventilateur', fv(e[pre+'rpm'],' rpm',0)],
+    ['Position détendeur', fv(e[pre+'dpf'],'',0)],
+    ['T° surchauffe', fv(e[pre+'tOH'],'°C',1)],
+    ['Temps de fonctionnement', fv(tH(e[pre+'time']),' h',0)]
+  ]));
 }
 function buildBoilerInfo(e){
   e = e || {};
-  var html = '<h2 class="boiler-title">Données Chaudière '+P+'</h2>';
-  html += '<div class="boiler-row">';
-  html += '<div class="values-block"><div class="sub-title">Chaudière</div>';
-  html += buildValueRow('T° entrée', e[pre+'tOut'], '°C', 1);
-  html += buildValueRow('T° sortie', e[pre+'boil_tOut'], '°C', 1);
-  html += buildValueRow('T° fumée', e[pre+'boil_tSmoke'], '°C', 1);
-  html += buildValueRow('Débit eau', e[pre+'boil_qe'], ' L/h', 0);
-  html += buildValueRow('Vitesse brûleur', e[pre+'boil_rpm'], ' rpm', 0);
-  html += buildValueRow('Temps de fonctionnement', tH(e[pre+'boil_time']), ' h', 0);
-  html += '</div>';
-  html += '<div class="values-block"><div class="sub-title">Pompe</div>';
-  html += buildValueRow('Vitesse', e[pre+'pump_rpm'], ' rpm', 0);
-  html += buildValueRow('DeltaP', e[pre+'pump_dP'], ' mCE', 2);
-  html += buildValueRow('Puissance', e[pre+'pump_pwr'], ' W', 0);
-  html += buildValueRow('Débit', e[pre+'pump_qe'], ' L/h', 0);
-  html += buildValueRow('Durée ON', tH(e[pre+'pump_time']), ' h', 0);
-  html += '</div></div>';
-  return html;
+  var chaud = infoSub('Chaudière') + infoTable([
+    ['T° entrée', fv(e[pre+'tOut'],'°C',1)],
+    ['T° sortie', fv(e[pre+'boil_tOut'],'°C',1)],
+    ['T° fumée', fv(e[pre+'boil_tSmoke'],'°C',1)],
+    ['Débit eau', fv(e[pre+'boil_qe'],' L/h',0)],
+    ['Vitesse brûleur', fv(e[pre+'boil_rpm'],' rpm',0)],
+    ['Temps de fonctionnement', fv(tH(e[pre+'boil_time']),' h',0)]
+  ]);
+  var pompe = infoSub('Pompe') + infoTable([
+    ['Vitesse', fv(e[pre+'pump_rpm'],' rpm',0)],
+    ['DeltaP', fv(e[pre+'pump_dP'],' mCE',2)],
+    ['Puissance', fv(e[pre+'pump_pwr'],' W',0)],
+    ['Débit', fv(e[pre+'pump_qe'],' L/h',0)],
+    ['Durée ON', fv(tH(e[pre+'pump_time']),' h',0)]
+  ]);
+  return infoFrame('Données Chaudière '+P,
+    '<div style="display:flex;flex-wrap:wrap;gap:10px">'+
+      '<div style="flex:1 1 220px;min-width:200px">'+chaud+'</div>'+
+      '<div style="flex:1 1 220px;min-width:200px">'+pompe+'</div>'+
+    '</div>');
 }
 
 window.__renderBoiler = function(seriesData, latestFlat, win, evt){
