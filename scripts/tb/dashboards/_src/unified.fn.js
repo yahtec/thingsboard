@@ -670,11 +670,11 @@ function buildBoilerInfo(e){
     ['Débit', fv(e[pre+'pump_qe'],' L/h',0)],
     ['Durée ON', fv(tH(e[pre+'pump_time']),' h',0)]
   ], 14, 18);
-  return infoFrame('Données Chaudière '+P,
-    '<div style="display:flex;flex-wrap:wrap;gap:10px">'+
-      '<div style="flex:1 1 220px;min-width:200px">'+chaud+'</div>'+
-      '<div style="flex:1 1 220px;min-width:200px">'+pompe+'</div>'+
-    '</div>');
+  var inner = '<div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center">'+
+      '<div style="flex:0 1 340px;min-width:240px;max-width:360px">'+chaud+'</div>'+
+      '<div style="flex:0 1 340px;min-width:240px;max-width:360px">'+pompe+'</div>'+
+    '</div>';
+  return '<div style="max-width:780px;margin:0 auto">'+infoFrame('Données Chaudière '+P, inner)+'</div>';
 }
 
 window.__renderBoiler = function(seriesData, latestFlat, win, evt){
