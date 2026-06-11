@@ -647,8 +647,10 @@ function buildPacInfo(e){
       ['T° surchauffe', fv(e[pre+'tOH'],'°C',1)],
       ['Temps de fonctionnement', fv(tH(e[pre+'time']),' h',0)]
     ])+'</div>';
-  var inner = '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;justify-content:center">'+gHp+gBp+tableBlock+'</div>';
-  return '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">PAC Hybride n'+P+'</div>'+infoFrame('', inner);
+  var inner = '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;justify-content:center">'+gHp+gBp+tableBlock+'</div>';
+  return '<div style="max-width:1040px;margin:0 auto">'+
+    '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">PAC Hybride n'+P+'</div>'+
+    infoFrame('', inner)+'</div>';
 }
 function buildBoilerInfo(e){
   e = e || {};
