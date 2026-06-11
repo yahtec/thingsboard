@@ -13,6 +13,7 @@ dashboard/dash-recovered.json
 dashboards/backup-*.json
 dashboards/*.before_*.json
 dashboards/*.preview_*.json
+dashboards/preview-*.json
 
 # Python bytecode cache
 __pycache__/

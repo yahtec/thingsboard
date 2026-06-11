@@ -48,8 +48,15 @@ def main():
     tb.backup(dash, f'unified_p{args.phase}')
     conf = dash['configuration']
 
-    base = json.loads(json.dumps(conf['widgets'][WID_TEMPLATE]))
-    base['id'] = WID_UNIFIED
+    # Si le widget unifie existe deja (phases 2+, ou apres retrait des legacy),
+    # on met a jour EN PLACE. Sinon (1er deploiement) on clone le template PAC chart.
+    if WID_UNIFIED in conf['widgets']:
+        base = conf['widgets'][WID_UNIFIED]
+    elif WID_TEMPLATE in conf['widgets']:
+        base = json.loads(json.dumps(conf['widgets'][WID_TEMPLATE]))
+        base['id'] = WID_UNIFIED
+    else:
+        sys.exit('Ni widget unifie ni template present — etat inattendu.')
     base['config']['title'] = 'PAC Hybride (unifie)'
     base['config']['settings']['markdownTextFunction'] = fn
     base['config']['settings']['markdownCss'] = css

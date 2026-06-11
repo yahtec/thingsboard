@@ -332,7 +332,7 @@ setTimeout(function(){
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(me){
           if (!me) return;
-          if (me.authority === 'TENANT_ADMIN') { btn.hidden = false; return; }
+          if (me.authority === 'TENANT_ADMIN' || me.authority === 'SYS_ADMIN') { btn.hidden = false; return; }
           if (me.authority !== 'CUSTOMER_USER') return;
           fetch('/api/plugins/telemetry/USER/' + me.id.id + '/values/attributes/SERVER_SCOPE?keys=is_admin,access_retroview', { headers: H() })
             .then(function(r){ return r.ok ? r.json() : []; })
