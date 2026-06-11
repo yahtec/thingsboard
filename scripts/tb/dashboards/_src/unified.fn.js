@@ -662,14 +662,14 @@ function buildBoilerInfo(e){
     ['Débit eau', fv(e[pre+'boil_qe'],' L/h',0)],
     ['Vitesse brûleur', fv(e[pre+'boil_rpm'],' rpm',0)],
     ['Temps de fonctionnement', fv(tH(e[pre+'boil_time']),' h',0)]
-  ]);
+  ], 14, 18);
   var pompe = infoSub('Pompe') + infoTable([
     ['Vitesse', fv(e[pre+'pump_rpm'],' rpm',0)],
     ['DeltaP', fv(e[pre+'pump_dP'],' mCE',2)],
     ['Puissance', fv(e[pre+'pump_pwr'],' W',0)],
     ['Débit', fv(e[pre+'pump_qe'],' L/h',0)],
     ['Durée ON', fv(tH(e[pre+'pump_time']),' h',0)]
-  ]);
+  ], 14, 18);
   return infoFrame('Données Chaudière '+P,
     '<div style="display:flex;flex-wrap:wrap;gap:10px">'+
       '<div style="flex:1 1 220px;min-width:200px">'+chaud+'</div>'+
