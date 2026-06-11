@@ -604,14 +604,14 @@ function infoTable(rows){
 function infoSub(title){ return '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#888;margin:0 0 4px">'+title+'</div>'; }
 function buildPacInfo(e){
   e = e || {};
-  return infoFrame('PAC Hybride n'+P, infoTable([
+  return infoFrame('PAC Hybride n'+P, '<div style="display:flex;justify-content:center"><div style="width:50%;min-width:240px">'+infoTable([
     ['Fréquence compresseur', fv(e[pre+'invert_freq'],' Hz',1)],
     ['Puissance compresseur', fv(e[pre+'invert_pwr'],' W',0)],
     ['Vitesse ventilateur', fv(e[pre+'rpm'],' rpm',0)],
     ['Position détendeur', fv(e[pre+'dpf'],'',0)],
     ['T° surchauffe', fv(e[pre+'tOH'],'°C',1)],
     ['Temps de fonctionnement', fv(tH(e[pre+'time']),' h',0)]
-  ]));
+  ])+'</div></div>');
 }
 function buildBoilerInfo(e){
   e = e || {};
