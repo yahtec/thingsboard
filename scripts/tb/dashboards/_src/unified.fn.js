@@ -167,10 +167,84 @@ function chartCard(c){ return '<div class="u-card u-chart" id="u-err-'+c.id+'-wr
   '<div class="u-chart-body"><svg id="'+c.svg+'" preserveAspectRatio="xMidYMid meet"></svg>'+
   '<div id="'+c.svg+'-tip" style="display:none;position:absolute;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;pointer-events:none;z-index:10"></div></div>'+
   '<div id="'+c.svg+'-leg" class="u-chart-legend"></div><div id="u-err-'+c.id+'"></div></div>'; }
+
+// --- Timeline (window bar) + retroview control HTML, injected into #u-timeline ---
+// Porte de timeline.fn.js (boutons fenetre + zoom) + pac_info.fn.js (bouton retroview).
+var TL_MIN_ZOOM = 5;
+function buildTimelineBar(){
+  var btns = ['4','8','12','24'].map(function(h){
+    return '<button type="button" data-h="'+h+'" class="u-tl-btn" style="border:1px solid #ddd;background:#f5f5f5;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600">'+h+' h</button>';
+  }).join('');
+  return ''+
+  '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:8px 14px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;box-sizing:border-box;align-content:center">'+
+    '<div style="font-size:12px;font-weight:700;text-transform:uppercase;color:#333;letter-spacing:0.5px">Fenetre</div>'+
+    '<div class="u-tl-btns" style="display:flex;gap:4px">'+btns+'</div>'+
+    '<div style="flex:1;min-width:220px;display:flex;gap:8px;align-items:center">'+
+      '<span style="font-size:11px;color:#888;min-width:24px">'+TL_MIN_ZOOM+'%</span>'+
+      '<input type="range" min="'+TL_MIN_ZOOM+'" max="100" value="100" step="1" class="u-tl-slider" style="flex:1;accent-color:#5c6bc0" />'+
+      '<span style="font-size:11px;color:#888;min-width:36px;text-align:right">100%</span>'+
+    '</div>'+
+    '<div class="u-tl-label" style="font-size:12px;color:#333;min-width:170px;font-variant-numeric:tabular-nums"></div>'+
+    /* TBV-DETAIL-BTN BEGIN */
+    '<a href="#" id="tbv-btn-retroview" hidden title="Voir une periode anterieure" style="display:inline-flex;align-items:center;gap:6px;border:1px solid #d32f2f;background:#fff;color:#d32f2f;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;text-decoration:none"><svg viewBox="0 0 24 24" style="width:16px;height:16px" aria-hidden="true"><path fill="currentColor" d="M13 3a9 9 0 0 0-9 9H1l4 4 4-4H6a7 7 0 1 1 7 7v2A9 9 0 1 0 13 3zm-1 5v5l4 2 .75-1.25L13 12.25V8h-1z"/></svg><span>Retroview</span></a>'+
+    '<span class="tbv-active-row" id="tbv-active-row" style="display:none;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#d32f2f"><span>RETROVIEW : <span id="tbv-active-stamp"></span></span><button type="button" id="tbv-clear-btn" title="Quitter la retroview" aria-label="Quitter" style="border:none;background:transparent;color:#d32f2f;cursor:pointer;font-size:14px;line-height:1;padding:2px 4px">&#10005;</button></span>'+
+    /* TBV-DETAIL-BTN END */
+  '</div>';
+}
+function fmtDurTl(hours) {
+  if (hours >= 1) {
+    var h = Math.floor(hours);
+    var m = Math.round((hours - h) * 60);
+    if (m === 60) { h++; m = 0; }
+    return m === 0 ? (h + ' h') : (h + ' h ' + (m < 10 ? '0' + m : m));
+  }
+  var mins = Math.round(hours * 60);
+  return mins + ' min';
+}
+function wireTimelineBar(){
+  var root = document.getElementById('u-timeline');
+  if (!root) return;
+  var btns = root.querySelectorAll('.u-tl-btn');
+  var slider = root.querySelector('.u-tl-slider');
+  var label = root.querySelector('.u-tl-label');
+  if (!btns || !slider || !label) return;
+  function getButtonH(){ var v = parseInt(sessionStorage.getItem('tduo.timeline.buttonH') || '24', 10); return (isNaN(v)||v<=0)?24:v; }
+  function getZoom(){ var v = parseInt(sessionStorage.getItem('tduo.timeline.zoomPct') || '100', 10); if (isNaN(v)||v<TL_MIN_ZOOM) v=TL_MIN_ZOOM; if (v>100) v=100; return v; }
+  function refresh(){
+    var btn = getButtonH(), zoom = getZoom(), effH = btn * zoom / 100;
+    Array.prototype.forEach.call(btns, function(b){
+      var on = parseInt(b.dataset.h, 10) === btn;
+      b.style.background = on ? '#5c6bc0' : '#f5f5f5';
+      b.style.color = on ? '#fff' : '#333';
+      b.style.borderColor = on ? '#5c6bc0' : '#ddd';
+    });
+    if (parseInt(slider.value, 10) !== zoom) slider.value = zoom;
+    label.innerHTML = 'Vue : <strong>' + fmtDurTl(effH) + '</strong> / ' + btn + ' h';
+  }
+  function refetchNow(){
+    if (window.__tbPacUnified && typeof window.__tbPacUnified.refetch === 'function') window.__tbPacUnified.refetch();
+  }
+  Array.prototype.forEach.call(btns, function(b){
+    if (b.__wired) return; b.__wired = true;
+    b.addEventListener('click', function(){
+      sessionStorage.setItem('tduo.timeline.buttonH', '' + parseInt(b.dataset.h, 10));
+      refresh(); refetchNow();
+    });
+  });
+  if (!slider.__wired) {
+    slider.__wired = true;
+    slider.addEventListener('input', function(){
+      sessionStorage.setItem('tduo.timeline.zoomPct', '' + parseInt(slider.value, 10));
+      refresh(); refetchNow();
+    });
+  }
+  refresh();
+}
+
 var html = '<div class="u-root">'+
   '<div id="u-banner" class="u-err" style="display:none"></div>'+
   '<div class="u-scroll">'+
-    '<div class="u-tl" id="u-timeline"></div>'+
+    '<div class="u-tl" id="u-timeline">'+buildTimelineBar()+'</div>'+
     '<div class="u-section"><div id="u-pac-info"></div><div id="u-err-pacinfo"></div>'+
       '<div class="u-grid">'+CHARTS.map(chartCard).join('')+'</div></div>'+
     '<div class="u-section" id="u-boiler"><div id="u-boil-info"></div><div id="u-err-boilinfo"></div>'+
@@ -198,9 +272,312 @@ setTimeout(function(){
   if (prev.listeners) Object.keys(prev.listeners).forEach(function(k){ try { document.removeEventListener('mousemove', prev.listeners[k]); } catch(e){} });
   window.__tbPacUnified = { vis:{}, listeners:{} };
   try { wireResponsiveGrid(); } catch(e){ console.warn('[unified] responsive', e); }
+  try { wireTimelineBar(); } catch(e){ console.warn('[unified] timeline', e); }
   startSharedLoop();
   if (window.__renderUsage) { try { window.__renderUsage(); } catch(e){ console.warn('[unified] usage', e); } }
+
+  // Retroview applique (sans reload) -> rafraichir charts + donut. Une seule fois.
+  if (!window.__tbUnifiedRetroWired) {
+    window.__tbUnifiedRetroWired = true;
+    window.addEventListener('tduo:retroview', function(){
+      if (window.__tbPacUnified && typeof window.__tbPacUnified.refetch === 'function') window.__tbPacUnified.refetch();
+      if (typeof window.__renderUsage === 'function') { try { window.__renderUsage(); } catch(e){} }
+    });
+  }
 }, 60);
+
+// =====================================================================================
+// [J] RETROVIEW control (porte de pac_info.fn.js /* TBV-DETAIL JS */)
+// Le picker vit dans <body> et injecte son CSS dans <head> (survit au cycle de rendu TB).
+// =====================================================================================
+setTimeout(function(){
+  /* TBV-DETAIL JS BEGIN */
+  (function(){
+    function tok(){ return localStorage.getItem('jwt_token'); }
+    function H(){ return { 'X-Authorization': 'Bearer ' + tok() }; }
+    function pad(n){ return (n<10?'0':'')+n; }
+    function fmtTs(ts){
+      var d = new Date(ts);
+      return pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear()
+           +' a '+pad(d.getHours())+':'+pad(d.getMinutes());
+    }
+    function getAnchor(){
+      try { var v = sessionStorage.getItem('tduo.retroview.endTs'); return v ? parseInt(v, 10) : null; } catch(_e) { return null; }
+    }
+    function setAnchor(ts){
+      try {
+        if (ts) sessionStorage.setItem('tduo.retroview.endTs', String(ts));
+        else sessionStorage.removeItem('tduo.retroview.endTs');
+      } catch(_e) {}
+    }
+    function renderActive(){
+      var row = document.getElementById('tbv-active-row');
+      if (!row) return;
+      var ts = getAnchor();
+      if (ts) {
+        var st = document.getElementById('tbv-active-stamp');
+        if (st) st.textContent = fmtTs(ts);
+        row.classList.add('tbv-active');
+        row.style.display = 'inline-flex';
+      } else {
+        row.classList.remove('tbv-active');
+        row.style.display = 'none';
+      }
+    }
+    function maybeReveal(){
+      var btn = document.getElementById('tbv-btn-retroview');
+      if (!btn || !tok()) return;
+      fetch('/api/auth/user', { headers: H() })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(me){
+          if (!me) return;
+          if (me.authority === 'TENANT_ADMIN') { btn.hidden = false; return; }
+          if (me.authority !== 'CUSTOMER_USER') return;
+          fetch('/api/plugins/telemetry/USER/' + me.id.id + '/values/attributes/SERVER_SCOPE?keys=is_admin,access_retroview', { headers: H() })
+            .then(function(r){ return r.ok ? r.json() : []; })
+            .then(function(attrs){
+              var has = (attrs || []).reduce(function(acc, a){ acc[a.key] = a.value; return acc; }, {});
+              if (has.is_admin === true || has.access_retroview === true) btn.hidden = false;
+            }).catch(function(){});
+        }).catch(function(){});
+    }
+    function openModal(){
+      if (window.__tbvPicker && typeof window.__tbvPicker.open === 'function') {
+        window.__tbvPicker.open();
+      }
+    }
+    function clearRetroview(){
+      setAnchor(null);
+      try { window.dispatchEvent(new CustomEvent('tduo:retroview', { detail: null })); } catch(_e) {}
+      location.reload();
+    }
+
+    // === TBV body-level picker bootstrap ===========================================
+    if (!window.__tbvPicker || !window.__tbvPicker.overlay || !document.body.contains(window.__tbvPicker.overlay)) {
+        document.querySelectorAll('#tbv-modal-overlay, .tbv-modal-overlay').forEach(function(el) { try { el.remove(); } catch(_e) {} });
+        (function() {
+            var P = {};
+            P.state = { viewYear:0, viewMonth:0, selYear:0, selMonth:0, selDay:0, selHour:0, selMinute:0 };
+            var MONTHS = ['janvier','fevrier','mars','avril','mai','juin','juillet','aout','septembre','octobre','novembre','decembre'];
+            function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+            if (!document.getElementById('tbvp-styles')) {
+                var st = document.createElement('style');
+                st.id = 'tbvp-styles';
+                st.textContent = ''
+                    + '.tbvp-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; z-index:100000; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }'
+                    + '.tbvp-overlay[hidden] { display:none !important; }'
+                    + '.tbvp-modal { background:#fff; border-radius:12px; padding:20px 22px 16px; width:min(520px,94vw); box-shadow:0 12px 40px rgba(0,0,0,0.25); box-sizing:border-box; }'
+                    + '.tbvp-title { font-size:14px; font-weight:500; color:#444; margin-bottom:10px; }'
+                    + '.tbvp-field { display:flex; align-items:center; gap:10px; padding:12px 14px; border:2px solid #d32f2f; border-radius:6px; margin-bottom:18px; cursor:default; }'
+                    + '.tbvp-field-icon { color:#d32f2f; font-size:16px; }'
+                    + '.tbvp-field-text { flex:1; color:#333; font-size:14px; font-variant-numeric:tabular-nums; }'
+                    + '.tbvp-field-cal { color:#888; font-size:18px; }'
+                    + '.tbvp-body { display:flex; gap:14px; align-items:flex-start; }'
+                    + '.tbvp-cal { flex:1 1 auto; min-width:0; }'
+                    + '.tbvp-cal-header { display:flex; align-items:center; padding:4px 0 6px; }'
+                    + '.tbvp-cal-title { flex:1; font-size:14px; color:#333; font-weight:500; }'
+                    + '.tbvp-cal-nav { width:28px; height:28px; border:none; background:transparent; cursor:pointer; font-size:18px; color:#666; border-radius:50%; line-height:1; padding:0; }'
+                    + '.tbvp-cal-nav:hover { background:#f5f5f5; }'
+                    + '.tbvp-cal-dow { display:grid; grid-template-columns:repeat(7,1fr); text-align:center; font-size:11px; color:#888; padding:4px 0; font-weight:500; }'
+                    + '.tbvp-cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }'
+                    + '.tbvp-cal-day { aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:13px; color:#333; border-radius:50%; cursor:pointer; user-select:none; transition:background .12s; }'
+                    + '.tbvp-cal-day:hover:not(.tbvp-cal-disabled):not(.tbvp-cal-selected) { background:#ffebee; }'
+                    + '.tbvp-cal-day.tbvp-cal-other { color:#ccc; }'
+                    + '.tbvp-cal-day.tbvp-cal-today { color:#d32f2f; font-weight:700; }'
+                    + '.tbvp-cal-day.tbvp-cal-selected { background:#d32f2f; color:#fff; font-weight:600; }'
+                    + '.tbvp-cal-day.tbvp-cal-disabled { color:#ddd; cursor:not-allowed; }'
+                    + '.tbvp-times { display:flex; gap:8px; align-self:stretch; }'
+                    + '.tbvp-time-col { display:flex; flex-direction:column; height:240px; overflow-y:auto; scrollbar-width:thin; padding:0 2px; min-width:46px; }'
+                    + '.tbvp-time-col::-webkit-scrollbar { width:4px; }'
+                    + '.tbvp-time-col::-webkit-scrollbar-thumb { background:#ddd; border-radius:2px; }'
+                    + '.tbvp-time-col::-webkit-scrollbar-track { background:transparent; }'
+                    + '.tbvp-time-item { padding:5px 10px; font-size:15px; color:#888; cursor:pointer; border-radius:18px; text-align:center; margin:1px 0; font-variant-numeric:tabular-nums; }'
+                    + '.tbvp-time-item:hover { background:#ffebee; color:#333; }'
+                    + '.tbvp-time-item.tbvp-time-selected { background:#d32f2f; color:#fff; font-weight:600; }'
+                    + '.tbvp-actions { display:flex; justify-content:flex-end; gap:4px; margin-top:14px; }'
+                    + '.tbvp-btn { background:transparent; border:none; padding:8px 16px; font-size:14px; font-weight:600; cursor:pointer; border-radius:4px; letter-spacing:0.5px; text-transform:uppercase; }'
+                    + '.tbvp-cancel { color:#666; }'
+                    + '.tbvp-cancel:hover { background:#f5f5f5; }'
+                    + '.tbvp-ok { background:#d32f2f; color:#fff; padding:8px 24px; }'
+                    + '.tbvp-ok:hover { background:#b71c1c; }'
+                    // active-row display rules (etaient dans pac_info.css)
+                    + '#tbv-active-row { display:none; }'
+                    + '#tbv-active-row.tbv-active { display:inline-flex; }';
+                document.head.appendChild(st);
+            }
+
+            var ov = document.createElement('div');
+            ov.className = 'tbvp-overlay';
+            ov.hidden = true;
+            ov.innerHTML = ''
+                + '<div class="tbvp-modal" role="dialog" aria-modal="true" aria-label="Choisir une date anterieure">'
+                +   '<div class="tbvp-title">Visualisez les donnees a une date anterieure</div>'
+                +   '<div class="tbvp-field">'
+                +     '<span class="tbvp-field-icon">&#128269;</span>'
+                +     '<span class="tbvp-field-text"></span>'
+                +     '<span class="tbvp-field-cal">&#128197;</span>'
+                +   '</div>'
+                +   '<div class="tbvp-body">'
+                +     '<div class="tbvp-cal">'
+                +       '<div class="tbvp-cal-header">'
+                +         '<span class="tbvp-cal-title"></span>'
+                +         '<button type="button" class="tbvp-cal-nav tbvp-cal-prev" aria-label="Mois precedent">&lsaquo;</button>'
+                +         '<button type="button" class="tbvp-cal-nav tbvp-cal-next" aria-label="Mois suivant">&rsaquo;</button>'
+                +       '</div>'
+                +       '<div class="tbvp-cal-dow"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>'
+                +       '<div class="tbvp-cal-grid"></div>'
+                +     '</div>'
+                +     '<div class="tbvp-times">'
+                +       '<div class="tbvp-time-col tbvp-time-h"></div>'
+                +       '<div class="tbvp-time-col tbvp-time-m"></div>'
+                +     '</div>'
+                +   '</div>'
+                +   '<div class="tbvp-actions">'
+                +     '<button type="button" class="tbvp-btn tbvp-cancel">Annuler</button>'
+                +     '<button type="button" class="tbvp-btn tbvp-ok">OK</button>'
+                +   '</div>'
+                + '</div>';
+            document.body.appendChild(ov);
+            P.overlay = ov;
+
+            var elTitle = ov.querySelector('.tbvp-cal-title');
+            var elGrid  = ov.querySelector('.tbvp-cal-grid');
+            var elHCol  = ov.querySelector('.tbvp-time-h');
+            var elMCol  = ov.querySelector('.tbvp-time-m');
+            var elField = ov.querySelector('.tbvp-field-text');
+
+            P.renderCal = function() {
+                var s = P.state;
+                elTitle.textContent = MONTHS[s.viewMonth] + ' ' + s.viewYear;
+                var first       = new Date(s.viewYear, s.viewMonth, 1);
+                var firstDow    = (first.getDay() + 6) % 7;
+                var daysInMonth = new Date(s.viewYear, s.viewMonth + 1, 0).getDate();
+                var prevDays    = new Date(s.viewYear, s.viewMonth, 0).getDate();
+                var today       = new Date(); today.setHours(0,0,0,0);
+                var todayTs     = today.getTime();
+                var nowTs       = Date.now();
+                elGrid.innerHTML = '';
+                var cells = [];
+                for (var i = 0; i < firstDow; i++) {
+                    cells.push({ y: s.viewMonth === 0 ? s.viewYear - 1 : s.viewYear, m: (s.viewMonth + 11) % 12, d: prevDays - firstDow + 1 + i, other: true });
+                }
+                for (var i = 1; i <= daysInMonth; i++) {
+                    cells.push({ y: s.viewYear, m: s.viewMonth, d: i, other: false });
+                }
+                while (cells.length < 42) {
+                    var k = cells.length - firstDow - daysInMonth;
+                    cells.push({ y: s.viewMonth === 11 ? s.viewYear + 1 : s.viewYear, m: (s.viewMonth + 1) % 12, d: k + 1, other: true });
+                }
+                cells.forEach(function(c) {
+                    var el = document.createElement('div');
+                    el.className = 'tbvp-cal-day' + (c.other ? ' tbvp-cal-other' : '');
+                    var cellTs = new Date(c.y, c.m, c.d).getTime();
+                    if (cellTs === todayTs) el.classList.add('tbvp-cal-today');
+                    if (c.y === s.selYear && c.m === s.selMonth && c.d === s.selDay) el.classList.add('tbvp-cal-selected');
+                    if (cellTs > nowTs) el.classList.add('tbvp-cal-disabled');
+                    el.textContent = c.d;
+                    el.addEventListener('click', function() {
+                        if (el.classList.contains('tbvp-cal-disabled')) return;
+                        s.selYear = c.y; s.selMonth = c.m; s.selDay = c.d;
+                        s.viewYear = c.y; s.viewMonth = c.m;
+                        P.renderCal();
+                        P.renderField();
+                    });
+                    elGrid.appendChild(el);
+                });
+            };
+
+            function buildCol(col, count, step, selected, key) {
+                col.innerHTML = '';
+                for (var v = 0; v < count; v += step) {
+                    var el = document.createElement('div');
+                    el.className = 'tbvp-time-item' + (v === selected ? ' tbvp-time-selected' : '');
+                    el.textContent = pad(v);
+                    (function(val) {
+                        el.addEventListener('click', function() {
+                            P.state[key] = val;
+                            P.renderTime();
+                            P.renderField();
+                        });
+                    })(v);
+                    col.appendChild(el);
+                }
+                var sel = col.querySelector('.tbvp-time-selected');
+                if (sel) {
+                    var top = sel.offsetTop - (col.clientHeight - sel.offsetHeight) / 2;
+                    col.scrollTop = Math.max(0, top);
+                }
+            }
+
+            P.renderTime = function() {
+                buildCol(elHCol, 24, 1, P.state.selHour,   'selHour');
+                buildCol(elMCol, 60, 5, P.state.selMinute, 'selMinute');
+            };
+
+            P.renderField = function() {
+                var s = P.state;
+                elField.textContent = pad(s.selDay) + '/' + pad(s.selMonth + 1) + '/' + s.selYear + '  ' + pad(s.selHour) + ':' + pad(s.selMinute);
+            };
+
+            P.open = function() {
+                var v = sessionStorage.getItem('tduo.retroview.endTs');
+                var ts = v ? parseInt(v, 10) : Date.now();
+                if (!ts || isNaN(ts)) ts = Date.now();
+                var d = new Date(ts);
+                P.state.viewYear  = d.getFullYear();
+                P.state.viewMonth = d.getMonth();
+                P.state.selYear   = d.getFullYear();
+                P.state.selMonth  = d.getMonth();
+                P.state.selDay    = d.getDate();
+                P.state.selHour   = d.getHours();
+                P.state.selMinute = Math.round(d.getMinutes() / 5) * 5;
+                if (P.state.selMinute >= 60) { P.state.selMinute = 0; P.state.selHour = (P.state.selHour + 1) % 24; }
+                P.renderCal();
+                P.renderTime();
+                P.renderField();
+                ov.hidden = false;
+            };
+
+            P.close = function() { ov.hidden = true; };
+
+            P.getTs = function() {
+                var s = P.state;
+                var d = new Date(s.selYear, s.selMonth, s.selDay, s.selHour, s.selMinute, 0, 0);
+                return d.getTime();
+            };
+
+            P.apply = function() {
+                var ts = P.getTs();
+                if (!ts || isNaN(ts)) return;
+                try { sessionStorage.setItem('tduo.retroview.endTs', String(ts)); } catch(_e) {}
+                try { window.dispatchEvent(new CustomEvent('tduo:retroview', { detail: { endTs: ts } })); } catch(_e) {}
+                ov.hidden = true;
+                renderActive();
+            };
+
+            ov.querySelector('.tbvp-cal-prev').addEventListener('click', function(ev) { ev.preventDefault(); P.state.viewMonth--; if (P.state.viewMonth < 0) { P.state.viewMonth = 11; P.state.viewYear--; } P.renderCal(); });
+            ov.querySelector('.tbvp-cal-next').addEventListener('click', function(ev) { ev.preventDefault(); P.state.viewMonth++; if (P.state.viewMonth > 11) { P.state.viewMonth = 0; P.state.viewYear++; } P.renderCal(); });
+            ov.querySelector('.tbvp-cancel').addEventListener('click', function(ev) { ev.preventDefault(); P.close(); });
+            ov.querySelector('.tbvp-ok').addEventListener('click', function(ev) { ev.preventDefault(); P.apply(); });
+            ov.addEventListener('click', function(ev) { if (ev.target === ov) P.close(); });
+            document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && !ov.hidden) P.close(); });
+
+            window.__tbvPicker = P;
+        })();
+    }
+    // === end TBV body-level picker bootstrap ========================================
+
+    var rb = document.getElementById('tbv-btn-retroview');
+    if (rb && !rb.__wired) { rb.__wired = true; rb.addEventListener('click', function(ev){ ev.preventDefault(); openModal(); }); }
+    var clr = document.getElementById('tbv-clear-btn');
+    if (clr && !clr.__wired) { clr.__wired = true; clr.addEventListener('click', function(ev){ ev.preventDefault(); clearRetroview(); }); }
+
+    maybeReveal();
+    renderActive();
+  })();
+  /* TBV-DETAIL JS END */
+}, 200);
 
 // =====================================================================================
 // [F] startSharedLoop / renderAll / safe / showBanner
