@@ -40,7 +40,7 @@ Sa `markdownTextFunction` (~1500-2000 lignes) s'organise en briques isolées :
 | Moteur de courbes | `renderChart(svgId, seriesSpec, axisSpec, data, win, evt)` — moteur SVG actuel paramétré, **appelé 6×** | refactor du moteur existant (Fritsch-Carlson, axes multi-échelles, légende cliquable, tooltip, marqueurs evt) |
 | Constructeurs info | `buildPacInfo(flatLatest)`, `buildBoilerInfo(flatLatest)` | portés de PAC Info / Chaudière Info |
 | Contrôle Timeline | barre sticky (boutons 24h/7j/…, zoom, rétro-vision) ; écrit `sessionStorage` puis déclenche re-fetch/re-render | porté du widget Timeline (fn 3542 car.) |
-| Donut Usage | `renderUsage(agg)` — calcul du split PAC seule / chaudière seule / arrêt sur la fenêtre + rendu donut SVG | porté du controller `tenant.tduo.usage_pie` (20,6k car.) — calcul + rendu seulement |
+| Donut Usage | `renderUsage(agg)` — calcul du split PAC seule / chaudière seule / arrêt sur la fenêtre + rendu donut SVG. **Rendu conditionnel : admins + users tenant uniquement** (cf. Contrôle d'accès) | porté du controller `tenant.tduo.usage_pie` (20,6k car.) — calcul + rendu seulement |
 | Marqueurs evt | `__EVT_FETCH` (reconstruction d'intervalles défaut depuis `evt_*`) partagé une fois pour les 6 courbes | réutilisé du chart PAC actuel |
 
 ### Spécifications des 6 courbes (séries / axes)
@@ -77,9 +77,27 @@ setInterval 30 s (boucle unique) re-fetch + re-render ; cleanup timers/observers
   Le reste en panneau déroulant `overflow-y:auto` (le scroll vit DANS la carte → règle le double-scroll mobile).
 - **Sections** empilées : PAC (bandeau info + grille 2×2 de courbes), Chaudière (bandeau info + grille 2×1),
   Usage (donut + légende %).
+- **Écartement** : gouttières de quelques pixels entre les objets, vertical ET horizontal (`gap: 6-8px` sur
+  les grilles/sections). On ne veut PAS un bloc 100 % jointif — les cartes restent visuellement distinctes,
+  juste sans l'espace gridster excessif d'avant.
+- **Design plat, pas d'effet 3D** : aucune ombre portée ni élévation (`box-shadow: none`), bordures fines
+  `1px solid #e0e0e0` + `border-radius` léger pour délimiter les cartes au lieu des ombres.
 - **Responsive piloté en JS** (pas `@media` : le CSS par-widget de TB strippe les media queries — constaté
   cette session). Mesure de `clientWidth` + `ResizeObserver` → grille 2 colonnes si large, 1 colonne si étroit
   (seuil ~600 px). Les courbes ont déjà leur propre détection `narrow` interne.
+
+## Contrôle d'accès (section Usage / donut)
+
+La section **Usage (donut)** n'est rendue que pour les **admins + users tenant**, comme aujourd'hui. Règle
+identique à celle du fork (`home.component`) :
+
+- `ctx.currentUser.authority` ∈ {`TENANT_ADMIN`, `SYS_ADMIN`} → visible ; **ou**
+- `CUSTOMER_USER` avec attribut serveur `is_admin=true` (déjà mis en cache en `sessionStorage` par
+  `home.component`) → visible ;
+- sinon la section Usage est **omise du rendu** (pas juste masquée en CSS — on n'effectue même pas son
+  agrégation, économie de calcul pour les clients non-admin).
+
+Lecture pratique dans la fonction widget : tester `ctx.currentUser` puis, en repli, `sessionStorage.getItem('is_admin') === 'true'`.
 
 ## Gestion d'erreur
 
@@ -99,7 +117,8 @@ les retire.
    + 4 courbes + grille responsive JS + boucle refresh + try/catch par section. Marqueurs evt branchés.
 2. **Section Chaudière** — `buildBoilerInfo` + 2 courbes.
 3. **Donut Usage** — lecture du controller `usage_pie`, extraction de la logique d'agrégation + rendu, port
-   dans `renderUsage`.
+   dans `renderUsage`, **derrière le gate de rôle** (admins + users tenant ; agrégation court-circuitée
+   pour les clients non-admin).
 4. **Timeline absorbée** — port de la barre interactive dans le header sticky ; suppression du widget Timeline.
 5. **Nettoyage** — suppression des 10 widgets legacy ; layout final = 1 seul widget ; vérif finale.
 
