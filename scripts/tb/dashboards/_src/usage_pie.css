@@ -1,0 +1,1 @@
+{"schema": {"type": "object", "title": "Settings", "properties": {"hpIndex": {"title": "Index HP (1..4)", "type": "integer", "default": 1}}}, "form": ["hpIndex"]}
