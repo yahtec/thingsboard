@@ -146,6 +146,19 @@ var CHARTS = [
             {key:pre+'dpf',label:'Position détendeur',color:'#5c6bc0',axis:'dpf',unit:' pas'}],
     axis:{left:{min:-30,max:90},freq:{min:0,max:120},pwr:{min:0,max:30000},dpf:{min:0,max:2200}} }
 ];
+var CHARTS_BOIL = [
+  { id:'temp_ch', title:'Températures chaudière', svg:'u-svg-tempch',
+    series:[{key:pre+'tOut',label:'T° entrée chaud.',color:'#42a5f5',axis:'left',unit:'°C'},
+            {key:pre+'boil_tOut',label:'T° sortie chaud.',color:'#ef5350',axis:'left',unit:'°C'},
+            {key:pre+'boil_tSmoke',label:'T° fumée',color:'#ff9800',axis:'left',unit:'°C'}],
+    axis:{left:{min:-30,max:90},freq:{min:0,max:120},pwr:{min:0,max:30000},dpf:{min:0,max:2200}} },
+  { id:'brul', title:'Brûleur / Circuit eau', svg:'u-svg-brul',
+    series:[{key:pre+'boil_qe',label:'Débit eau',color:'#29b6f6',axis:'left',unit:' L/h'},
+            {key:pre+'boil_rpm',label:'Vitesse brûleur',color:'#ff9800',axis:'freq',unit:' rpm'},
+            {key:pre+'boil_press',label:'Pression eau',color:'#66bb6a',axis:'dpf',unit:' bar'}],
+    axis:{left:{min:0,max:4000},freq:{min:0,max:7000},pwr:{min:0,max:30000},dpf:{min:0,max:4}} }
+];
+window.__CHARTS_BOIL = CHARTS_BOIL;
 
 // =====================================================================================
 // [D] HTML skeleton builder
@@ -160,7 +173,8 @@ var html = '<div class="u-root">'+
     '<div class="u-tl" id="u-timeline"></div>'+
     '<div class="u-section"><div class="u-card" id="u-pac-info"></div><div id="u-err-pacinfo"></div>'+
       '<div class="u-grid">'+CHARTS.map(chartCard).join('')+'</div></div>'+
-    '<div class="u-section" id="u-boiler"></div>'+
+    '<div class="u-section" id="u-boiler"><div class="u-card" id="u-boil-info"></div><div id="u-err-boilinfo"></div>'+
+      '<div class="u-grid">'+CHARTS_BOIL.map(chartCard).join('')+'</div></div>'+
     '<div class="u-section" id="u-usage"></div>'+
   '</div></div>';
 
@@ -586,5 +600,31 @@ function buildPacInfo(e) {
     html += '</div>';
     return html;
 }
+function buildBoilerInfo(e){
+  e = e || {};
+  var html = '<h2 class="boiler-title">Données Chaudière '+P+'</h2>';
+  html += '<div class="boiler-row">';
+  html += '<div class="values-block"><div class="sub-title">Chaudière</div>';
+  html += buildValueRow('T° entrée', e[pre+'tOut'], '°C', 1);
+  html += buildValueRow('T° sortie', e[pre+'boil_tOut'], '°C', 1);
+  html += buildValueRow('T° fumée', e[pre+'boil_tSmoke'], '°C', 1);
+  html += buildValueRow('Débit eau', e[pre+'boil_qe'], ' L/h', 0);
+  html += buildValueRow('Vitesse brûleur', e[pre+'boil_rpm'], ' rpm', 0);
+  html += buildValueRow('Temps de fonctionnement', tH(e[pre+'boil_time']), ' h', 0);
+  html += '</div>';
+  html += '<div class="values-block"><div class="sub-title">Pompe</div>';
+  html += buildValueRow('Vitesse', e[pre+'pump_rpm'], ' rpm', 0);
+  html += buildValueRow('DeltaP', e[pre+'pump_dP'], ' mCE', 2);
+  html += buildValueRow('Puissance', e[pre+'pump_pwr'], ' W', 0);
+  html += buildValueRow('Débit', e[pre+'pump_qe'], ' L/h', 0);
+  html += buildValueRow('Durée ON', tH(e[pre+'pump_time']), ' h', 0);
+  html += '</div></div>';
+  return html;
+}
+
+window.__renderBoiler = function(seriesData, latestFlat, win, evt){
+  safe('boilinfo', function(){ var el=document.getElementById('u-boil-info'); if(el) el.innerHTML=buildBoilerInfo(latestFlat); });
+  CHARTS_BOIL.forEach(function(c){ safe(c.id, function(){ renderChart(c, seriesData, win, evt); }); });
+};
 
 return html;
