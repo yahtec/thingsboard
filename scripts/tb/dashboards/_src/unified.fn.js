@@ -604,7 +604,9 @@ function infoTable(rows){
 function infoSub(title){ return '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#888;margin:0 0 4px">'+title+'</div>'; }
 function buildPacInfo(e){
   e = e || {};
-  return infoFrame('PAC Hybride n'+P, '<div style="display:flex;justify-content:center"><div style="width:50%;min-width:240px">'+infoTable([
+  return infoFrame('PAC Hybride n'+P, '<div style="display:flex;justify-content:center"><div style="width:50%;min-width:240px">'+
+    '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px;text-align:center">Données PAC '+P+'</div>'+
+    infoTable([
     ['Fréquence compresseur', fv(e[pre+'invert_freq'],' Hz',1)],
     ['Puissance compresseur', fv(e[pre+'invert_pwr'],' W',0)],
     ['Vitesse ventilateur', fv(e[pre+'rpm'],' rpm',0)],
