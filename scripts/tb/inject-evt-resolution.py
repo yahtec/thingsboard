@@ -16,6 +16,8 @@ Convention verifiee en prod :
 
 Usage:
   inject-evt-resolution.py --pwd <pwd> --entity-id <uuid> --fault 88 --device 50
+  inject-evt-resolution.py --pwd <pwd> --entity-id <uuid> --fault 88 --device 50 \
+      --at "2026-06-10 09:20:00"   # heure reelle de resolution (RTC, Europe/Paris)
 """
 
 import argparse, json, sys, time, urllib.request, urllib.error
@@ -54,11 +56,19 @@ def main():
     ap.add_argument('--entity-id', required=True, help='UUID du device PAC')
     ap.add_argument('--fault', type=int, required=True, help='code evt_fault (ex: 88)')
     ap.add_argument('--device', type=int, required=True, help='evt_device sous-equipement (ex: 50)')
+    ap.add_argument('--at', help="heure reelle de resolution 'YYYY-MM-DD HH:MM:SS' (Europe/Paris); defaut: maintenant")
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
 
-    now_ms = int(time.time() * 1000)
-    now_s = now_ms // 1000
+    if args.at:
+        dt_at = datetime.strptime(args.at, '%Y-%m-%d %H:%M:%S')
+        if PARIS:
+            dt_at = dt_at.replace(tzinfo=PARIS)
+        now_s = int(dt_at.timestamp())
+        now_ms = now_s * 1000
+    else:
+        now_ms = int(time.time() * 1000)
+        now_s = now_ms // 1000
     dt = datetime.fromtimestamp(now_s, PARIS) if PARIS else datetime.fromtimestamp(now_s)
     values = {
         'evt_type': 4,
