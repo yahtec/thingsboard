@@ -590,12 +590,13 @@ function infoFrame(title, innerHtml){
   var head = title ? '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px">'+title+'</div>' : '';
   return '<div style="background:#f5f5f5;border:1px solid #e0e0e0;border-radius:8px;padding:12px;box-sizing:border-box">'+head+innerHtml+'</div>';
 }
-function infoTable(rows){
+function infoTable(rows, lblPx, valPx){
+  lblPx = lblPx || 11; valPx = valPx || 14;
   var body = rows.map(function(r,i){
     var bb = i < rows.length-1 ? 'border-bottom:1px solid #eee;' : '';
     return '<tr>'+
-      '<td style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.3px;padding:4px 8px 4px 0;'+bb+'">'+r[0]+'</td>'+
-      '<td style="font-size:14px;font-weight:bold;color:#333;text-align:right;white-space:nowrap;padding:4px 0;'+bb+'">'+r[1]+'</td>'+
+      '<td style="font-size:'+lblPx+'px;color:#666;text-transform:uppercase;letter-spacing:0.3px;padding:5px 8px 5px 0;'+bb+'">'+r[0]+'</td>'+
+      '<td style="font-size:'+valPx+'px;font-weight:bold;color:#333;text-align:right;white-space:nowrap;padding:5px 0;'+bb+'">'+r[1]+'</td>'+
       '</tr>';
   }).join('');
   return '<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #eee;border-radius:6px;padding:6px 12px;box-sizing:border-box"><tbody>'+body+'</tbody></table>';
@@ -646,7 +647,7 @@ function buildPacInfo(e){
       ['Position détendeur', fv(e[pre+'dpf'],'',0)],
       ['T° surchauffe', fv(e[pre+'tOH'],'°C',1)],
       ['Temps de fonctionnement', fv(tH(e[pre+'time']),' h',0)]
-    ])+'</div>';
+    ], 14, 18)+'</div>';
   var inner = '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;justify-content:center">'+gHp+gBp+tableBlock+'</div>';
   return '<div style="max-width:1040px;margin:0 auto">'+
     '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">PAC Hybride n'+P+'</div>'+
