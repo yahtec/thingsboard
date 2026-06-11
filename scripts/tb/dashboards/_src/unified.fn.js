@@ -615,10 +615,10 @@ function buildGauge(id,label,value,tempLabel,tempValue,min,max,color,colorLight)
     ticks+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="#555" stroke-width="1.5"/>';
     ticks+='<text x="'+xt+'" y="'+(yt+4)+'" text-anchor="middle" font-size="10" fill="#555">'+lv+'</text>';
   }
-  return '<div style="display:flex;flex-direction:column;align-items:stretch;background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:8px;box-sizing:border-box;flex:0 0 auto;width:150px">'+
+  return '<div style="display:flex;flex-direction:column;align-items:stretch;background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:8px;box-sizing:border-box;flex:0 0 auto;width:188px">'+
     '<div style="font-size:11px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;text-align:center">'+label+'</div>'+
     '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">'+
-      '<svg viewBox="0 0 200 200" preserveAspectRatio="xMidYMid meet" style="width:100%;max-width:140px;height:auto;display:block;margin:0 auto">'+
+      '<svg viewBox="0 0 200 200" preserveAspectRatio="xMidYMid meet" style="width:100%;max-width:175px;height:auto;display:block;margin:0 auto">'+
         '<defs><radialGradient id="gradBg_'+id+'" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="'+colorLight+'"/></radialGradient></defs>'+
         '<circle cx="100" cy="100" r="95" fill="url(#gradBg_'+id+')" stroke="#ccc" stroke-width="2"/>'+ticks+
         '<g transform="rotate('+angle+' 100 100)"><line x1="100" y1="100" x2="100" y2="30" stroke="'+(valid?color:'#9E9E9E')+'" stroke-width="3" stroke-linecap="round"/></g>'+
