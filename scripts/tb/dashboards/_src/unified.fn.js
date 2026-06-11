@@ -244,9 +244,9 @@ function wireTimelineBar(){
 var html = '<div class="u-root">'+
   '<div id="u-banner" class="u-err" style="display:none"></div>'+
   '<div class="u-scroll">'+
+    '<div class="u-section"><div id="u-pac-info"></div><div id="u-err-pacinfo"></div></div>'+
     '<div class="u-tl" id="u-timeline">'+buildTimelineBar()+'</div>'+
-    '<div class="u-section"><div id="u-pac-info"></div><div id="u-err-pacinfo"></div>'+
-      '<div class="u-grid">'+CHARTS.map(chartCard).join('')+'</div></div>'+
+    '<div class="u-section"><div class="u-grid">'+CHARTS.map(chartCard).join('')+'</div></div>'+
     '<div class="u-section" id="u-boiler"><div id="u-boil-info"></div><div id="u-err-boilinfo"></div>'+
       '<div class="u-grid">'+CHARTS_BOIL.map(chartCard).join('')+'</div></div>'+
     '<div class="u-section" id="u-usage"></div>'+
