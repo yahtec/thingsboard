@@ -158,7 +158,7 @@ var html = '<div class="u-root">'+
   '<div id="u-banner" class="u-err" style="display:none"></div>'+
   '<div class="u-scroll">'+
     '<div class="u-tl" id="u-timeline"></div>'+
-    '<div class="u-section"><div class="u-card" id="u-pac-info"></div>'+
+    '<div class="u-section"><div class="u-card" id="u-pac-info"></div><div id="u-err-pacinfo"></div>'+
       '<div class="u-grid">'+CHARTS.map(chartCard).join('')+'</div></div>'+
     '<div class="u-section" id="u-boiler"></div>'+
     '<div class="u-section" id="u-usage"></div>'+
@@ -173,15 +173,17 @@ function wireResponsiveGrid(){
     var cols = w < 600 ? '1fr' : '1fr 1fr';
     grids.forEach(function(g){ g.style.gridTemplateColumns = cols; }); if(window.__tbPacUnified.onResize) window.__tbPacUnified.onResize(); }
   apply();
-  var ro = new ResizeObserver(apply); var sc = document.querySelector('.u-scroll'); if(sc) ro.observe(sc);
+  var ro = (typeof ResizeObserver !== 'undefined') ? new ResizeObserver(apply) : null;
+  var sc = document.querySelector('.u-scroll'); if(ro && sc) ro.observe(sc);
   window.__tbPacUnified.ro = ro;
 }
 setTimeout(function(){
   var prev = window.__tbPacUnified || {};
   if (prev.timer) clearInterval(prev.timer);
   if (prev.ro) { try{ prev.ro.disconnect(); }catch(e){} }
-  window.__tbPacUnified = { vis:{} };
-  wireResponsiveGrid();
+  if (prev.listeners) Object.keys(prev.listeners).forEach(function(k){ try { document.removeEventListener('mousemove', prev.listeners[k]); } catch(e){} });
+  window.__tbPacUnified = { vis:{}, listeners:{} };
+  try { wireResponsiveGrid(); } catch(e){ console.warn('[unified] responsive', e); }
   startSharedLoop();
 }, 60);
 
