@@ -601,19 +601,54 @@ function infoTable(rows){
   return '<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #eee;border-radius:6px;padding:6px 12px;box-sizing:border-box"><tbody>'+body+'</tbody></table>';
 }
 function infoSub(title){ return '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#888;margin:0 0 4px">'+title+'</div>'; }
+function needleAngle(val,min,max){ var v=Math.max(min,Math.min(max,parseFloat(val)||min)); return -135+((v-min)/(max-min))*270; }
+function buildGauge(id,label,value,tempLabel,tempValue,min,max,color,colorLight){
+  var valid=!isBad(value);
+  var angle=valid?needleAngle(value,min,max):-135;
+  var valDisp=fv(value,'',1);
+  var tempDisp=fv(tempValue,'°C',1);
+  var ticks='';
+  for(var i=0;i<=10;i++){
+    var a=-135+(i*27), rad=a*Math.PI/180, lv=Math.round(min+(i/10)*(max-min));
+    var x1=100+Math.sin(rad)*75, y1=100-Math.cos(rad)*75, x2=100+Math.sin(rad)*85, y2=100-Math.cos(rad)*85;
+    var xt=100+Math.sin(rad)*62, yt=100-Math.cos(rad)*62;
+    ticks+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="#555" stroke-width="1.5"/>';
+    ticks+='<text x="'+xt+'" y="'+(yt+4)+'" text-anchor="middle" font-size="10" fill="#555">'+lv+'</text>';
+  }
+  return '<div style="display:flex;flex-direction:column;align-items:stretch;background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:8px;box-sizing:border-box;flex:0 0 auto;width:150px">'+
+    '<div style="font-size:11px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;text-align:center">'+label+'</div>'+
+    '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">'+
+      '<svg viewBox="0 0 200 200" preserveAspectRatio="xMidYMid meet" style="width:100%;max-width:140px;height:auto;display:block;margin:0 auto">'+
+        '<defs><radialGradient id="gradBg_'+id+'" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="'+colorLight+'"/></radialGradient></defs>'+
+        '<circle cx="100" cy="100" r="95" fill="url(#gradBg_'+id+')" stroke="#ccc" stroke-width="2"/>'+ticks+
+        '<g transform="rotate('+angle+' 100 100)"><line x1="100" y1="100" x2="100" y2="30" stroke="'+(valid?color:'#9E9E9E')+'" stroke-width="3" stroke-linecap="round"/></g>'+
+        '<circle cx="100" cy="100" r="8" fill="#333"/>'+
+        '<text x="100" y="140" text-anchor="middle" font-size="12" fill="#666">bar</text>'+
+        '<rect x="55" y="152" width="90" height="26" fill="#222" rx="4"/>'+
+        '<text x="100" y="170" text-anchor="middle" font-size="14" font-weight="bold" fill="#ff6b6b" font-family="monospace">'+valDisp+'</text>'+
+      '</svg>'+
+      '<div style="width:100%;text-align:center;padding:4px 8px;border:1px solid #ccc;border-radius:4px;background:#fff;box-sizing:border-box">'+
+        '<div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">'+tempLabel+'</div>'+
+        '<div style="font-size:15px;font-weight:bold;color:#333">'+tempDisp+'</div>'+
+      '</div>'+
+    '</div></div>';
+}
 function buildPacInfo(e){
   e = e || {};
-  return '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">PAC Hybride n'+P+'</div>'+
-    infoFrame('', '<div style="display:flex;justify-content:center"><div style="width:50%;min-width:240px">'+
+  var gHp = buildGauge('hp','Pression HP',e[pre+'pHi'],'T cond',e[pre+'tCond'],-5,35,'#c62828','#ffebee');
+  var gBp = buildGauge('bp','Pression BP',e[pre+'pLo'],'T evap',e[pre+'tEvap'],-5,25,'#1976d2','#e3f2fd');
+  var tableBlock = '<div style="flex:1 1 260px;min-width:240px;max-width:440px">'+
     '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;margin-bottom:10px;text-align:center">Données PAC '+P+'</div>'+
     infoTable([
-    ['Fréquence compresseur', fv(e[pre+'invert_freq'],' Hz',1)],
-    ['Puissance compresseur', fv(e[pre+'invert_pwr'],' W',0)],
-    ['Vitesse ventilateur', fv(e[pre+'rpm'],' rpm',0)],
-    ['Position détendeur', fv(e[pre+'dpf'],'',0)],
-    ['T° surchauffe', fv(e[pre+'tOH'],'°C',1)],
-    ['Temps de fonctionnement', fv(tH(e[pre+'time']),' h',0)]
-  ])+'</div></div>');
+      ['Fréquence compresseur', fv(e[pre+'invert_freq'],' Hz',1)],
+      ['Puissance compresseur', fv(e[pre+'invert_pwr'],' W',0)],
+      ['Vitesse ventilateur', fv(e[pre+'rpm'],' rpm',0)],
+      ['Position détendeur', fv(e[pre+'dpf'],'',0)],
+      ['T° surchauffe', fv(e[pre+'tOH'],'°C',1)],
+      ['Temps de fonctionnement', fv(tH(e[pre+'time']),' h',0)]
+    ])+'</div>';
+  var inner = '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;justify-content:center">'+gHp+gBp+tableBlock+'</div>';
+  return '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">PAC Hybride n'+P+'</div>'+infoFrame('', inner);
 }
 function buildBoilerInfo(e){
   e = e || {};
