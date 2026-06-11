@@ -19,3 +19,14 @@
 .u-chart-legend { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; border-top: 1px solid #eee; }
 .u-chart-legend > * { font-size: 11px !important; padding: 3px 8px !important; }
 .u-err { color: #b71c1c; font-size: 12px; padding: 10px; background: #ffebee; border: 1px solid #ef9a9a; border-radius: 6px; }
+
+/* Cartes info PAC / Chaudiere (builders buildPacInfo/buildBoilerInfo) */
+#u-pac-info, #u-boil-info { padding: 10px 14px; }
+.pac-hybride-title, .boiler-title { font-size: 16px; font-weight: 700; color: #333; margin: 0 0 8px; }
+.boiler-row { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+.values-block { display: flex; flex-direction: column; flex: 1 1 220px; min-width: 200px; }
+.sub-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin: 4px 0; }
+.val-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+.val-row:last-child { border-bottom: none; }
+.val-label { color: #666; }
+.val-value { font-weight: 600; color: #222; font-variant-numeric: tabular-nums; white-space: nowrap; }
