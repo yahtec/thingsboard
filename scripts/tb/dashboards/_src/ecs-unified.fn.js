@@ -1,7 +1,7 @@
 // __ECS_UNIFIED_V1__
-// Widget markdown_card unifie : fusionne les 10 widgets de l'etat donnees_HP1 en un seul.
+// Widget markdown_card unifie : page ECS (etat 'ecs') — timeline T° ECS + tableaux pompes.
 // Structure : [A] helpers PACV2  [B] ctx/resolve/time  [C] CHARTS  [D] HTML  [E] setTimeout
-//             [F] loop  [F2] fetchEvt  [G] renderChart  [H] buildPacInfo
+//             [F] loop  [F2] fetchEvt  [G] renderChart  [H] pumpsInfo
 // Tout est en `function` declarations (hoistees) ; on calcule ctxRef/P/pre/CHARTS/html en
 // `var`, on planifie le setTimeout, puis on `return html;` en DERNIERE instruction.
 
@@ -583,8 +583,11 @@ function startSharedLoop() {
         // tInM/TinM : deux casses sur le parc -> fusion vers la cle de serie __tInM
         seriesData.__tInM = (seriesData.tInM && seriesData.tInM.length) ? seriesData.tInM : (seriesData.TinM || []);
         // T° ballon : ne tracer que les valeurs plausibles [5..90] degC (spec)
-        seriesData.dhw_tTank = (seriesData.dhw_tTank || []).filter(function(p){
-          var v = parseFloat(p.value); return !isNaN(v) && v >= 5 && v <= 90;
+        // hors [5..90] degC -> sentinelle -99.9 : isBadChart coupe le segment
+        // (un filter supprimerait les points et smoothPath interpolerait par-dessus)
+        seriesData.dhw_tTank = (seriesData.dhw_tTank || []).map(function(p){
+          var v = parseFloat(p.value);
+          return (isNaN(v) || v < 5 || v > 90) ? {ts: p.ts, value: -99.9} : p;
         });
         fetchEvt(DEVICE_ID, win, EVT, function(){ renderCharts(seriesData, win, EVT.intervals); });
         renderCharts(seriesData, win, EVT.intervals);
@@ -592,7 +595,7 @@ function startSharedLoop() {
       .catch(function(e){ showBanner('Erreur de chargement des courbes.'); console.warn('[ecs] fetchCharts', e); });
   }
 
-  function fetchInfo() {
+  function fetchInfo(cb) {
     var endTs = infoEndTs();
     var url = '/api/plugins/telemetry/DEVICE/' + DEVICE_ID +
       '/values/timeseries?keys=pac_v2&startTs=0&endTs=' + endTs + '&limit=1&orderBy=DESC&agg=NONE';
@@ -602,17 +605,20 @@ function startSharedLoop() {
         var pts = resp.pac_v2 || [];
         var latestFlat = {};
         if (pts.length) { try { var raw = pts[0].value; latestFlat = PACV2_FLATTEN(typeof raw==='string'?JSON.parse(raw):raw); } catch(e){} }
-        var t = parseInt(latestFlat['type']);
+        var t = parseInt(latestFlat['type'], 10);
         MODULE_TYPE = isNaN(t) ? null : t;
         renderInfo(latestFlat);
+        if (typeof cb === 'function') cb();
       })
-      .catch(function(e){ console.warn('[ecs] fetchInfo', e); });
+      .catch(function(e){ console.warn('[ecs] fetchInfo', e); if (typeof cb === 'function') cb(); });
   }
 
   window.__tbEcsUnified.refetch = fetchCharts;                 // timeline change -> curves ONLY
-  window.__tbEcsUnified.refetchAll = function(){ fetchInfo(); fetchCharts(); };
-  fetchInfo(); fetchCharts();
-  window.__tbEcsUnified.timer = setInterval(function(){ fetchInfo(); fetchCharts(); }, 30000);
+  // fetchInfo d'abord (pose MODULE_TYPE), puis fetchCharts en callback :
+  // evite la race ou activeEcsChart() filtre V3V/__tInM avant que le type soit connu
+  window.__tbEcsUnified.refetchAll = function(){ fetchInfo(fetchCharts); };
+  fetchInfo(fetchCharts);
+  window.__tbEcsUnified.timer = setInterval(function(){ fetchInfo(fetchCharts); }, 30000);
 }
 function renderCharts(seriesData, win, evt) {
   safe('ecs', function(){ renderChart(activeEcsChart(), seriesData, win, evt); });
@@ -973,9 +979,6 @@ function fv(val, unit, decimals) {
     if (isBad(val)) return '--';
     return parseFloat(val).toFixed(decimals !== undefined ? decimals : 1) + (unit || '');
 }
-function buildValueRow(label, value, unit, decimals) {
-    return '<div class="val-row"><span class="val-label">'+label+'</span><span class="val-value">'+fv(value,unit,decimals)+'</span></div>';
-}
 function tH(v) {
     if (v === null || v === undefined || v === '') return v;
     var n = Number(v);
@@ -1004,7 +1007,7 @@ function pumpTable(title, e, pfx) {
   PUMP_FIELDS.forEach(function(f){
     rows += '<tr>'+
       '<td style="font-size:14px;color:#666;text-transform:uppercase;letter-spacing:0.3px;padding:5px 8px 5px 0;border-bottom:1px solid #eee">'+f[0]+'</td>'+
-      '<td style="font-size:18px;font-weight:bold;color:#222;text-align:right;white-space:nowrap;padding:5px 0;border-bottom:1px solid #eee">'+fv(e[pfx+f[1]], f[2], f[3])+'</td>'+
+      '<td style="font-size:18px;font-weight:bold;color:#222;text-align:right;white-space:nowrap;padding:5px 0;border-bottom:1px solid #eee">'+fv(f[1]==='time' ? tH(e[pfx+f[1]]) : e[pfx+f[1]], f[2], f[3])+'</td>'+
       '</tr>';
   });
   return '<div class="u-card" style="padding:12px 14px">'+
