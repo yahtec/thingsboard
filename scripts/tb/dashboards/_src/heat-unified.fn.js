@@ -136,7 +136,7 @@ var HEAT_CHART = {
 // =====================================================================================
 // [D] HTML skeleton builder
 // =====================================================================================
-function chartCard(c){ return '<div class="u-card u-chart" id="u-err-'+c.id+'-wrap"><div class="u-chart-title">'+c.title+'</div>'+
+function chartCard(c){ return '<div class="u-card u-chart" id="u-err-'+c.id+'-wrap" style="height:100%;width:100%"><div class="u-chart-title">'+c.title+'</div>'+
   '<div class="u-chart-body"><svg id="'+c.svg+'" preserveAspectRatio="xMidYMid meet"></svg>'+
   '<div id="'+c.svg+'-tip" style="display:none;position:absolute;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;pointer-events:none;z-index:10"></div></div>'+
   '<div id="'+c.svg+'-leg" class="u-chart-legend"></div><div id="u-err-'+c.id+'"></div></div>'; }
@@ -219,9 +219,9 @@ var html = '<div class="u-root">'+
   '<div class="u-scroll">'+
     '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">Départ chauffage</div>'+
     '<div class="u-tl" id="u-timeline">'+buildTimelineBar()+'</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;flex:1 1 auto;min-height:0">'+
-      '<div class="u-card" style="flex:1 1 320px;min-width:280px;max-width:480px;padding:12px 14px;align-self:flex-start"><div id="u-calo"></div><div id="u-err-caloinfo"></div></div>'+
-      '<div style="flex:1 1 360px;min-width:300px;display:flex;min-height:320px">'+chartCard(HEAT_CHART)+'</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start">'+
+      '<div class="u-card" style="flex:1 1 320px;min-width:280px;max-width:420px;padding:12px 14px"><div id="u-calo"></div><div id="u-err-caloinfo"></div></div>'+
+      '<div style="flex:2 1 520px;min-width:320px;display:flex;flex-direction:column;height:440px">'+chartCard(HEAT_CHART)+'</div>'+
     '</div>'+
   '</div></div>';
 
