@@ -87,7 +87,7 @@ self._probeSnapshots = function() {
     var cand = self._rows.filter(function(r){
         return r.fault && (r.type === 1 || r.type === 4) && !self._noSnapStatic(r);
     });
-    if (!cand.length) { self._snapTsList = []; return; }
+    if (!cand.length) { self._probeRange = null; self._snapTsList = []; return; }
     var anchors = cand.map(self._snapAnchor);
     var minTs = Math.min.apply(null, anchors) - 120000;
     var maxTs = Math.max.apply(null, anchors) + 60000;
