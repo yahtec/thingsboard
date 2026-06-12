@@ -36,11 +36,16 @@ Pas d'icône si :
 - `evt_device` ∈ **60–68** (Module, Pompe 1/2 module, Calorimètre module, Chauffage,
   Calorimètre chauffage, ECS, Pompe primaire/secondaire ECS) ; **ou**
 - `evt_device` ∈ **50–55** (PAC Hybride 1–6) **et** `evt_fault` ∈ codes communication
-  **{15, 29, 38, 39, 40, 88}**.
+  **{15, 29, 38, 39, 40}**.
 
 Les codes incertains (84–87 « Defaut com. pompe/compresseur/gaz », internes à la PAC)
-ne sont **pas** dans la liste statique — le probe tranche. Les combos réels seront
-vérifiés en base prod avant de figer la liste.
+ne sont **pas** dans la liste statique — le probe tranche.
+
+**Amendement post-vérification prod (2026-06-12)** : le fault **88 est retiré** de la
+liste statique — un événement (dev 51, fault 88) avait un snapshot dans la fenêtre en
+prod ; le probe dynamique tranche pour le 88. Règle module confirmée en prod
+(36 événements dev 60–68, 0 snapshot). Faults 15/29/38/39/40 : aucune occurrence en
+prod, conservés sur foi de la spec firmware.
 
 ### 2. Probe dynamique — le reste
 
@@ -63,9 +68,13 @@ L'ancrage `evtTs` par ligne suit la même logique que `_actionCell` actuel :
   d'icônes mortes).
 - Résultat du probe mis en cache, invalidé quand la fenêtre temporelle des données
   change (comparaison min/max ts des événements).
-- **Échec du probe** (erreur réseau/HTTP) : repli sur la règle statique seule —
-  icônes affichées pour les non-exclus (dégradation vers le comportement actuel,
-  on ne masque jamais tout par erreur).
+- **Échec du probe** (erreur réseau/HTTP, devId ou token indisponible) : repli sur
+  la règle statique seule — icônes affichées pour les non-exclus (dégradation vers
+  le comportement actuel, on ne masque jamais tout par erreur) — et cache invalidé
+  pour retenter au prochain rafraîchissement des données.
+- **Réponse tronquée** (une clé atteint `limit=1000`) : liste de snapshots incomplète
+  → repli sur la règle statique seule (on préfère des icônes en trop que masquées à
+  tort) ; pas de retry (re-fetcher ne ramènerait pas plus de points).
 
 ## Déploiement
 
