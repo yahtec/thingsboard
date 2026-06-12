@@ -80,7 +80,8 @@ Unités de ΔP, débit et temps **à confirmer à la validation visuelle** (vale
 plausibles observées : dP 5.8, qe 3.1 m³/h, time 330 h sur pump2M de 2623001001).
 
 **Présence pump2/pump4 et pump2M (provisoire)** : tableau affiché si au moins un
-des 5 champs est non nul sur la fenêtre courante. L'automate enverra prochainement
+des 5 champs est non nul dans le **dernier pac_v2 reçu** (le compteur `time` est
+cumulatif, donc une pompe ayant déjà tourné reste détectée même à l'arrêt). L'automate enverra prochainement
 des clés de présence dédiées dans le payload : ce sont des **paramètres statiques**,
 figés à la mise en service (modifiés uniquement sur demande client, ex. ajout d'une
 pompe) → il suffira de les lire dans le dernier pac_v2 reçu, sans logique de fenêtre.
