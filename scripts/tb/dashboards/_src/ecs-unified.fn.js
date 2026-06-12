@@ -992,15 +992,26 @@ var PUMP_FIELDS = [
   ['Vitesse',         'rpm',  ' tr/min', 0],
   ['Temps de marche', 'time', ' h',      0]
 ];
-function pumpPresent(e, pfx) {
-  // Provisoire (spec) : un des 5 champs non nul dans le dernier pac_v2 recu
-  // (time cumulatif => une pompe ayant deja tourne reste detectee a l'arret).
-  // Sera remplace par les cles de presence automate (futurs ATTRIBUTS device).
+function pumpCount(e, key) {
+  // Compteurs config firmware (2026-06-12) : dhw_nbPumpPrim, dhw_nbPumpSec, nbPumpM.
+  // null = cle absente (parc pas encore flashe) -> repli heuristique.
+  var v = parseInt(e[key], 10);
+  return isNaN(v) ? null : v;
+}
+function pumpHeuristic(e, pfx) {
+  // Repli : un des 5 champs non nul dans le dernier pac_v2 recu. Limites connues
+  // (compteur time par pas de 10 h, pompe HS ou remplacee) -> les compteurs
+  // firmware priment des qu'ils existent.
   for (var i = 0; i < PUMP_FIELDS.length; i++) {
     var v = parseFloat(e[pfx + PUMP_FIELDS[i][1]]);
     if (!isNaN(v) && v !== 0) return true;
   }
   return false;
+}
+function pumpPresent(e, pfx, count, idx) {
+  // count = compteur firmware (null si absent) ; idx = rang de la pompe (1 ou 2).
+  if (count !== null) return idx <= count;
+  return (idx === 1) ? true : pumpHeuristic(e, pfx);
 }
 function pumpTable(title, e, pfx) {
   var rows = '';
@@ -1016,16 +1027,19 @@ function pumpTable(title, e, pfx) {
 }
 function pumpsInfo(e) {
   e = e || {};
-  // type 2 (ECS seul) : pompes module a la place des primaires echangeur (spec)
+  // type 2 (ECS seul) : pompes module a la place des primaires echangeur (spec) ;
+  // leur compteur est nbPumpM (racine), sinon dhw_nbPumpPrim.
   var prim = (MODULE_TYPE === 2)
     ? [['Pompe 1 module', 'pump1M_'], ['Pompe 2 module', 'pump2M_']]
     : [['Pompe primaire échangeur 1', 'dhw_pump1_'], ['Pompe primaire échangeur 2', 'dhw_pump2_']];
   var sec = [['Pompe secondaire échangeur 1', 'dhw_pump3_'], ['Pompe secondaire échangeur 2', 'dhw_pump4_']];
+  var nbPrim = pumpCount(e, (MODULE_TYPE === 2) ? 'nbPumpM' : 'dhw_nbPumpPrim');
+  var nbSec  = pumpCount(e, 'dhw_nbPumpSec');
   var h = '';
-  h += pumpTable(prim[0][0], e, prim[0][1]);
-  if (pumpPresent(e, prim[1][1])) h += pumpTable(prim[1][0], e, prim[1][1]);
-  h += pumpTable(sec[0][0], e, sec[0][1]);
-  if (pumpPresent(e, sec[1][1])) h += pumpTable(sec[1][0], e, sec[1][1]);
+  if (pumpPresent(e, prim[0][1], nbPrim, 1)) h += pumpTable(prim[0][0], e, prim[0][1]);
+  if (pumpPresent(e, prim[1][1], nbPrim, 2)) h += pumpTable(prim[1][0], e, prim[1][1]);
+  if (pumpPresent(e, sec[0][1], nbSec, 1))   h += pumpTable(sec[0][0], e, sec[0][1]);
+  if (pumpPresent(e, sec[1][1], nbSec, 2))   h += pumpTable(sec[1][0], e, sec[1][1]);
   return h;
 }
 

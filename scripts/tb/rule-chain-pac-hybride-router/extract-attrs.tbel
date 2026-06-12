@@ -1,6 +1,6 @@
 // scripts/tb/rule-chain-pac-hybride-router/extract-attrs.tbel
 //
-// TBEL TbTransformMsgNode (TB 4.3) — extraction des 37 attrs SERVER_SCOPE
+// TBEL TbTransformMsgNode (TB 4.3) — extraction des 40 attrs SERVER_SCOPE
 // du payload pac_v2 nested. Émet UN SEUL message POST_ATTRIBUTES_REQUEST
 // (pas de multi-msg, évite le bug TB 4.3 — cf. memory feedback-tbel-quirks).
 //
@@ -10,15 +10,20 @@
 
 var attrs = {};
 
-// --- Top-level (5) ---
-if (msg.id     != null) attrs.id = msg.id;
-if (msg.rel    != null) attrs.rel = msg.rel;
-if (msg.type   != null) attrs.type = msg.type;
-if (msg.nHp    != null) attrs.nHp = msg.nHp;
-if (msg.relCm2 != null) attrs.relCm2 = msg.relCm2;
+// --- Top-level (6) ---
+if (msg.id      != null) attrs.id = msg.id;
+if (msg.rel     != null) attrs.rel = msg.rel;
+if (msg.type    != null) attrs.type = msg.type;
+if (msg.nHp     != null) attrs.nHp = msg.nHp;
+if (msg.relCm2  != null) attrs.relCm2 = msg.relCm2;
+if (msg.nbPumpM != null) attrs.nbPumpM = msg.nbPumpM;  // nb pompes module (firmware 2026-06-12)
 
-// --- dhw.tSet (1) ---
-if (msg.dhw != null && msg.dhw.tSet != null) attrs.dhw_tSet = msg.dhw.tSet;
+// --- dhw : tSet + compteurs pompes echangeur (3) ---
+if (msg.dhw != null) {
+  if (msg.dhw.tSet       != null) attrs.dhw_tSet = msg.dhw.tSet;
+  if (msg.dhw.nbPumpPrim != null) attrs.dhw_nbPumpPrim = msg.dhw.nbPumpPrim;
+  if (msg.dhw.nbPumpSec  != null) attrs.dhw_nbPumpSec = msg.dhw.nbPumpSec;
+}
 
 // --- heat consignes + dates été (9) ---
 if (msg.heat != null) {
