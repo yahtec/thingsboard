@@ -219,9 +219,9 @@ var html = '<div class="u-root">'+
   '<div class="u-scroll">'+
     '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">Départ chauffage</div>'+
     '<div class="u-tl" id="u-timeline">'+buildTimelineBar()+'</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start">'+
-      '<div class="u-card" style="flex:1 1 320px;min-width:280px;max-width:480px;padding:12px 14px"><div id="u-calo"></div><div id="u-err-caloinfo"></div></div>'+
-      '<div style="flex:1 1 360px;min-width:300px;display:flex;flex-direction:column">'+chartCard(HEAT_CHART)+'</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;flex:1 1 auto;min-height:0">'+
+      '<div class="u-card" style="flex:1 1 320px;min-width:280px;max-width:480px;padding:12px 14px;align-self:flex-start"><div id="u-calo"></div><div id="u-err-caloinfo"></div></div>'+
+      '<div style="flex:1 1 360px;min-width:300px;display:flex;min-height:320px">'+chartCard(HEAT_CHART)+'</div>'+
     '</div>'+
   '</div></div>';
 
