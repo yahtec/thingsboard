@@ -221,7 +221,7 @@ var html = '<div class="u-root">'+
     '<div class="u-tl" id="u-timeline">'+buildTimelineBar()+'</div>'+
     '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start">'+
       '<div class="u-card" style="flex:1 1 320px;min-width:280px;max-width:420px;padding:12px 14px"><div id="u-calo"></div><div id="u-err-caloinfo"></div></div>'+
-      '<div style="flex:2 1 520px;min-width:320px;display:flex;flex-direction:column;height:440px">'+chartCard(HEAT_CHART)+'</div>'+
+      '<div style="flex:2 1 520px;min-width:320px;display:flex;flex-direction:column;height:528px">'+chartCard(HEAT_CHART)+'</div>'+
     '</div>'+
   '</div></div>';
 
@@ -964,7 +964,7 @@ function caloRowHtml(label, val, unit, uVal){
   var disp, udisp=''; var n=Number(uVal); if(isNaN(n)) n=parseInt(String(uVal),16);
   var spec = n ? CALO_UNITS[n] : null;
   if(spec){ var v=parseFloat(val); disp = isBad(v) ? '--' : (v*spec.m).toFixed(spec.d); udisp=spec.u; }
-  else { disp = fv(val, unit||'', 1); if(n) udisp='u:0x'+n.toString(16).toUpperCase(); }
+  else { disp = fv(val, '', 1); udisp = (unit||'').replace(/^\s+/,''); if(!udisp && n) udisp='u:0x'+n.toString(16).toUpperCase(); }
   return '<tr>'+
     '<td style="font-size:14px;color:#666;text-transform:uppercase;letter-spacing:0.3px;padding:5px 8px 5px 0;border-bottom:1px solid #eee">'+label+'</td>'+
     '<td style="font-size:18px;font-weight:bold;color:#222;text-align:right;white-space:nowrap;padding:5px 8px;border-bottom:1px solid #eee">'+disp+'</td>'+
