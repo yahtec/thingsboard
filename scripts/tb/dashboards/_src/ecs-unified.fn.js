@@ -634,7 +634,15 @@ function renderInfo(latestFlat) {
       el.innerHTML = '<div class="u-card" style="grid-column:1/-1;padding:24px;text-align:center;color:#888;font-size:14px">Pas de module ECS sur cette installation</div>';
       return;
     }
-    if (ch) ch.style.display = 'flex';
+    if (ch && ch.style.display === 'none') {
+      // transition masque -> visible (type 0/1 -> 2/3 en cours de session) :
+      // la courbe a ete dessinee avec un conteneur de taille nulle (viewBox 320x180
+      // etire) -> redessiner une fois le conteneur visible et mesure.
+      ch.style.display = 'flex';
+      setTimeout(function(){ if (window.__tbEcsUnified && window.__tbEcsUnified.refetch) window.__tbEcsUnified.refetch(); }, 50);
+    } else if (ch) {
+      ch.style.display = 'flex';
+    }
     el.innerHTML = pumpsInfo(latestFlat);
   });
 }
@@ -1031,8 +1039,8 @@ function pumpsInfo(e) {
   // leur compteur est nbPumpM (racine), sinon dhw_nbPumpPrim.
   var prim = (MODULE_TYPE === 2)
     ? [['Pompe 1 module', 'pump1M_'], ['Pompe 2 module', 'pump2M_']]
-    : [['Pompe primaire échangeur 1', 'dhw_pump1_'], ['Pompe primaire échangeur 2', 'dhw_pump2_']];
-  var sec = [['Pompe secondaire échangeur 1', 'dhw_pump3_'], ['Pompe secondaire échangeur 2', 'dhw_pump4_']];
+    : [['Pompe primaire 1', 'dhw_pump1_'], ['Pompe primaire 2', 'dhw_pump2_']];
+  var sec = [['Pompe secondaire 1', 'dhw_pump3_'], ['Pompe secondaire 2', 'dhw_pump4_']];
   var nbPrim = pumpCount(e, (MODULE_TYPE === 2) ? 'nbPumpM' : 'dhw_nbPumpPrim');
   var nbSec  = pumpCount(e, 'dhw_nbPumpSec');
   var h = '';
