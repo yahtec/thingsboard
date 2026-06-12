@@ -81,8 +81,11 @@ plausibles observées : dP 5.8, qe 3.1 m³/h, time 330 h sur pump2M de 262300100
 
 **Présence pump2/pump4 et pump2M (provisoire)** : tableau affiché si au moins un
 des 5 champs est non nul sur la fenêtre courante. L'automate enverra prochainement
-des clés dédiées de présence → ce critère sera remplacé par ces clés quand elles
-existeront (changement localisé dans une fonction `pumpPresent()`).
+des clés de présence dédiées dans le payload : ce sont des **paramètres statiques**,
+figés à la mise en service (modifiés uniquement sur demande client, ex. ajout d'une
+pompe) → il suffira de les lire dans le dernier pac_v2 reçu, sans logique de fenêtre.
+Le critère est isolé dans une fonction `pumpPresent()` pour que la bascule soit un
+changement d'une seule fonction.
 
 ## Hors périmètre
 
