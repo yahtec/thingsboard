@@ -29,7 +29,8 @@ Briques **réutilisées telles quelles** de `unified.fn.js` :
 - moteur `renderChart(cfg, seriesData, win, evt)` (Fritsch-Carlson, multi-axe, légende, tooltip, `isBadChart`) ;
 - `fetchEvt` + `__EVT_RECTS` (marqueurs défaut) ;
 - la barre **timeline + rétroview** (`buildTimelineBar`/`wireTimelineBar`, picker `window.__tbvPicker`, gating
-  `TENANT_ADMIN`/`SYS_ADMIN`/`is_admin`/`access_retroview`, curseur zoom inversé 100%↔5%) ;
+  `TENANT_ADMIN`/`SYS_ADMIN`/`is_admin`/`access_retroview`). **Curseur zoom inversé : 100 % à GAUCHE, 5 % à
+  DROITE** — repris à l'identique de la PAC (`transform:scaleX(-1)` + libellés permutés), donc hérité tel quel ;
 - `infoTable(rows, lblPx, valPx)`, `safe(tag, fn)`, `wireResponsiveGrid`, cleanup `window.__tbHeatUnified`
   (namespace distinct de `__tbPacUnified` pour cohabiter sans collision).
 
