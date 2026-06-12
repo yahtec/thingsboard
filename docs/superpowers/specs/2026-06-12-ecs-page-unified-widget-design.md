@@ -13,7 +13,7 @@ ECS + tableaux des pompes, accessible depuis la carte « Module ECS » de l'éta
 ## Architecture (approche A — clone du pattern heat-unified)
 
 - Nouvel état **`ecs`** (« Eau chaude sanitaire »), `autoFillHeight`, contenant **un
-  seul widget markdown** id `a1b2c3d4-0720-47aa-9aa9-cafe00000001`.
+  seul widget markdown** id `a1b2c3d4-0720-4000-a000-000000000001`.
 - Source : `scripts/tb/dashboards/_src/ecs-unified.fn.js` (+ `ecs-unified.css`),
   dérivée de `heat-unified.fn.js`, namespace `window.__tbEcsUnified`.
 - Déploiement REST pur (pas de rebuild fork) : `deploy-ecs-widget.py` (modèle
@@ -49,7 +49,8 @@ Même barre timeline/rétroview/zoom que les autres pages (clés sessionStorage
 Le flatten copie les scalaires top-level tels quels → résolveur
 `v = flat.tInM !== undefined ? flat.tInM : flat.TinM`.
 
-Convention existante conservée : valeurs ≤ −99 ignorées.
+Convention existante conservée : valeurs sentinelles ignorées (seuil moteur ≤ −45,
+qui attrape aussi le −47.8 firmware et la sentinelle interne −99.9).
 
 ## Tableaux pompes
 
