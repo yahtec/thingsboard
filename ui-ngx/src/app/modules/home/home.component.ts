@@ -43,8 +43,8 @@ import { AuthService } from '@core/auth/auth.service';
 const YAHTEC_DASHBOARD_ID = '0964da30-3e56-11f1-bbfe-e1395562cba0';
 // Yahtec : dashboard "Supervision flotte" (admin only : TENANT_ADMIN ou is_admin=true)
 const YAHTEC_SUPERVISION_ID = '4aa4ccd0-422a-11f1-bbfe-e1395562cba0';
-type YahtecState = 'menu' | 'default' | 'donnees_HP1' | 'depart_chauffage' | 'historique'
-                 | 'fault_diagnostic' | 'configuration' | 'profil'
+type YahtecState = 'menu' | 'default' | 'donnees_HP1' | 'depart_chauffage' | 'ecs'
+                 | 'historique' | 'fault_diagnostic' | 'configuration' | 'profil'
                  | 'notifications_admin';
 
 @Component({
@@ -204,6 +204,7 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
     switch (this.yahtecStateId) {
       case 'donnees_HP1':
       case 'depart_chauffage':
+      case 'ecs':
       case 'historique':
       case 'configuration':
       case 'profil':
@@ -224,13 +225,13 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
   }
   get yahtecShowDefaut(): boolean {
     if (!this.yahtecOnDashboard) return false;
-    // Defaut visible sur default/donnees_HP1/depart_chauffage/configuration (pas sur historique/fault_diag/menu)
-    return ['default', 'donnees_HP1', 'depart_chauffage', 'configuration'].includes(this.yahtecStateId);
+    // Defaut visible sur default/donnees_HP1/depart_chauffage/ecs/configuration (pas sur historique/fault_diag/menu)
+    return ['default', 'donnees_HP1', 'depart_chauffage', 'ecs', 'configuration'].includes(this.yahtecStateId);
   }
   get yahtecShowParam(): boolean {
     if (!this.yahtecOnDashboard) return false;
     if (!this.yahtecCanAccessComptes) return false; // admin only (configuration = admin)
-    return ['default', 'donnees_HP1', 'depart_chauffage', 'historique', 'fault_diagnostic'].includes(this.yahtecStateId);
+    return ['default', 'donnees_HP1', 'depart_chauffage', 'ecs', 'historique', 'fault_diagnostic'].includes(this.yahtecStateId);
   }
   get yahtecShowRetour(): boolean {
     return this.yahtecOnDashboard && !!this.yahtecRetourTarget;
