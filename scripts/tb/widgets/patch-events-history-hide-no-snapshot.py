@@ -102,7 +102,7 @@ self._probeSnapshots = function() {
         else if (ds && ds.entity && ds.entity.id) devId = ds.entity.id.id;
     } catch(_){}
     var tok = localStorage.getItem('jwt_token');
-    if (!devId || !tok) { self._snapTsList = null; self._render(); return; }
+    if (!devId || !tok) { self._probeRange = null; self._snapTsList = null; return; }
     var url = '/api/plugins/telemetry/DEVICE/' + devId + '/values/timeseries?keys=' +
               SNAP_PROBE_KEYS.join(',') + '&startTs=' + minTs + '&endTs=' + maxTs +
               '&limit=1000&agg=NONE';
@@ -110,18 +110,28 @@ self._probeSnapshots = function() {
       .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
       .then(function(data){
           if (self._probeRange !== rangeKey) return; // fenetre changee entre-temps
-          var seen = {}, list = [];
+          var seen = {}, list = [], truncated = false;
           SNAP_PROBE_KEYS.forEach(function(k){
-              (data[k] || []).forEach(function(p){
+              var arr = data[k] || [];
+              if (arr.length >= 1000) truncated = true;
+              arr.forEach(function(p){
                   if (!seen[p.ts]) { seen[p.ts] = 1; list.push(p.ts); }
               });
           });
+          if (truncated) {
+              // limite TB atteinte : liste incomplete -> repli statique
+              // (on prefere des icones en trop que des icones masquees a tort)
+              self._snapTsList = null;
+              self._render();
+              return;
+          }
           list.sort(function(a,b){ return a - b; });
           self._snapTsList = list;
           self._render();
       })
       .catch(function(){
           if (self._probeRange !== rangeKey) return;
+          self._probeRange = null; // invalide le cache -> retry au prochain onDataUpdated
           self._snapTsList = null; // repli : regle statique seule
           self._render();
       });
