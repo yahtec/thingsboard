@@ -621,6 +621,14 @@ function startSharedLoop() {
   window.__tbEcsUnified.timer = setInterval(function(){ fetchInfo(fetchCharts); }, 30000);
 }
 function renderCharts(seriesData, win, evt) {
+  // onResize (appele par le ResizeObserver de wireResponsiveGrid) redessine le
+  // chart avec les dernieres donnees : sans ca le SVG gardait son viewBox perime
+  // pendant le resize -> preserveAspectRatio "meet" letterboxe -> plot ecrase
+  // jusqu'au tick 30s. renderChart remplace proprement son listener mousemove
+  // (cf. L[cfg.id]) donc pas de fuite a chaque resize.
+  window.__tbEcsUnified.onResize = function(){
+    safe('ecs', function(){ renderChart(activeEcsChart(), seriesData, win, evt); });
+  };
   safe('ecs', function(){ renderChart(activeEcsChart(), seriesData, win, evt); });
 }
 function renderInfo(latestFlat) {
