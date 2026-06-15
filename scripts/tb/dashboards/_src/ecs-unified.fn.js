@@ -631,7 +631,7 @@ function renderInfo(latestFlat) {
     if (MODULE_TYPE === 0 || MODULE_TYPE === 1) {
       // garde spec : pas de module ECS sur cette installation
       if (ch) ch.style.display = 'none';
-      el.innerHTML = '<div class="u-card" style="grid-column:1/-1;padding:24px;text-align:center;color:#888;font-size:14px">Pas de module ECS sur cette installation</div>';
+      el.innerHTML = '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:6px;grid-column:1/-1;padding:24px;text-align:center;color:#888;font-size:14px">Pas de module ECS sur cette installation</div>';
       return;
     }
     if (ch && ch.style.display === 'none') {
@@ -1029,7 +1029,11 @@ function pumpTable(title, e, pfx) {
       '<td style="font-size:18px;font-weight:bold;color:#222;text-align:right;white-space:nowrap;padding:5px 0;border-bottom:1px solid #eee">'+fv(f[1]==='time' ? tH(e[pfx+f[1]]) : e[pfx+f[1]], f[2], f[3])+'</td>'+
       '</tr>';
   });
-  return '<div class="u-card" style="padding:12px 14px">'+
+  // Styles inline (pas la classe .u-card) : le markdownCss est scope par
+  // l'encapsulation Angular (.u-card[_ngcontent-...]) qui ne matche QUE le HTML
+  // statique ; ce contenu injecte dynamiquement via innerHTML n'a pas l'attribut
+  // _ngcontent -> la classe ne s'applique pas. Inline = robuste (cf. lignes/titre).
+  return '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:12px 14px">'+
     '<div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#333;padding-bottom:6px;border-bottom:1px solid #e0e0e0;margin-bottom:8px">'+title+'</div>'+
     '<table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody></table></div>';
 }
