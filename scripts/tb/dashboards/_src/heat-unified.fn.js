@@ -601,6 +601,13 @@ function startSharedLoop() {
   window.__tbHeatUnified.timer = setInterval(function(){ fetchCharts(); fetchInfo(); }, 30000);
 }
 function renderCharts(seriesData, win, evt) {
+  // onResize (ResizeObserver de wireResponsiveGrid) : redessine au resize avec les
+  // dernieres donnees, sinon le SVG garde son viewBox perime -> preserveAspectRatio
+  // meet letterboxe -> plot ecrase jusqu'au tick 30s. Listener mousemove remplace
+  // proprement (L[cfg.id]) donc pas de fuite.
+  window.__tbHeatUnified.onResize = function(){
+    safe('heat', function(){ renderChart(HEAT_CHART, seriesData, win, evt); });
+  };
   safe('heat', function(){ renderChart(HEAT_CHART, seriesData, win, evt); });
 }
 function renderInfo(latestFlat) {

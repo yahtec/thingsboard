@@ -628,6 +628,13 @@ function startSharedLoop() {
   window.__tbPacUnified.timer = setInterval(function(){ fetchCharts(); fetchInfo(); }, 30000);
 }
 function renderCharts(seriesData, win, evt) {
+  // onResize (ResizeObserver de wireResponsiveGrid) : redessine TOUS les charts au
+  // resize avec les dernieres donnees, sinon le SVG garde son viewBox perime ->
+  // preserveAspectRatio meet letterboxe -> plot ecrase jusqu'au tick 30s. Chaque
+  // chart remplace proprement son listener mousemove (L[cfg.id]) donc pas de fuite.
+  window.__tbPacUnified.onResize = function(){
+    CHARTS.concat(CHARTS_BOIL).forEach(function(c){ safe(c.id, function(){ renderChart(c, seriesData, win, evt); }); });
+  };
   CHARTS.concat(CHARTS_BOIL).forEach(function(c){ safe(c.id, function(){ renderChart(c, seriesData, win, evt); }); });
 }
 function renderInfo(latestFlat) {
