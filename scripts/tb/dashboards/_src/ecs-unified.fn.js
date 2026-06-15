@@ -228,7 +228,7 @@ var html = '<div class="u-root">'+
     '<div style="font-size:16px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px">Eau chaude sanitaire</div>'+
     '<div class="u-tl" id="u-timeline">'+buildTimelineBar()+'</div>'+
     '<div id="u-chartwrap" style="flex:0 0 528px;display:flex;flex-direction:column;height:528px">'+chartCard(ECS_CHART)+'</div>'+
-    '<div class="u-grid" id="u-pumps" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;max-width:720px"></div>'+
+    '<div class="u-grid" id="u-pumps" style="display:grid;grid-template-columns:repeat(4, 1fr);gap:12px;margin-top:12px"></div>'+
   '</div></div>';
 
 // =====================================================================================
@@ -237,7 +237,7 @@ var html = '<div class="u-root">'+
 function wireResponsiveGrid(){
   var grids = document.querySelectorAll('.u-grid');
   function apply(){ var w = (document.querySelector('.u-scroll')||{}).clientWidth || 1000;
-    var cols = w < 600 ? '1fr' : '1fr 1fr';
+    var cols = w < 600 ? '1fr' : (w < 850 ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)');
     grids.forEach(function(g){ g.style.gridTemplateColumns = cols; }); if(window.__tbEcsUnified.onResize) window.__tbEcsUnified.onResize(); }
   apply();
   var ro = (typeof ResizeObserver !== 'undefined') ? new ResizeObserver(apply) : null;
