@@ -22,7 +22,8 @@ $ProjectRoot = $PSScriptRoot
 $SshHost     = '10.77.0.74'
 $SshUser     = 'root'
 $RemoteJar   = '/usr/share/thingsboard/bin/thingsboard.jar'
-$LocalJar    = Join-Path $ProjectRoot 'application\target\thingsboard-4.3.1.1-boot.jar'
+$TbVersion   = ([xml](Get-Content (Join-Path $ProjectRoot 'pom.xml'))).project.version
+$LocalJar    = Join-Path $ProjectRoot "application\target\thingsboard-$TbVersion-boot.jar"
 $SshKey      = "$env:USERPROFILE\.ssh\yahtec-ota"
 
 # Common SSH options : batch mode (no prompt), accept host key, key path.

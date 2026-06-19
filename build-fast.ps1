@@ -11,7 +11,8 @@
 #                                  après une modif dans common/* ou dao/.
 #
 # Le boot JAR est produit à :
-#   application/target/thingsboard-4.3.1.1-boot.jar
+#   application/target/thingsboard-<version>-boot.jar
+#   (la version est lue dynamiquement depuis pom.xml racine)
 
 param(
     [switch]$Full
@@ -47,7 +48,8 @@ if ($Full) {
 }
 
 $dur = (Get-Date) - $start
-$boot = "application/target/thingsboard-4.3.1.1-boot.jar"
+$tbVersion = ([xml](Get-Content "$PSScriptRoot\pom.xml")).project.version
+$boot = "application/target/thingsboard-$tbVersion-boot.jar"
 if (Test-Path $boot) {
     $size = [math]::Round((Get-Item $boot).Length / 1MB, 1)
     Write-Output ""
