@@ -33,7 +33,12 @@ $SshOpts = @(
     '-o', 'BatchMode=yes',
     '-o', 'StrictHostKeyChecking=no',
     '-o', 'UserKnownHostsFile=NUL',
-    '-o', 'ConnectTimeout=15'
+    '-o', 'ConnectTimeout=15',
+    # LogLevel=ERROR silences ssh's "Warning: Permanently added ... known hosts"
+    # (emitted on every call because UserKnownHostsFile=NUL). In PowerShell 5.1 that
+    # stderr line becomes an ErrorRecord that trips $ErrorActionPreference=Stop even
+    # on a successful connection — which used to abort the connectivity test below.
+    '-o', 'LogLevel=ERROR'
 )
 
 if (-not (Test-Path $SshKey)) { throw "Missing SSH key: $SshKey" }
@@ -58,8 +63,14 @@ $jarTime   = (Get-Item $LocalJar).LastWriteTime
 
 Write-Host ''
 Write-Host '==> Testing SSH connectivity...' -ForegroundColor Cyan
-& ssh @SshOpts "$SshUser@$SshHost" 'echo SSH_OK' | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "SSH to $SshUser@$SshHost failed. Check key, network, and remote authorized_keys." }
+# Relax EAP around the native call and check exit code + stdout, so any residual
+# ssh stderr can't terminate the script on an otherwise-successful connection.
+$prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$sshTest = & ssh @SshOpts "$SshUser@$SshHost" 'echo SSH_OK' 2>&1
+$ErrorActionPreference = $prevEAP
+if ($LASTEXITCODE -ne 0 -or "$sshTest" -notmatch 'SSH_OK') {
+    throw "SSH to $SshUser@$SshHost failed. Check key, network, and remote authorized_keys.`n$sshTest"
+}
 
 Write-Host "==> Uploading $jarSizeMB MB (built $jarTime)" -ForegroundColor Cyan
 $remoteTmp = "$RemoteJar.upload"
