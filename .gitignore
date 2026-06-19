@@ -44,3 +44,5 @@ deploy.ps1
 scripts/server/__pycache__/
 # Yahtec : notes internes hors git (checklists, snippets, etc.)
 notes/
+# Yahtec : plans/specs/notes superpowers (artefacts IA, hors appli TB)
+docs/superpowers/
