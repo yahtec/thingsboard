@@ -36,6 +36,7 @@
             "aot": true,
             "assets": [
               "src/thingsboard.ico",
+              "src/tsmart.ico",
               "src/assets",
               {
                 "glob": "*.svg",

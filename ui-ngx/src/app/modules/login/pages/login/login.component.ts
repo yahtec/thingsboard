@@ -35,6 +35,7 @@ export class LoginComponent extends PageComponent implements OnInit {
 
   passwordViolation = false;
   isLoading = false;
+  hidePassword = true;
 
   loginFormGroup = this.fb.group({
     username: ['', [Validators.required, validateEmail]],

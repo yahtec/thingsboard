@@ -23,10 +23,97 @@
     margin-top: 36px;
     margin-bottom: 76px;
     background-color: #eee;
-    --mat-card-elevated-container-elevation: none;
+    // Relief : ombre douce sur la carte (comme la maquette TSmart).
+    .mat-mdc-card {
+      box-shadow: 0 6px 28px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
     .tb-login-form {
       @media #{$mat-gt-xs} {
-        width: 480px !important;
+        width: 360px !important;
+      }
+
+      // Champs façon design-system TSmart (composant TextField) :
+      // label gris AU-DESSUS, fond gris clair, soulignement 2px (rouge focus/défaut), carré.
+      .tb-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 16px;
+
+        .tb-field-label {
+          font-size: 12px;
+          font-weight: 500;
+          letter-spacing: 0.02em;
+          color: rgba(0, 0, 0, 0.6);
+        }
+
+        .tb-field-box {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          height: 44px;
+          padding: 0 12px;
+          background: #f5f5f5;
+          border-radius: 0;
+          border-bottom: 2px solid rgba(0, 0, 0, 0.24);
+          transition: border-bottom-color .2s;
+
+          .tb-field-icon {
+            font-size: 20px;
+            width: 20px;
+            height: 20px;
+            color: rgba(0, 0, 0, 0.6);
+          }
+
+          .tb-field-input {
+            flex: 1;
+            min-width: 0;
+            border: none;
+            outline: none;
+            background: transparent;
+            font-family: inherit;
+            font-size: 14px;
+            color: rgba(0, 0, 0, 0.87);
+
+            &:-webkit-autofill {
+              -webkit-box-shadow: 0 0 0 1000px #f5f5f5 inset;
+              -webkit-text-fill-color: rgba(0, 0, 0, 0.87);
+            }
+          }
+
+          .tb-field-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            background: transparent;
+            padding: 0;
+            cursor: pointer;
+            color: rgba(0, 0, 0, 0.6);
+
+            mat-icon {
+              font-size: 20px;
+              width: 20px;
+              height: 20px;
+            }
+          }
+        }
+
+        &:focus-within {
+          .tb-field-label { color: $tb-primary-color; }
+          .tb-field-box { border-bottom-color: $tb-primary-color; }
+        }
+
+        &.tb-field--error {
+          .tb-field-label { color: $tb-signal-red; }
+          .tb-field-box { border-bottom-color: $tb-signal-red; }
+        }
+
+        .tb-field-error {
+          font-size: 12px;
+          letter-spacing: 0.02em;
+          color: $tb-signal-red;
+        }
       }
 
       .forgot-password {
@@ -36,6 +123,7 @@
 
       .tb-action-button{
         margin: 20px 0 16px;
+        text-transform: uppercase;
       }
     }
 
