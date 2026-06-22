@@ -15,12 +15,12 @@
     limitations under the License.
 
 -->
-<div class="tb-login-content mat-app-background tb-dark flex flex-1 items-center justify-center">
+<div class="tb-login-content mat-app-background flex flex-1 items-center justify-center">
   <mat-card appearance="raised" style="max-height: 80vh; overflow-y: auto;">
     <mat-card-content class="!p-6">
       <form class="tb-login-form flex flex-col" [formGroup]="loginFormGroup" (ngSubmit)="login()">
         <div class="flex flex-col items-center justify-start" style="padding: 16px 0;">
-          <tb-logo link="https://thingsboard.io" target="_blank" class="login-logo"></tb-logo>
+          <tb-logo src="assets/yahtec/logo_tsmart_dark.svg" link="https://thingsboard.io" target="_blank" class="login-logo"></tb-logo>
         </div>
         <mat-progress-bar color="warn" mode="indeterminate" *ngIf="isLoading || (isLoading$ | async)">
         </mat-progress-bar>
@@ -56,20 +56,27 @@
               <div class="title !mb-4" translate>login.sign-in-to-your-account</div>
             </div>
           }
-          <mat-form-field class="tb-autofilled" appearance="outline" hideRequiredMarker>
-            <mat-label translate>login.username</mat-label>
-            <input id="username-input" matInput type="email" autofocus formControlName="username" autocomplete="email"/>
-            <mat-icon matPrefix>email</mat-icon>
-            <mat-error *ngIf="loginFormGroup.get('username').invalid">
+          <div class="tb-field" [class.tb-field--error]="loginFormGroup.get('username').touched && loginFormGroup.get('username').invalid">
+            <span class="tb-field-label" translate>login.username</span>
+            <span class="tb-field-box">
+              <mat-icon class="tb-field-icon">email</mat-icon>
+              <input id="username-input" class="tb-field-input" type="email" autofocus formControlName="username" autocomplete="email"/>
+            </span>
+            <span class="tb-field-error" *ngIf="loginFormGroup.get('username').touched && loginFormGroup.get('username').invalid">
               {{ 'login.invalid-email-format' | translate }}
-            </mat-error>
-          </mat-form-field>
-          <mat-form-field class="tb-autofilled" appearance="outline">
-            <mat-label translate>common.password</mat-label>
-            <input id="password-input" matInput type="password" formControlName="password" autocomplete="current-password"/>
-            <tb-toggle-password matSuffix></tb-toggle-password>
-            <mat-icon matPrefix>lock</mat-icon>
-          </mat-form-field>
+            </span>
+          </div>
+          <div class="tb-field">
+            <span class="tb-field-label" translate>common.password</span>
+            <span class="tb-field-box">
+              <mat-icon class="tb-field-icon">lock</mat-icon>
+              <input id="password-input" class="tb-field-input" [type]="hidePassword ? 'password' : 'text'" formControlName="password" autocomplete="current-password"/>
+              <button type="button" class="tb-field-toggle" (click)="hidePassword = !hidePassword"
+                      [attr.aria-label]="hidePassword ? 'Afficher le mot de passe' : 'Masquer le mot de passe'">
+                <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
+              </button>
+            </span>
+          </div>
           <button mat-flat-button color="accent" [disabled]="isLoading || (isLoading$ | async)"
                   class="tb-action-button" type="submit">{{ 'login.sign-in' | translate }}</button>
           <div class="forgot-password flex items-center justify-end gap-5">
