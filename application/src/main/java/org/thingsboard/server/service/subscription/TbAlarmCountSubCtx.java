@@ -21,6 +21,7 @@ import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 import org.thingsboard.server.common.data.id.EntityId;
 import org.thingsboard.server.common.data.page.PageData;
+import org.thingsboard.server.common.data.permission.CustomerScopeMode;
 import org.thingsboard.server.common.data.query.AlarmCountQuery;
 import org.thingsboard.server.common.data.query.EntityData;
 import org.thingsboard.server.common.data.query.EntityDataPageLink;
@@ -32,6 +33,9 @@ import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
 import org.thingsboard.server.dao.entity.EntityService;
 import org.thingsboard.server.dao.model.ModelConstants;
+import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.security.scope.AccessScope;
+import org.thingsboard.server.service.security.scope.AccessScopeService;
 import org.thingsboard.server.service.ws.WebSocketService;
 import org.thingsboard.server.service.ws.WebSocketSessionRef;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmCountUpdate;
@@ -45,6 +49,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQuery> {
 
     private final AlarmService alarmService;
+
+    private final AccessScopeService accessScopeService;
 
     protected final Map<Integer, EntityId> subToEntityIdMap;
 
@@ -68,9 +74,11 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
     public TbAlarmCountSubCtx(String serviceId, WebSocketService wsService,
                               EntityService entityService, TbLocalSubscriptionService localSubscriptionService,
                               AttributesService attributesService, SubscriptionServiceStatistics stats, AlarmService alarmService,
-                              WebSocketSessionRef sessionRef, int cmdId, int maxEntitiesPerAlarmSubscription, int maxAlarmQueriesPerRefreshInterval) {
+                              WebSocketSessionRef sessionRef, int cmdId, int maxEntitiesPerAlarmSubscription, int maxAlarmQueriesPerRefreshInterval,
+                              AccessScopeService accessScopeService) {
         super(serviceId, wsService, entityService, localSubscriptionService, attributesService, stats, sessionRef, cmdId);
         this.alarmService = alarmService;
+        this.accessScopeService = accessScopeService;
         this.subToEntityIdMap = new ConcurrentHashMap<>();
         this.maxEntitiesPerAlarmSubscription = maxEntitiesPerAlarmSubscription;
         this.maxAlarmQueriesPerRefreshInterval = maxAlarmQueriesPerRefreshInterval;
@@ -88,7 +96,7 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
         if (query.getEntityFilter() != null) {
             entitiesIds = new LinkedHashSet<>();
             log.trace("[{}] Fetching data: {}", cmdId, alarmCountInvocationAttempts);
-            PageData<EntityData> data = entityService.findEntityDataByQuery(getTenantId(), getCustomerId(), buildEntityDataQuery());
+            PageData<EntityData> data = findEntityDataScoped();
             entitiesIds.clear();
             tooManyEntities = data.hasNext();
             for (EntityData entityData : data.getData()) {
@@ -131,6 +139,17 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
         EntityDataPageLink edpl = new EntityDataPageLink(maxEntitiesPerAlarmSubscription, 0, null,
                 new EntityDataSortOrder(new EntityKey(EntityKeyType.ENTITY_FIELD, ModelConstants.CREATED_TIME_PROPERTY)));
         return new EntityDataQuery(query.getEntityFilter(), edpl, null, null, query.getKeyFilters());
+    }
+
+    private PageData<EntityData> findEntityDataScoped() {
+        SecurityUser user = sessionRef.getSecurityCtx();
+        AccessScope scope = accessScopeService.resolve(user);
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            return entityService.findEntityDataByQuery(getTenantId(), getCustomerId(), buildEntityDataQuery());
+        }
+        CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE
+                ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
+        return entityService.findEntityDataByQueryScoped(getTenantId(), getCustomerId(), scope.customerUuids(), mode, buildEntityDataQuery());
     }
 
     private void resetInvocationCounter() {

@@ -115,7 +115,7 @@ public class DefaultEntityQueryService implements EntityQueryService {
             return entityService.countEntitiesByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
         }
         CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
-        return entityService.countEntitiesByQueryScoped(securityUser.getTenantId(), scope.customerUuids(), mode, query);
+        return entityService.countEntitiesByQueryScoped(securityUser.getTenantId(), securityUser.getCustomerId(), scope.customerUuids(), mode, query);
     }
 
     @Override
@@ -133,7 +133,22 @@ public class DefaultEntityQueryService implements EntityQueryService {
             return entityService.findEntityDataByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
         }
         CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
-        return entityService.findEntityDataByQueryScoped(securityUser.getTenantId(), scope.customerUuids(), mode, query);
+        return entityService.findEntityDataByQueryScoped(securityUser.getTenantId(), securityUser.getCustomerId(), scope.customerUuids(), mode, query);
+    }
+
+    /**
+     * Route un EntityDataQuery (utilise pour resoudre les entites cibles d'une requete alarme / de
+     * clefs) via le chemin scope correct, comme la couche data. Les chemins non scopes laissaient
+     * fuiter les entites hors-perimetre pour les roles PARTY/STAFF (et cassaient pour un PARTY dont
+     * le customer propre possede un device).
+     */
+    private PageData<EntityData> findEntityDataScoped(SecurityUser securityUser, EntityDataQuery query) {
+        AccessScope scope = accessScopeService.resolve(securityUser);
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            return entityService.findEntityDataByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+        }
+        CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
+        return entityService.findEntityDataByQueryScoped(securityUser.getTenantId(), securityUser.getCustomerId(), scope.customerUuids(), mode, query);
     }
 
     private void resolveDynamicValuesInPredicates(List<KeyFilterPredicate> predicates, SecurityUser user) {
@@ -195,8 +210,7 @@ public class DefaultEntityQueryService implements EntityQueryService {
     @Override
     public PageData<AlarmData> findAlarmDataByQuery(SecurityUser securityUser, AlarmDataQuery query) {
         EntityDataQuery entityDataQuery = this.buildEntityDataQuery(query);
-        PageData<EntityData> entities = entityService.findEntityDataByQuery(securityUser.getTenantId(),
-                securityUser.getCustomerId(), entityDataQuery);
+        PageData<EntityData> entities = findEntityDataScoped(securityUser, entityDataQuery);
         if (entities.getTotalElements() > 0) {
             LinkedHashMap<EntityId, EntityData> entitiesMap = new LinkedHashMap<>();
             for (EntityData entityData : entities.getData()) {
@@ -222,8 +236,7 @@ public class DefaultEntityQueryService implements EntityQueryService {
     public long countAlarmsByQuery(SecurityUser securityUser, AlarmCountQuery query) {
         if (query.getEntityFilter() != null) {
             EntityDataQuery entityDataQuery = this.buildEntityDataQuery(query);
-            PageData<EntityData> entities = entityService.findEntityDataByQuery(securityUser.getTenantId(),
-                    securityUser.getCustomerId(), entityDataQuery);
+            PageData<EntityData> entities = findEntityDataScoped(securityUser, entityDataQuery);
             if (entities.getTotalElements() > 0) {
                 List<EntityId> entityIds = entities.getData().stream().map(EntityData::getEntityId).toList();
                 return alarmService.countAlarmsByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query, entityIds);
@@ -333,7 +346,15 @@ public class DefaultEntityQueryService implements EntityQueryService {
     }
 
     private ListenableFuture<List<EntityId>> findEntityIdsByQueryAsync(SecurityUser securityUser, EntityDataQuery query) {
-        return Futures.transform(entityService.findEntityDataByQueryAsync(securityUser.getTenantId(), securityUser.getCustomerId(), query),
+        AccessScope scope = accessScopeService.resolve(securityUser);
+        ListenableFuture<PageData<EntityData>> pageFuture;
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            pageFuture = entityService.findEntityDataByQueryAsync(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+        } else {
+            CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
+            pageFuture = entityService.findEntityDataByQueryScopedAsync(securityUser.getTenantId(), securityUser.getCustomerId(), scope.customerUuids(), mode, query);
+        }
+        return Futures.transform(pageFuture,
                 page -> page.getData().stream()
                         .map(EntityData::getEntityId)
                         .toList(),
