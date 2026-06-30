@@ -22,6 +22,7 @@ import org.thingsboard.server.common.data.HasTenantId;
 import org.thingsboard.server.common.data.TbResourceInfo;
 import org.thingsboard.server.common.data.User;
 import org.thingsboard.server.common.data.id.ApiKeyId;
+import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.DashboardId;
 import org.thingsboard.server.common.data.id.EntityId;
 import org.thingsboard.server.common.data.id.TbResourceId;
@@ -29,22 +30,47 @@ import org.thingsboard.server.common.data.id.UserId;
 import org.thingsboard.server.common.data.pat.ApiKeyInfo;
 import org.thingsboard.server.common.data.security.Authority;
 import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.security.scope.AccessScopeService;
+import java.util.Set;
 
 @Component
 public class CustomerUserPermissions extends AbstractPermissions {
 
-    public CustomerUserPermissions() {
+    private static final Set<Operation> READ_OPS =
+            Set.of(Operation.READ, Operation.READ_ATTRIBUTES, Operation.READ_TELEMETRY);
+
+    private final AccessScopeService accessScopeService;
+
+    public CustomerUserPermissions(AccessScopeService accessScopeService) {
         super();
-        put(Resource.ALARM, customerAlarmPermissionChecker);
-        put(Resource.ASSET, customerEntityPermissionChecker);
-        put(Resource.DEVICE, customerEntityPermissionChecker);
+        this.accessScopeService = accessScopeService;
+
+        put(Resource.ALARM, new PermissionChecker() {
+            @Override
+            public boolean hasPermission(SecurityUser user, Operation operation, EntityId entityId, HasTenantId entity) {
+                if (!user.getTenantId().equals(entity.getTenantId())) {
+                    return false;
+                }
+                if (!(entity instanceof HasCustomerId)) {
+                    return false;
+                }
+                CustomerId entityCustomerId = ((HasCustomerId) entity).getCustomerId();
+                if (accessScopeService.isReadOnly(user)) {
+                    return READ_OPS.contains(operation) && accessScopeService.canView(user, entityCustomerId);
+                }
+                return accessScopeService.canView(user, entityCustomerId);
+            }
+        });
+
+        put(Resource.ASSET, customerEntityPermissionChecker());
+        put(Resource.DEVICE, customerEntityPermissionChecker());
         put(Resource.CUSTOMER, customerPermissionChecker);
         put(Resource.DASHBOARD, customerDashboardPermissionChecker);
-        put(Resource.ENTITY_VIEW, customerEntityPermissionChecker);
+        put(Resource.ENTITY_VIEW, customerEntityPermissionChecker());
         put(Resource.USER, userPermissionChecker);
         put(Resource.WIDGETS_BUNDLE, widgetsPermissionChecker);
         put(Resource.WIDGET_TYPE, widgetsPermissionChecker);
-        put(Resource.EDGE, customerEntityPermissionChecker);
+        put(Resource.EDGE, customerEntityPermissionChecker());
         put(Resource.RPC, rpcPermissionChecker);
         put(Resource.DEVICE_PROFILE, profilePermissionChecker);
         put(Resource.ASSET_PROFILE, profilePermissionChecker);
@@ -53,40 +79,31 @@ public class CustomerUserPermissions extends AbstractPermissions {
         put(Resource.API_KEY, apiKeysPermissionChecker);
     }
 
-    private static final PermissionChecker customerAlarmPermissionChecker = new PermissionChecker() {
-        @Override
-        public boolean hasPermission(SecurityUser user, Operation operation, EntityId entityId, HasTenantId entity) {
-            if (!user.getTenantId().equals(entity.getTenantId())) {
-                return false;
-            }
-            if (!(entity instanceof HasCustomerId)) {
-                return false;
-            }
-            return user.getCustomerId().equals(((HasCustomerId) entity).getCustomerId());
-        }
-    };
+    private PermissionChecker customerEntityPermissionChecker() {
+        return new PermissionChecker.GenericPermissionChecker(Operation.READ, Operation.READ_CREDENTIALS,
+                Operation.READ_ATTRIBUTES, Operation.READ_TELEMETRY, Operation.RPC_CALL, Operation.CLAIM_DEVICES,
+                Operation.WRITE, Operation.WRITE_ATTRIBUTES, Operation.WRITE_TELEMETRY) {
 
-    private static final PermissionChecker customerEntityPermissionChecker =
-            new PermissionChecker.GenericPermissionChecker(Operation.READ, Operation.READ_CREDENTIALS,
-                    Operation.READ_ATTRIBUTES, Operation.READ_TELEMETRY, Operation.RPC_CALL, Operation.CLAIM_DEVICES,
-                    Operation.WRITE, Operation.WRITE_ATTRIBUTES, Operation.WRITE_TELEMETRY) {
-
-                @Override
-                @SuppressWarnings("unchecked")
-                public boolean hasPermission(SecurityUser user, Operation operation, EntityId entityId, HasTenantId entity) {
-
-                    if (!super.hasPermission(user, operation, entityId, entity)) {
-                        return false;
-                    }
-                    if (!user.getTenantId().equals(entity.getTenantId())) {
-                        return false;
-                    }
-                    if (!(entity instanceof HasCustomerId)) {
-                        return false;
-                    }
-                    return operation.equals(Operation.CLAIM_DEVICES) || user.getCustomerId().equals(((HasCustomerId) entity).getCustomerId());
+            @Override
+            @SuppressWarnings("unchecked")
+            public boolean hasPermission(SecurityUser user, Operation operation, EntityId entityId, HasTenantId entity) {
+                if (!super.hasPermission(user, operation, entityId, entity)) {
+                    return false;
                 }
-            };
+                if (!user.getTenantId().equals(entity.getTenantId())) {
+                    return false;
+                }
+                if (!(entity instanceof HasCustomerId)) {
+                    return false;
+                }
+                CustomerId entityCustomerId = ((HasCustomerId) entity).getCustomerId();
+                if (accessScopeService.isReadOnly(user)) {
+                    return READ_OPS.contains(operation) && accessScopeService.canView(user, entityCustomerId);
+                }
+                return operation.equals(Operation.CLAIM_DEVICES) || accessScopeService.canView(user, entityCustomerId);
+            }
+        };
+    }
 
     private static final PermissionChecker customerPermissionChecker =
             new PermissionChecker.GenericPermissionChecker(Operation.READ, Operation.READ_ATTRIBUTES, Operation.READ_TELEMETRY) {
