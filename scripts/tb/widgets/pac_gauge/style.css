@@ -1,0 +1,23 @@
+.gz-host{height:100%;display:flex;align-items:center;justify-content:center;padding:4px;box-sizing:border-box;font-family:Roboto,Arial,sans-serif}
+.gz-card{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fff;border:none;border-radius:8px;box-shadow:none;padding:10px 10px 12px;box-sizing:border-box;width:100%;max-width:240px}
+.gz-title{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#666;text-align:center}
+
+/* SVG — plafonné pour ne pas remplir toute la colonne */
+.gz-svg{width:100%;height:auto;aspect-ratio:1/1;display:block;max-width:180px}
+
+/* LCD pleine largeur, noir pur */
+.gz-lcd{width:100%;background:#111;border-radius:4px;padding:6px 0;text-align:center}
+.gz-lcd-val{font-family:'Roboto Mono',monospace;font-size:28px;font-weight:700;letter-spacing:.04em;line-height:1;color:#ff3b30}
+.gz-card.bp .gz-lcd-val{color:#29b6f6}
+
+/* Séparateur entre LCD et boîte température */
+.gz-sep{width:100%;height:1px;background:#e0e0e0;margin:2px 0}
+
+/* Boîte température avec bordure */
+.gz-temp-box{width:100%;border:1px solid #e0e0e0;border-radius:4px;background:#fff;padding:5px 8px;text-align:center;box-sizing:border-box}
+.gz-temp-label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.gz-temp-value{font-size:15px;font-weight:700;color:#333}
+
+@media(max-width:600px){
+  .gz-card{max-width:100%}
+}

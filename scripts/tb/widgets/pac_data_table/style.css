@@ -1,0 +1,13 @@
+.pdt-host{height:100%;padding:8px;box-sizing:border-box;font-family:Roboto,Arial,sans-serif}
+.pdt-card{background:#fff;border:none;border-radius:0;box-shadow:none;padding:16px 20px;height:100%;box-sizing:border-box}
+.pdt-card-title{font-size:15px;font-weight:700;text-align:center;color:#222;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #f0f0f0}
+.pdt-rows{display:flex;flex-direction:column}
+.pdt-row{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid rgba(0,0,0,.07);font-size:13px}
+.pdt-row:last-child{border-bottom:none}
+.pdt-label{color:rgba(0,0,0,.6);flex:1}
+.pdt-value{font-weight:700;color:#222;white-space:nowrap;text-align:right}
+.pdt-unit{margin-left:3px;font-weight:700;color:#222}
+@media(max-width:600px){
+  .pdt-card{padding:12px 14px}
+  .pdt-row{font-size:12px}
+}

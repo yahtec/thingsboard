@@ -1,0 +1,20 @@
+.pw-host{height:100%;padding:0!important}
+.pw{display:flex;align-items:center;gap:12px;background:transparent;border:none;box-shadow:none;border-radius:0;padding:6px 2px;height:100%;box-sizing:border-box;font-family:Roboto,Arial,sans-serif;overflow:hidden}
+.pw-l{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;white-space:nowrap}
+.pw-btn{border:1px solid #cfcfcf;background:#fff;color:#444;font-size:13px;font-weight:600;padding:7px 14px;border-radius:4px;cursor:pointer;font-family:inherit}
+.pw-btn:hover{background:#f0f0f0}
+.pw-btn.active{background:#2563eb;color:#fff;border-color:#2563eb}
+.pw-slider{display:flex;align-items:center;gap:8px;flex:1;min-width:140px}
+.pw-pct{font-size:11px;color:#999;white-space:nowrap}
+#pw-rng{flex:1;accent-color:#2563eb;direction:rtl;cursor:pointer}
+.pw-vue{font-size:12px;color:#666;white-space:nowrap}
+.pw-retro{display:inline-flex;align-items:center;gap:6px;border:1px solid #c92929;background:#fff;color:#c92929;font-size:13px;font-weight:600;padding:7px 14px;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.pw-retro:hover{background:#fdecec}.pw-retro.active{background:#c92929;color:#fff}
+.pw-retro svg{width:16px;height:16px;fill:currentColor}
+@media (max-width: 600px) {
+  .pw { flex-wrap: wrap; gap: 6px; padding: 4px 2px; }
+  .pw-slider { min-width: 100%; order: 10; }
+  .pw-vue { font-size: 11px; }
+  .pw-btn { padding: 5px 10px; font-size: 12px; }
+  .pw-retro { padding: 5px 10px; font-size: 12px; }
+}
