@@ -52,6 +52,7 @@ import org.thingsboard.server.common.data.query.EntityViewSearchQueryFilter;
 import org.thingsboard.server.common.data.query.EntityViewTypeFilter;
 import org.thingsboard.server.common.data.query.RelationsQueryFilter;
 import org.thingsboard.server.common.data.query.SingleEntityFilter;
+import org.thingsboard.server.common.data.permission.CustomerScopeMode;
 import org.thingsboard.server.common.data.relation.EntitySearchDirection;
 import org.thingsboard.server.common.data.relation.RelationEntityTypeFilter;
 
@@ -608,6 +609,29 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
 
     private String defaultPermissionQuery(SqlQueryContext ctx) {
         ctx.addUuidParameter("permissions_tenant_id", ctx.getTenantId().getId());
+
+        // Couche Yahtec : scope multi-customer (portefeuilles). UNRESTRICTED = comportement historique.
+        if (ctx.getScopeMode() != null && ctx.getScopeMode() != CustomerScopeMode.UNRESTRICTED
+                && ctx.getEntityType() != EntityType.CUSTOMER
+                && ctx.getEntityType() != EntityType.API_USAGE_STATE
+                && ctx.getEntityType() != EntityType.DASHBOARD) {
+            List<UUID> ids = ctx.getCustomerIds();
+            if (ctx.getScopeMode() == CustomerScopeMode.INCLUDE) {
+                if (ids == null || ids.isEmpty()) {
+                    return "e.tenant_id=:permissions_tenant_id and 1=0"; // deny-by-default
+                }
+                ctx.addUuidListParameter("permissions_customer_ids", ids);
+                return "e.tenant_id=:permissions_tenant_id and e.customer_id in (:permissions_customer_ids)";
+            } else { // EXCLUDE
+                if (ids == null || ids.isEmpty()) {
+                    return "e.tenant_id=:permissions_tenant_id"; // rien d'exclu
+                }
+                ctx.addUuidListParameter("permissions_customer_ids", ids);
+                return "e.tenant_id=:permissions_tenant_id and e.customer_id not in (:permissions_customer_ids)";
+            }
+        }
+
+        // --- comportement historique inchangé ---
         if (ctx.getCustomerId() != null && !ctx.getCustomerId().isNullUid()) {
             ctx.addUuidParameter("permissions_customer_id", ctx.getCustomerId().getId());
             if (ctx.getEntityType() == EntityType.CUSTOMER) {
