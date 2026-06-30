@@ -53,6 +53,10 @@ public final class AccessScope {
         return customers;
     }
 
+    public java.util.List<java.util.UUID> customerUuids() {
+        return customers.stream().map(CustomerId::getId).toList();
+    }
+
     public boolean canView(CustomerId customerId) {
         switch (mode) {
             case UNRESTRICTED:
