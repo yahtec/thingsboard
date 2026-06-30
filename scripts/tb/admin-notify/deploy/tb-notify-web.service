@@ -1,0 +1,16 @@
+[Unit]
+Description=tb-notify admin web app (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/dump/tb-notify
+EnvironmentFile=/home/dump/tb-notify/.env
+ExecStart=/home/dump/tb-notify/.venv/bin/python -m uvicorn webapp:app --host 127.0.0.1 --port 8765 --proxy-headers --forwarded-allow-ips '*'
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/tb-notify-web.log
+StandardError=append:/var/log/tb-notify-web.log
+
+[Install]
+WantedBy=multi-user.target

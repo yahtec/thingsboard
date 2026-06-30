@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><title>Gestion des comptes — TDUO</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+{% include "_base.css" %}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.search-box{flex:1;min-width:240px;display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border:1px solid rgba(0,0,0,.12);background:#fff;box-sizing:border-box}
+.search-box:focus-within{border-color:#c92929}
+.search-box svg{flex:0 0 auto;color:rgba(0,0,0,.6)}
+.search-box input.search{flex:1;min-width:0;border:none;outline:none;background:transparent;font-family:inherit;font-size:14px;height:100%;padding:0;color:rgba(0,0,0,.87)}
+.toolbar .count{color:rgba(0,0,0,.60);font-size:13px}
+.table-wrap{background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 1px 2px rgba(0,0,0,.06);border-radius:0;overflow:hidden}
+table.users{width:100%;border-collapse:collapse;font-size:13px}
+table.users th,table.users td{padding:12px;text-align:left;border-bottom:1px solid rgba(0,0,0,.12);white-space:nowrap}
+table.users th{background:#fff;font-weight:700;color:rgba(0,0,0,.60);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+table.users td{color:rgba(0,0,0,.87)}
+table.users tr:last-child td{border-bottom:0}
+table.users tr:hover td{background:#fdeae8}
+.badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:500}
+.badge.yes{background:#e8f5e9;color:#2e7d32}
+.badge.no{background:#efefef;color:#757575}
+.badge.tenant{background:#f3e5f5;color:#6a1b9a}
+.act{display:inline-flex;gap:10px}
+.act button,.act a{display:inline-flex;background:none;border:0;cursor:pointer;padding:2px;color:rgba(0,0,0,.60);line-height:1;border-radius:0;text-decoration:none}
+.act button:hover,.act a:hover{color:#c92929}
+.act .danger:hover{color:#ED1C24}
+.act svg,.pager .pg-btn svg,.btn svg{display:block;flex:0 0 auto}
+.empty{padding:32px;text-align:center;color:rgba(0,0,0,.60)}
+.pager{display:flex;align-items:center;gap:14px;padding:14px 18px;background:#fff;border-top:1px solid rgba(0,0,0,.12);flex-wrap:wrap;font-size:13px;color:rgba(0,0,0,.60)}
+.pager label{display:flex;gap:6px;align-items:center}
+.pager select{padding:6px 8px;border:none;border-bottom:2px solid rgba(0,0,0,.24);border-radius:0;font-size:13px;background:#f5f5f5;font-family:inherit}
+.pager select:focus{outline:none;border-bottom-color:#c92929}
+.pager .spacer{flex:1}
+.pager .pg-btn{background:#fff;border:1px solid rgba(0,0,0,.24);border-radius:0;width:32px;height:32px;cursor:pointer;font-size:14px;color:rgba(0,0,0,.87);display:inline-flex;align-items:center;justify-content:center}
+.pager .pg-btn:hover:not(:disabled){background:#fdeae8;border-color:#c92929;color:#c92929}
+.pager .pg-btn:disabled{opacity:.35;cursor:default}
+.pager .pg-info{min-width:90px;text-align:center;font-weight:600;color:rgba(0,0,0,.87)}
+tr.filtered-out{display:none}
+tr.paged-out{display:none}
+</style></head><body>
+
+<header>
+  <h1>Gestion des comptes</h1>
+  <span class="who">{{ user.u }}</span>
+</header>
+
+<main>
+  {% if saved %}<div class="flash ok">Modifications enregistrées.</div>{% endif %}
+  {% if deleted %}<div class="flash ok">Compte supprimé.</div>{% endif %}
+  {% if invited %}<div class="flash ok">{{ invited }} invitation(s) envoyée(s).</div>{% endif %}
+  {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+  <div class="banner">
+    <h2>{{ rows|length }} compte(s)</h2>
+    <button type="button" class="btn ghost" onclick="goHome()"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Accueil</button>
+    <a class="btn" href="{{ root }}/invite"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>Inviter</a>
+  </div>
+
+  <div class="toolbar">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 5 1.49-1.5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+      <input type="search" class="search" id="acc-search" placeholder="Rechercher par nom, prénom ou société…" autocomplete="off">
+    </div>
+    <span class="count" id="acc-count"></span>
+  </div>
+
+  <div class="table-wrap">
+    {% if rows %}
+    <table class="users" id="acc-table">
+      <thead><tr>
+        <th>Nom</th><th>Prénom</th><th>Email</th><th>Société</th>
+        <th>Admin</th><th>Dernière connexion</th><th>Date de création</th>
+        <th>Expiration</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+      <tr data-search="{{ (r.last_name ~ ' ' ~ r.first_name ~ ' ' ~ r.societe ~ ' ' ~ r.email) | lower }}">
+        <td>{{ r.last_name }}</td>
+        <td>{{ r.first_name }}</td>
+        <td>{{ r.email }}</td>
+        <td>{{ r.societe }}</td>
+        <td>
+          {% if r.is_tenant_admin %}<span class="badge tenant">Tenant</span>
+          {% elif r.is_admin %}<span class="badge yes">Oui</span>
+          {% else %}<span class="badge no">Non</span>{% endif %}
+        </td>
+        <td>{{ r.last_login_ts | ts_to_date if r.last_login_ts else '—' }}</td>
+        <td>{{ r.created_ts | ts_to_date if r.created_ts else '—' }}</td>
+        <td>{{ r.expiration_ts | ts_to_date_only if r.expiration_ts else '—' }}</td>
+        <td>
+          <div class="act">
+            <a href="{{ root }}/accounts/{{ r.id }}/edit" title="Voir / modifier"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19.14 12.94a7.5 7.5 0 0 0 .05-.94 7.5 7.5 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.61l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7 7 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.74 8.87a.5.5 0 0 0 .12.61l2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.61l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96a7 7 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7 7 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.61zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg></a>
+            <form method="post" action="{{ root }}/accounts/{{ r.id }}/delete" style="display:inline" onsubmit="return confirm('Supprimer définitivement {{ r.email }} ?');">
+              <button type="submit" class="danger" title="Supprimer"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="pager">
+      <label>Comptes par page
+        <select id="pgSize">
+          <option value="10">10</option>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="all">tous</option>
+        </select>
+      </label>
+      <span class="spacer"></span>
+      <button type="button" class="pg-btn" id="pgFirst" title="Première page"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M18.41 16.59 13.82 12l4.59-4.59L17 6l-6 6 6 6zM6 6h2v12H6z"/></svg></button>
+      <button type="button" class="pg-btn" id="pgPrev" title="Page précédente"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></button>
+      <span class="pg-info" id="pgInfo">1 / 1</span>
+      <button type="button" class="pg-btn" id="pgNext" title="Page suivante"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
+      <button type="button" class="pg-btn" id="pgLast" title="Dernière page"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5.59 7.41 10.18 12l-4.59 4.59L7 18l6-6-6-6zM16 6h2v12h-2z"/></svg></button>
+    </div>
+    {% else %}
+    <div class="empty">Aucun compte.</div>
+    {% endif %}
+  </div>
+</main>
+
+<script>
+function goHome(){
+  try { if (window.top !== window.self) { window.top.location = "{{ tb_home }}/home"; return; } } catch(e){}
+  window.location = "{{ tb_home }}/home";
+}
+
+(function(){
+  var table = document.getElementById('acc-table');
+  if (!table) return;
+  var allRows = Array.from(table.querySelectorAll('tbody tr'));
+  var search = document.getElementById('acc-search');
+  var countEl = document.getElementById('acc-count');
+  var pgSize = document.getElementById('pgSize');
+  var pgInfo = document.getElementById('pgInfo');
+  var pgFirst = document.getElementById('pgFirst');
+  var pgPrev = document.getElementById('pgPrev');
+  var pgNext = document.getElementById('pgNext');
+  var pgLast = document.getElementById('pgLast');
+
+  // Persistance des choix dans localStorage.
+  try { pgSize.value = localStorage.getItem('tduo.accounts.pageSize') || '25'; } catch(_) {}
+  var page = 0;
+
+  function filteredRows(){
+    var q = (search.value || '').toLowerCase().trim();
+    var tokens = q.split(/\s+/).filter(Boolean);
+    return allRows.filter(function(r){
+      var hay = r.getAttribute('data-search') || '';
+      return tokens.every(function(t){ return hay.indexOf(t) !== -1; });
+    });
+  }
+
+  function applyView(){
+    var filtered = filteredRows();
+    var sz = pgSize.value === 'all' ? filtered.length : parseInt(pgSize.value, 10) || 25;
+    var totalPages = Math.max(1, Math.ceil(filtered.length / sz));
+    if (page >= totalPages) page = totalPages - 1;
+    if (page < 0) page = 0;
+
+    // Reset visibility
+    allRows.forEach(function(r){ r.classList.add('filtered-out'); r.classList.remove('paged-out'); });
+    var start = page * sz;
+    var end = start + sz;
+    filtered.forEach(function(r, i){
+      r.classList.remove('filtered-out');
+      if (i < start || i >= end) r.classList.add('paged-out');
+    });
+
+    pgInfo.textContent = (page + 1) + ' / ' + totalPages;
+    pgFirst.disabled = page === 0;
+    pgPrev.disabled = page === 0;
+    pgNext.disabled = page >= totalPages - 1;
+    pgLast.disabled = page >= totalPages - 1;
+    countEl.textContent = filtered.length + ' / ' + allRows.length + ' compte(s)';
+  }
+
+  search.addEventListener('input', function(){ page = 0; applyView(); });
+  pgSize.addEventListener('change', function(){
+    try { localStorage.setItem('tduo.accounts.pageSize', pgSize.value); } catch(_) {}
+    page = 0; applyView();
+  });
+  pgFirst.addEventListener('click', function(){ page = 0; applyView(); });
+  pgPrev.addEventListener('click', function(){ page--; applyView(); });
+  pgNext.addEventListener('click', function(){ page++; applyView(); });
+  pgLast.addEventListener('click', function(){ page = 1e9; applyView(); });
+
+  applyView();
+})();
+</script>
+</body></html>

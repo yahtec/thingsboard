@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><title>Invitation temporaire — TDUO</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+{% include "_base.css" %}
+.submit-bar{margin-top:18px;display:flex;justify-content:flex-end}
+</style></head><body>
+
+<header>
+  <h1>Invitation temporaire</h1>
+  <span class="who">{{ user.u }}</span>
+  <a href="{{ root }}/logout">Déconnexion</a>
+</header>
+
+<main>
+  <div class="breadcrumb">
+    <a href="{{ root }}/">← Gestion des comptes</a>
+    <span>·</span>
+    <a href="{{ root }}/invite">← Invitation standard</a>
+  </div>
+
+  <form method="post" action="{{ root }}/invite-temp">
+
+    <div class="card">
+      <h2>Utilisateur</h2>
+      <div style="padding:14px 18px">
+        <div class="row">
+          <div class="field"><label>Nom</label><input type="text" name="last_name"></div>
+          <div class="field"><label>Prénom</label><input type="text" name="first_name"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Adresse mail *</label><input type="email" name="email" required></div>
+          <div class="field"><label>Société</label><input type="text" name="societe"></div>
+        </div>
+        <div class="field" style="max-width:280px">
+          <label>Date d'expiration du compte *</label>
+          <input type="date" name="expiration" required>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Accès</h2>
+      <div style="padding:14px 18px">
+        <div class="row">
+          <div class="field">
+            <label>Droit d'accès</label>
+            <select name="droit_acces" id="role-select" onchange="toggleChauff()">
+              {% for code, label in roles %}
+              <option value="{{ code }}" {% if code == 'lecture' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="field" id="chauff-block">
+          <label>Chaufferies</label>
+          <div class="chaufferies-all" id="chauff-all" hidden>
+            Rôle <b>Admin</b> — accès à <b>toutes</b> les chaufferies, y compris celles qui seront ajoutées plus tard.
+          </div>
+          <div id="chauff-list">
+            {% with selected_ids = [] %}{% include "_chaufferies_multiselect.html" %}{% endwith %}
+          </div>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" name="access_rapport"> Accès au rapport</label>
+          <label><input type="checkbox" name="access_retroview"> Accès au retroview</label>
+          <label><input type="checkbox" name="access_spherys"> Accès à spherys</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="submit-bar">
+      <button type="submit" class="btn">Envoyer l'invitation</button>
+    </div>
+  </form>
+
+  <a class="return-home" href="{{ root }}/">Retourner à l'accueil</a>
+</main>
+<script>
+function toggleChauff(){
+  var sel = document.getElementById('role-select');
+  var isAdmin = sel && sel.value === 'admin';
+  document.getElementById('chauff-list').hidden = isAdmin;
+  document.getElementById('chauff-all').hidden = !isAdmin;
+}
+toggleChauff();
+</script>
+</body></html>

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><title>Inviter — TDUO</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+{% include "_base.css" %}
+.invitee{background:#fff;border:1px solid #e6e8eb;border-radius:10px;padding:14px 18px;margin-bottom:14px;position:relative}
+.invitee h3{margin:0 0 12px;font-size:14px;font-weight:600;color:#555}
+.invitee .rm{position:absolute;top:10px;right:12px;background:none;border:0;cursor:pointer;color:#999;font-size:20px}
+.invitee .rm:hover{color:#c62828}
+.add-user{background:none;border:1px dashed #b0b8be;color:#555;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;width:100%}
+.add-user:hover{border-color:#1976d2;color:#1976d2}
+.submit-bar{margin-top:18px;display:flex;justify-content:flex-end}
+</style></head><body>
+
+<header>
+  <h1>Inviter des utilisateurs</h1>
+  <span class="who">{{ user.u }}</span>
+  <a href="{{ root }}/logout">Déconnexion</a>
+</header>
+
+<main>
+  <div class="breadcrumb">
+    <a href="{{ root }}/">← Gestion des comptes</a>
+    <span>·</span>
+    <a href="{{ root }}/invite-temp">Invitation temporaire →</a>
+  </div>
+
+  <form method="post" action="{{ root }}/invite" id="f">
+
+    <div class="card">
+      <h2>Utilisateurs à inviter</h2>
+      <div style="padding:14px 18px">
+        <div id="invitees">
+          <div class="invitee" data-i="0">
+            <h3>Utilisateur n°1</h3>
+            <button type="button" class="rm" title="Retirer" onclick="rmUser(this)" hidden>×</button>
+            <div class="row">
+              <div class="field"><label>Nom</label><input type="text" name="invitee_0_last_name"></div>
+              <div class="field"><label>Prénom</label><input type="text" name="invitee_0_first_name"></div>
+            </div>
+            <div class="row">
+              <div class="field"><label>Adresse mail *</label><input type="email" name="invitee_0_email" required></div>
+              <div class="field"><label>Société</label><input type="text" name="invitee_0_societe"></div>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="add-user" onclick="addUser()">+ Ajouter un utilisateur</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Accès</h2>
+      <div style="padding:14px 18px">
+        <div class="row">
+          <div class="field">
+            <label>Droit d'accès</label>
+            <select name="droit_acces" id="role-select" onchange="toggleChauff()">
+              {% for code, label in roles %}
+              <option value="{{ code }}" {% if code == 'lecture' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="field" id="chauff-block">
+          <label>Chaufferies</label>
+          <div class="chaufferies-all" id="chauff-all" hidden>
+            Rôle <b>Admin</b> — accès à <b>toutes</b> les chaufferies, y compris celles qui seront ajoutées plus tard.
+          </div>
+          <div id="chauff-list">
+            {% with selected_ids = [] %}{% include "_chaufferies_multiselect.html" %}{% endwith %}
+          </div>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" name="access_rapport"> Accès au rapport</label>
+          <label><input type="checkbox" name="access_retroview"> Accès au retroview</label>
+          <label><input type="checkbox" name="access_spherys"> Accès à spherys</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="submit-bar">
+      <button type="submit" class="btn">Envoyer les invitations</button>
+    </div>
+  </form>
+
+  <a class="return-home" href="{{ root }}/">Retourner à l'accueil</a>
+</main>
+
+<script>
+let nextIdx = 1;
+function addUser(){
+  const i = nextIdx++;
+  const div = document.createElement('div');
+  div.className = 'invitee';
+  div.dataset.i = i;
+  div.innerHTML = `
+    <h3>Utilisateur n°${i+1}</h3>
+    <button type="button" class="rm" title="Retirer" onclick="rmUser(this)">×</button>
+    <div class="row">
+      <div class="field"><label>Nom</label><input type="text" name="invitee_${i}_last_name"></div>
+      <div class="field"><label>Prénom</label><input type="text" name="invitee_${i}_first_name"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Adresse mail *</label><input type="email" name="invitee_${i}_email" required></div>
+      <div class="field"><label>Société</label><input type="text" name="invitee_${i}_societe"></div>
+    </div>`;
+  document.getElementById('invitees').appendChild(div);
+  renumber();
+}
+function rmUser(btn){
+  btn.closest('.invitee').remove();
+  renumber();
+}
+function renumber(){
+  document.querySelectorAll('#invitees .invitee').forEach((el, idx) => {
+    el.querySelector('h3').textContent = 'Utilisateur n°' + (idx+1);
+    const rm = el.querySelector('.rm');
+    if (rm) rm.hidden = (idx === 0 && document.querySelectorAll('#invitees .invitee').length === 1);
+  });
+}
+function toggleChauff(){
+  var sel = document.getElementById('role-select');
+  var isAdmin = sel && sel.value === 'admin';
+  document.getElementById('chauff-list').hidden = isAdmin;
+  document.getElementById('chauff-all').hidden = !isAdmin;
+}
+toggleChauff();
+</script>
+</body></html>

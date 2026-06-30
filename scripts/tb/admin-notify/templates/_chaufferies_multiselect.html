@@ -1,0 +1,176 @@
+{# Multi-select chaufferies avec recherche + scrollable.
+   Variables :
+     chaufferies   liste {id, name, display, address}
+     selected_ids  ids cochés (liste, peut être vide)
+   Soumet toujours name="chaufferies" (multi). Le panneau s'ouvre inline
+   (non absolu) → fonctionne dans n'importe quel parent avec overflow:hidden.
+#}
+<style>
+.ms-host{width:100%;max-width:640px;position:relative}
+.ms-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.ms-chips:empty{display:none}
+.ms-chip{display:inline-flex;align-items:center;gap:6px;background:#eef5fd;border:1px solid #b6d4f2;color:#1565c0;font-size:12px;padding:3px 4px 3px 10px;border-radius:14px;max-width:100%;line-height:1.2}
+.ms-chip .ms-chip-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+.ms-chip .ms-chip-sn{color:#5e7a9e;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-left:-2px}
+.ms-chip .ms-chip-x{background:transparent;border:0;color:#1565c0;cursor:pointer;padding:0;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1;font-family:inherit}
+.ms-chip .ms-chip-x:hover{background:#1565c0;color:#fff}
+.ms-trigger{display:flex;align-items:center;gap:8px;width:100%;background:#fff;border:1px solid #d8dadd;border-radius:6px;padding:9px 12px;font-size:14px;cursor:pointer;text-align:left;font-family:inherit;min-height:38px;box-sizing:border-box}
+.ms-trigger:hover{border-color:#a8b0b8}
+.ms-trigger[aria-expanded="true"]{border-color:#1976d2;box-shadow:0 0 0 2px rgba(25,118,210,.15);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.ms-trigger .ms-lbl{flex:1;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms-trigger .ms-lbl.empty{color:#888}
+.ms-trigger .ms-chev{color:#888;font-size:10px;transition:transform .15s}
+.ms-trigger[aria-expanded="true"] .ms-chev{transform:rotate(180deg)}
+.ms-panel{margin-top:-1px;background:#fff;border:1px solid #1976d2;border-radius:0 0 6px 6px;box-shadow:0 4px 14px rgba(0,0,0,.08);overflow:hidden}
+.ms-panel[hidden]{display:none}
+.ms-search{padding:8px 10px;border-bottom:1px solid #eef0f2}
+.ms-search input{width:100%;padding:7px 10px;border:1px solid #d8dadd;border-radius:5px;font-size:13px;font-family:inherit;box-sizing:border-box}
+.ms-search input:focus{outline:none;border-color:#1976d2}
+.ms-actions{padding:6px 10px;border-bottom:1px solid #eef0f2;display:flex;gap:6px;font-size:12px}
+.ms-actions button{background:none;border:0;color:#1976d2;cursor:pointer;padding:4px 6px;border-radius:4px;font-size:12px;font-weight:600}
+.ms-actions button:hover{background:#eef5fd}
+.ms-list{max-height:260px;overflow-y:auto;padding:4px 0}
+.ms-opt{display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;font-size:13px}
+.ms-opt:hover{background:#f6f7f9}
+.ms-opt input{margin:0;cursor:pointer}
+.ms-opt .ms-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms-opt .ms-sn{color:#999;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.ms-opt[data-hidden=true]{display:none}
+.ms-empty{padding:14px;text-align:center;color:#888;font-size:13px}
+.ms-footer{padding:6px 12px;border-top:1px solid #eef0f2;font-size:12px;color:#666;background:#fafbfc}
+</style>
+
+<div class="ms-host" data-ms="chaufferies">
+  <div class="ms-chips" data-ms-chips></div>
+  <button type="button" class="ms-trigger" data-ms-trigger aria-expanded="false">
+    <span class="ms-lbl empty" data-ms-label>—</span>
+    <span class="ms-chev">▼</span>
+  </button>
+  <div class="ms-panel" data-ms-panel hidden>
+    <div class="ms-search">
+      <input type="text" placeholder="Rechercher (nom, n° série, adresse)…" data-ms-search autocomplete="off">
+    </div>
+    <div class="ms-actions">
+      <button type="button" data-ms-all>Tout cocher (visibles)</button>
+      <button type="button" data-ms-none>Tout décocher</button>
+    </div>
+    <div class="ms-list" data-ms-list>
+      {% for c in chaufferies %}
+      <label class="ms-opt" data-search="{{ ((c.display ~ ' ' ~ c.name ~ ' ' ~ (c.address or '')) | lower) }}">
+        <input type="checkbox" name="chaufferies" value="{{ c.id }}"{% if selected_ids and c.id in selected_ids %} checked{% endif %}>
+        <span class="ms-name">{{ c.display }}</span>
+        {% if c.name and c.name != c.display %}<span class="ms-sn">n° {{ c.name }}</span>{% endif %}
+      </label>
+      {% else %}
+      <div class="ms-empty">Aucune chaufferie disponible.</div>
+      {% endfor %}
+    </div>
+    <div class="ms-footer" data-ms-footer></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  document.querySelectorAll('[data-ms="chaufferies"]').forEach(function(host){
+    if (host._wired) return; host._wired = true;
+    var trig = host.querySelector('[data-ms-trigger]');
+    var panel = host.querySelector('[data-ms-panel]');
+    var lbl = host.querySelector('[data-ms-label]');
+    var search = host.querySelector('[data-ms-search]');
+    var list = host.querySelector('[data-ms-list]');
+    var foot = host.querySelector('[data-ms-footer]');
+    var btnAll = host.querySelector('[data-ms-all]');
+    var btnNone = host.querySelector('[data-ms-none]');
+    var opts = Array.from(list.querySelectorAll('.ms-opt'));
+    var inputs = opts.map(function(o){ return o.querySelector('input[type=checkbox]'); }).filter(Boolean);
+    var chips = host.querySelector('[data-ms-chips]');
+
+    function renderChips(){
+      // Reconstruit la liste des chips au-dessus à partir des inputs cochés.
+      var frag = document.createDocumentFragment();
+      inputs.forEach(function(i){
+        if (!i.checked) return;
+        var opt = i.closest('.ms-opt');
+        var name = (opt.querySelector('.ms-name') || {}).textContent || '';
+        var sn = (opt.querySelector('.ms-sn') || {}).textContent || '';
+        var chip = document.createElement('span');
+        chip.className = 'ms-chip';
+        chip.innerHTML = '<span class="ms-chip-name"></span>'
+                       + (sn ? '<span class="ms-chip-sn"></span>' : '')
+                       + '<button type="button" class="ms-chip-x" aria-label="Retirer">×</button>';
+        chip.querySelector('.ms-chip-name').textContent = name;
+        if (sn) chip.querySelector('.ms-chip-sn').textContent = sn;
+        chip.querySelector('.ms-chip-x').addEventListener('click', function(e){
+          e.preventDefault(); e.stopPropagation();
+          i.checked = false; updateLabel();
+        });
+        frag.appendChild(chip);
+      });
+      chips.innerHTML = '';
+      chips.appendChild(frag);
+    }
+    function updateLabel(){
+      var n = inputs.filter(function(i){ return i.checked; }).length;
+      var total = inputs.length;
+      var txt;
+      if (n === 0) txt = 'Aucune chaufferie sélectionnée — cliquer pour choisir';
+      else if (n === total) txt = 'Toutes les chaufferies (' + n + ') — cliquer pour modifier';
+      else txt = n + ' / ' + total + ' chaufferie(s) — cliquer pour modifier';
+      lbl.textContent = txt;
+      lbl.classList.toggle('empty', n === 0);
+      foot.textContent = n + ' / ' + total + ' cochée(s)';
+      renderChips();
+    }
+    function applyFilter(){
+      var q = (search.value || '').toLowerCase().trim();
+      var tokens = q.split(/\s+/).filter(Boolean);
+      var any = false;
+      opts.forEach(function(o){
+        var hay = o.getAttribute('data-search') || '';
+        var match = tokens.every(function(t){ return hay.indexOf(t) !== -1; });
+        o.setAttribute('data-hidden', match ? 'false' : 'true');
+        if (match) any = true;
+      });
+      var emptyMsg = list.querySelector('.ms-empty-search');
+      if (!any && !emptyMsg){
+        emptyMsg = document.createElement('div');
+        emptyMsg.className = 'ms-empty ms-empty-search';
+        emptyMsg.textContent = 'Aucun résultat';
+        list.appendChild(emptyMsg);
+      } else if (any && emptyMsg){
+        emptyMsg.remove();
+      }
+    }
+    function setOpen(open){
+      panel.hidden = !open;
+      trig.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) setTimeout(function(){ search.focus(); }, 0);
+    }
+    trig.addEventListener('click', function(e){
+      e.preventDefault();
+      setOpen(panel.hidden);
+    });
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape' && !panel.hidden){ setOpen(false); trig.focus(); }
+    });
+    search.addEventListener('input', applyFilter);
+    inputs.forEach(function(i){ i.addEventListener('change', updateLabel); });
+    btnAll.addEventListener('click', function(e){
+      e.preventDefault();
+      opts.forEach(function(o){
+        if (o.getAttribute('data-hidden') === 'true') return;
+        var inp = o.querySelector('input[type=checkbox]'); if (inp) inp.checked = true;
+      });
+      updateLabel();
+    });
+    btnNone.addEventListener('click', function(e){
+      e.preventDefault();
+      inputs.forEach(function(i){ i.checked = false; });
+      updateLabel();
+    });
+
+    updateLabel();
+    applyFilter();
+  });
+})();
+</script>

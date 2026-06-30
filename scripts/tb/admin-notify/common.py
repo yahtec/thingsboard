@@ -1,0 +1,462 @@
+"""Shared helpers for tb-notify (TB API client, SMTP, evt_* pairing)."""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import smtplib
+import ssl
+import time
+from dataclasses import dataclass, field
+from email.message import EmailMessage
+from email.utils import formataddr
+from pathlib import Path
+from typing import Any, Iterable
+
+import requests
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).parent
+load_dotenv(ROOT / ".env")
+
+LOG_DIR = Path(os.environ.get("TBN_LOG_DIR", "/var/log"))
+JWT_CACHE = Path("/tmp/tb-notify-jwt.json")
+
+# evt_* dictionaries — kept in sync with widgets/events-history.controller.js.
+FAULT_LABELS = {0:'',1:'Defaut sonde depart',2:'Defaut sonde retour',3:'Defaut sonde fumee',4:'Defaut sonde pression',5:'Defaut debit eau',6:'Defaut surpression eau',7:'Surchauffe',8:'Defaut bruleur',9:'Defaut ventil. bruleur',10:'Defaut preventilation',11:'Defaut delta temp.',12:'Defaut temp. fumee',13:'Defaut circuit fumee',14:'Bruleur non linearise',15:'Defaut communication',16:'Defaut sous-tension',17:'Defaut surtension',18:'Manque phase',19:'Marche a sec',20:'Pression trop forte',21:'Pression trop faible',22:'Moteur trop chaud',23:'Defaut moteur',24:'Pompe bloquee',25:'Surchauffe module',26:'Avertissement module',27:'Defaut module',28:'Defaut capteur',29:'Defaut communication',30:'Defaut vanne eau',31:'Utilisation excessive',32:'Adaptation plage',33:'Surcharge mecanique',34:'Defaut securite',35:'Erreur test clapet',36:'Temperature trop elevee',37:'Fumee detectee',38:'Defaut communication',39:'Defaut communication',40:'Defaut communication',41:'Pression trop faible',42:'Redemarrage regulateur',43:'Manipulation tactile',44:'Filtre encrasse',45:'Defaut carte 1',46:'Defaut carte 2',47:'Defaut carte 3',48:'Defaut carte 4',49:'Defaut carte 5',50:'Defaut carte 6',51:'Defaut carte 7',52:'Defaut bruleur 8',53:'Defaut bruleur 9',54:'Defaut bruleur 10',55:'Defaut bruleur 11',56:'Defaut bruleur 12',57:'Defaut bruleur 13',58:'Defaut interne boitier',59:'Defaut general boitier',60:'Nb max reset atteint',61:'Defaut pompe ECS',62:'Defaut module FTP',63:'Defaut pression fumee',70:'Defaut sonde T entree chaud.',71:'Defaut sonde T sortie chaud.',72:'Defaut sonde T fumee chaud.',73:'Defaut sonde T entree PAC',74:'Defaut sonde T BP',75:'Defaut sonde T HP-h',76:'Defaut sonde T HP-c',77:'Defaut sonde T air ext.',78:'Defaut pression air',79:'Defaut pression eau',80:'Defaut pression HP',81:'Defaut pression BP',82:'Gaz detecte',83:'Defaut surchauffe chaud.',84:'Defaut com. pompe',85:'Defaut com. compresseur',86:'Defaut com. gaz G20',87:'Defaut com. gaz R290',88:'Defaut communication',89:'Defaut pression eau',90:'Defaut HP max',91:'Defaut BP min',92:'Defaut variateur 0Hz',93:'Defaut variateur',94:'Defaut surchauffe PAC',95:'Defaut T sortie PAC',96:'Defaut T entree PAC',97:'Defaut T BP',98:'Defaut T HP chaud',99:'Defaut T HP froid',100:'Defaut pression eau bas',101:'Defaut pression eau haut',102:'Defaut pression air',103:'Defaut vitesse ventilateur',104:'Defaut sonde T entree module',105:'Defaut sonde T exterieure',106:'Defaut sonde T sortie ECS',107:'Defaut sonde T entree ECS',108:'Defaut sonde T sortie chauffage',109:'Defaut sonde T entree chauffage',110:'Defaut sonde T stockage',111:'Gaz R290 détecté',112:'Gaz G20 détecté',113:'Defaut temperature sortie chaudiere'}
+
+DEVICE_LABELS = {0:'',1:'Chaudiere 1',2:'Chaudiere 2',3:'Chaudiere 3',4:'Chaudiere 4',5:'Chaudiere 5',6:'Chaudiere 6',7:'Chaudiere 7',8:'Chaudiere 8',9:'Chaudiere 9',10:'Chaudiere 10',11:'Chaudiere 11',12:'Chaudiere 12',15:'Pompe 1',16:'Pompe 2',17:'Pompe 3',18:'Pompe 4',19:'Pompe 5',20:'Calorimetre 1',21:'Calorimetre 2',22:'Calorimetre 3',23:'Calorimetre 4',24:'Calorimetre 5',25:'Circuit 1',26:'Circuit 2',27:'Circuit 3',28:'Circuit 4',29:'Circuit 5',30:'ECS 1',31:'ECS 2',32:'Entrees/Sorties',33:'Pompe filtre',34:'Remplisseur',35:'Module filtre',36:'Pompe 6',37:'Calorimetre 6',38:'Circuit 6',50:'PAC Hybride 1',51:'PAC Hybride 2',52:'PAC Hybride 3',53:'PAC Hybride 4',54:'PAC Hybride 5',55:'PAC Hybride 6',60:'Module',61:'Pompe 1 module',62:'Pompe 2 module',63:'Calorimetre module',64:'Chauffage',65:'Calorimetre chauffage',66:'ECS',67:'Pompe primaire ECS',68:'Pompe secondaire ECS'}
+
+TYPE_LABELS = {0:'Information',1:'Panne',2:'Depannage',3:'Maintenance',4:'Resolue'}
+
+EVT_KEYS = ['evt_type','evt_fault','evt_device','evt_status','evt_date','evt_time','evt_id','fault_src']
+DEDUP_MS = 12000
+PAIR_WIN_MS = 30000
+
+
+def label_fault(code: int) -> str:
+    return FAULT_LABELS.get(code) or f"Code {code}"
+
+
+def label_device(code: int) -> str:
+    if code == 0:
+        return ""
+    return DEVICE_LABELS.get(code) or f"Code {code}"
+
+
+# ─── logging ────────────────────────────────────────────────────────────────
+
+def setup_logging(name: str) -> logging.Logger:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    log = logging.getLogger(name)
+    if log.handlers:
+        return log
+    log.setLevel(logging.INFO)
+    fh = logging.FileHandler(LOG_DIR / "tb-notify.log")
+    fh.setFormatter(fmt)
+    log.addHandler(fh)
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    log.addHandler(sh)
+    return log
+
+
+# ─── ThingsBoard API client ─────────────────────────────────────────────────
+
+class TBClient:
+    def __init__(self, url: str | None = None, user: str | None = None, password: str | None = None):
+        self.url = (url or os.environ["TB_URL"]).rstrip("/")
+        self.user = user or os.environ["TB_USER"]
+        self.password = password or os.environ["TB_PASS"]
+        self.s = requests.Session()
+        self._token: str | None = None
+        self._token_exp: float = 0
+
+    def _auth(self):
+        if self._token and time.time() < self._token_exp - 60:
+            return
+        if JWT_CACHE.exists():
+            try:
+                d = json.loads(JWT_CACHE.read_text())
+                if d.get("user") == self.user and d.get("exp", 0) > time.time() + 60:
+                    self._token = d["token"]
+                    self._token_exp = d["exp"]
+                    self.s.headers["X-Authorization"] = f"Bearer {self._token}"
+                    return
+            except Exception:
+                pass
+        r = self.s.post(f"{self.url}/api/auth/login",
+                        json={"username": self.user, "password": self.password}, timeout=15)
+        r.raise_for_status()
+        self._token = r.json()["token"]
+        self._token_exp = time.time() + 3600
+        self.s.headers["X-Authorization"] = f"Bearer {self._token}"
+        try:
+            JWT_CACHE.write_text(json.dumps({"user": self.user, "token": self._token, "exp": self._token_exp}))
+            os.chmod(JWT_CACHE, 0o600)
+        except Exception:
+            pass
+
+    def _req(self, method: str, path: str, **kw) -> requests.Response:
+        self._auth()
+        r = self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
+        if r.status_code == 401:
+            self._token = None
+            self._auth()
+            r = self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
+        r.raise_for_status()
+        return r
+
+    def get(self, path: str, **kw): return self._req("GET", path, **kw).json()
+
+    def post_json(self, path: str, body: Any) -> Any:
+        r = self._req("POST", path, json=body)
+        if r.text:
+            try:
+                return r.json()
+            except ValueError:
+                return None
+        return None
+
+    def delete(self, path: str) -> None:
+        self._auth()
+        r = self.s.request("DELETE", f"{self.url}{path}", timeout=30)
+        if r.status_code == 401:
+            self._token = None
+            self._auth()
+            r = self.s.request("DELETE", f"{self.url}{path}", timeout=30)
+        r.raise_for_status()
+
+    def list_devices_by_profile(self, profile_name: str) -> list[dict]:
+        out, page = [], 0
+        while True:
+            d = self.get(f"/api/tenant/devices?pageSize=200&page={page}")
+            for dev in d.get("data", []):
+                if dev.get("type") == profile_name:
+                    out.append(dev)
+            if not d.get("hasNext"):
+                break
+            page += 1
+        return out
+
+    def get_server_attrs(self, etype: str, eid: str, keys: Iterable[str] | None = None) -> dict:
+        path = f"/api/plugins/telemetry/{etype}/{eid}/values/attributes/SERVER_SCOPE"
+        if keys:
+            path += "?keys=" + ",".join(keys)
+        return {a["key"]: a["value"] for a in self.get(path)}
+
+    def save_server_attrs(self, etype: str, eid: str, kv: dict) -> None:
+        self.post_json(f"/api/plugins/telemetry/{etype}/{eid}/SERVER_SCOPE", kv)
+
+    # ── Users ───────────────────────────────────────────────────────────
+    def list_users(self) -> list[dict]:
+        """Tous les users visibles par TENANT_ADMIN (admins tenant + customer users)."""
+        out, page = [], 0
+        while True:
+            d = self.get(f"/api/users?pageSize=200&page={page}")
+            out.extend(d.get("data", []))
+            if not d.get("hasNext"):
+                break
+            page += 1
+        return out
+
+    def list_customer_users(self, customer_id: str) -> list[dict]:
+        out, page = [], 0
+        while True:
+            d = self.get(f"/api/customer/{customer_id}/users?pageSize=200&page={page}")
+            out.extend(d.get("data", []))
+            if not d.get("hasNext"):
+                break
+            page += 1
+        return out
+
+    def list_all_users(self, customer_id: str | None = None) -> list[dict]:
+        # /api/users couvre déjà tenant admins + customer users du tenant.
+        return self.list_users()
+
+    def get_user(self, user_id: str) -> dict:
+        return self.get(f"/api/user/{user_id}")
+
+    def create_user(self, user: dict, send_activation_mail: bool = False) -> dict:
+        path = f"/api/user?sendActivationMail={'true' if send_activation_mail else 'false'}"
+        return self.post_json(path, user)
+
+    def update_user(self, user: dict) -> dict:
+        return self.post_json("/api/user", user)
+
+    def delete_user(self, user_id: str) -> None:
+        self.delete(f"/api/user/{user_id}")
+
+    def activation_link(self, user_id: str) -> str:
+        self._auth()
+        r = self.s.get(f"{self.url}/api/user/{user_id}/activationLink", timeout=30)
+        r.raise_for_status()
+        body = r.text.strip()
+        if body.startswith("{") or body.startswith('"'):
+            try:
+                j = json.loads(body)
+                if isinstance(j, str):
+                    return j
+                if isinstance(j, dict):
+                    for k in ("value", "activationLink", "link"):
+                        if k in j:
+                            return str(j[k])
+            except ValueError:
+                pass
+        return body.strip('"')
+
+    # ── Email recipients (calculés depuis les comptes user) ─────────────
+    def _collect_user_attrs(self) -> list[dict]:
+        """Pour chaque user : ses attributs is_admin/chaufferies + son email/authority.
+        Renvoie liste de dicts utilisables par get_recipients_for_device / get_admin_emails."""
+        out = []
+        for u in self.list_users():
+            uid = u["id"]["id"]
+            email = (u.get("email") or "").strip()
+            if not email:
+                continue
+            add = u.get("additionalInfo") or {}
+            if isinstance(add, dict) and add.get("userCredentialsEnabled") is False:
+                continue  # compte bloqué (expiré / désactivé) — pas de mail
+            try:
+                attrs = self.get_server_attrs("USER", uid, ["is_admin", "chaufferies"])
+            except Exception:
+                attrs = {}
+            chauff = attrs.get("chaufferies")
+            if isinstance(chauff, str):
+                try:
+                    chauff = json.loads(chauff)
+                except (json.JSONDecodeError, ValueError):
+                    chauff = []
+            if not isinstance(chauff, list):
+                chauff = []
+            out.append({
+                "email": email,
+                "authority": u.get("authority"),
+                "is_admin": bool(attrs.get("is_admin")),
+                "chaufferies": [str(x) for x in chauff],
+            })
+        return out
+
+    def get_recipients_for_device(self, device_id: str,
+                                  users: list[dict] | None = None) -> list[str]:
+        """Emails des gestionnaires de cette chaufferie pour les mails
+        d'**apparition de défaut**.
+
+        - CUSTOMER_USER **non-admin** ayant `device_id` dans son attribut
+          `chaufferies` → inclus.
+        - TENANT_ADMIN et CUSTOMER_USER+is_admin → **EXCLUS** (ils ne reçoivent
+          que le digest 4h via get_admin_emails()).
+        """
+        if users is None:
+            users = self._collect_user_attrs()
+        out: list[str] = []
+        for u in users:
+            if u["authority"] != "CUSTOMER_USER":
+                continue
+            if u["is_admin"]:
+                continue
+            if device_id in u["chaufferies"]:
+                out.append(u["email"])
+        seen = set()
+        return [e for e in out if not (e in seen or seen.add(e))]
+
+    def get_admin_emails(self, users: list[dict] | None = None) -> list[str]:
+        """Emails des TENANT_ADMIN + CUSTOMER_USER avec is_admin=true."""
+        if users is None:
+            users = self._collect_user_attrs()
+        out = [u["email"] for u in users if u["authority"] == "TENANT_ADMIN" or u["is_admin"]]
+        seen = set()
+        return [e for e in out if not (e in seen or seen.add(e))]
+
+    def get_timeseries(self, device_id: str, keys: Iterable[str], start_ts: int, end_ts: int,
+                       limit: int = 50000) -> dict[str, list[dict]]:
+        path = (f"/api/plugins/telemetry/DEVICE/{device_id}/values/timeseries"
+                f"?keys={','.join(keys)}&startTs={start_ts}&endTs={end_ts}"
+                f"&limit={limit}&agg=NONE&orderBy=ASC")
+        return self.get(path)
+
+
+# ─── evt_* pairing — mirrors widgets/events-history.controller.js ───────────
+
+@dataclass
+class Event:
+    ts: int                  # raw TB ts (used for dedup)
+    appear_ts: int | None
+    type: int                # 1=apparition, 4=resolution
+    fault: int
+    device: int
+    status: int
+    fault_src: int
+    evt_id: int
+    date: str = ""
+    time: str = ""
+    resolved_ts: int | None = None
+    resolved_date: str = ""
+    resolved_time: str = ""
+
+
+def collect_records(ts_payload: dict[str, list[dict]]) -> list[dict]:
+    """Pivot {key: [{ts,value}]} → [{ts, evt_*: ...}], sorted by ts ASC."""
+    by_ts: dict[int, dict] = {}
+    for key, points in ts_payload.items():
+        for p in points:
+            ts = p["ts"]
+            d = by_ts.setdefault(ts, {"ts": ts})
+            d[key] = p["value"]
+    return [by_ts[t] for t in sorted(by_ts)]
+
+
+def _to_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def pair_events(records: list[dict]) -> list[Event]:
+    """Pair appearance(1)/resolution(4), dedup retransmissions within 12s.
+    Mirrors the dashboard widget so UI and notifications stay consistent."""
+    events: list[Event] = []
+    open_by_key: dict[str, Event] = {}
+    last_ts_by_key: dict[str, int] = {}
+
+    for r in records:
+        try:
+            typ = int(r["evt_type"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        fault = _to_int(r.get("evt_fault"))
+        dev = _to_int(r.get("evt_device"))
+        status = _to_int(r.get("evt_status"))
+        fsrc_raw = r.get("fault_src")
+        fsrc = -1 if fsrc_raw in (None, "") else _to_int(fsrc_raw, -1)
+        rec = Event(
+            ts=r["ts"], appear_ts=r["ts"], type=typ, fault=fault, device=dev,
+            status=status, fault_src=fsrc, evt_id=_to_int(r.get("evt_id")),
+            date=r.get("evt_date") or "", time=r.get("evt_time") or "",
+        )
+        if typ == 1:
+            k = f"{fault}|{dev}"
+            dk = f"{k}:1"
+            if r["ts"] - last_ts_by_key.get(dk, 0) < DEDUP_MS:
+                continue
+            last_ts_by_key[dk] = r["ts"]
+            open_by_key[k] = rec
+            events.append(rec)
+        elif typ == 4:
+            k = f"{fault}|{dev}"
+            dk = f"{k}:4"
+            if r["ts"] - last_ts_by_key.get(dk, 0) < DEDUP_MS:
+                continue
+            last_ts_by_key[dk] = r["ts"]
+            o = open_by_key.pop(k, None)
+            if o is not None:
+                o.resolved_ts = r["ts"]
+                o.resolved_date = rec.date
+                o.resolved_time = rec.time
+                o.status = 0
+            else:
+                rec.resolved_ts = r["ts"]
+                rec.resolved_date = rec.date
+                rec.resolved_time = rec.time
+                rec.appear_ts = None
+                rec.date = ""
+                rec.time = ""
+                rec.status = 0
+                events.append(rec)
+        else:
+            events.append(rec)
+
+    # Reverse-pair late type=1 with standalone type=4 received first.
+    standalones = [e for e in events if e.type == 4 and e.appear_ts is None]
+    opens = [e for e in events if e.type == 1 and e.resolved_ts is None]
+    for s in standalones:
+        best, best_dt = None, PAIR_WIN_MS
+        for o in opens:
+            if o.fault != s.fault or o.device != s.device:
+                continue
+            dt = abs(o.appear_ts - s.resolved_ts)
+            if dt < best_dt:
+                best, best_dt = o, dt
+        if best is None:
+            continue
+        a = min(s.resolved_ts, best.appear_ts)
+        b = max(s.resolved_ts, best.appear_ts)
+        best.appear_ts = a
+        best.resolved_ts = b
+        best.status = 0
+        if a == s.resolved_ts:
+            best.date, best.time = s.resolved_date, s.resolved_time
+        if b == s.resolved_ts:
+            best.resolved_date, best.resolved_time = s.resolved_date, s.resolved_time
+        events.remove(s)
+
+    return events
+
+
+def open_faults(events: list[Event]) -> list[Event]:
+    return [e for e in events if e.type == 1 and e.resolved_ts is None]
+
+
+# ─── SMTP ──────────────────────────────────────────────────────────────────
+
+@dataclass
+class MailConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    from_addr: str
+    from_name: str
+    security: str  # "ssl" (TLS dès la connexion) ou "starttls"
+
+    @classmethod
+    def from_env(cls) -> "MailConfig":
+        return cls(
+            host=os.environ["SMTP_HOST"],
+            port=int(os.environ.get("SMTP_PORT", 587)),
+            user=os.environ["SMTP_USER"],
+            password=os.environ["SMTP_PASS"],
+            from_addr=os.environ["SMTP_FROM"],
+            from_name=os.environ.get("SMTP_FROM_NAME", "TDUO Alertes"),
+            security=os.environ.get("SMTP_SECURITY", "starttls").lower(),
+        )
+
+
+def send_mail(to: list[str], subject: str, html: str, text: str | None = None,
+              cfg: MailConfig | None = None, retries: int = 3) -> None:
+    cfg = cfg or MailConfig.from_env()
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr((cfg.from_name, cfg.from_addr))
+    msg["To"] = ", ".join(to)
+    msg.set_content(text or _html_to_text(html))
+    msg.add_alternative(html, subtype="html")
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            ctx = ssl.create_default_context()
+            if cfg.security == "ssl":
+                smtp_cls = lambda: smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=30, context=ctx)
+            else:
+                smtp_cls = lambda: smtplib.SMTP(cfg.host, cfg.port, timeout=30)
+            with smtp_cls() as s:
+                if cfg.security != "ssl":
+                    s.starttls(context=ctx)
+                s.login(cfg.user, cfg.password)
+                s.send_message(msg)
+            return
+        except (smtplib.SMTPException, OSError) as e:
+            last_err = e
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"SMTP send failed after {retries} attempts: {last_err}") from last_err
+
+
+def _html_to_text(html: str) -> str:
+    import re
+    t = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
+    t = re.sub(r"</p>", "\n\n", t, flags=re.I)
+    t = re.sub(r"<[^>]+>", "", t)
+    return t.strip()

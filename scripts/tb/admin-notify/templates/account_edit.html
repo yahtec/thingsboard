@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><title>{{ row.first_name }} {{ row.last_name }} — TDUO</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+{% include "_base.css" %}
+.submit-bar{margin-top:18px;display:flex;justify-content:flex-end;gap:10px}
+.meta{color:#666;font-size:13px;margin-bottom:10px}
+.meta b{color:#222}
+</style></head><body>
+
+<header>
+  <h1>Modifier le compte</h1>
+  <span class="who">{{ user.u }}</span>
+  <a href="{{ root }}/logout">Déconnexion</a>
+</header>
+
+<main>
+  <div class="breadcrumb">
+    <a href="{{ root }}/">← Gestion des comptes</a>
+  </div>
+
+  {% if saved %}<div class="flash ok">Modifications enregistrées.</div>{% endif %}
+
+  <form method="post" action="{{ root }}/accounts/{{ row.id }}/edit">
+
+    <div class="card">
+      <h2>Identité</h2>
+      <div style="padding:14px 18px">
+        <div class="meta">
+          Créé le <b>{{ row.created_ts | ts_to_date if row.created_ts else '—' }}</b> ·
+          Dernière connexion : <b>{{ row.last_login_ts | ts_to_date if row.last_login_ts else 'jamais' }}</b>
+          {% if row.is_tenant_admin %} · <span class="badge tenant" style="background:#ede7f6;color:#5e35b1;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">Tenant admin</span>{% endif %}
+        </div>
+        <div class="row">
+          <div class="field"><label>Nom</label><input type="text" name="last_name" value="{{ row.last_name }}"></div>
+          <div class="field"><label>Prénom</label><input type="text" name="first_name" value="{{ row.first_name }}"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Email</label><input type="email" name="email" value="{{ row.email }}"></div>
+          <div class="field"><label>Société</label><input type="text" name="societe" value="{{ row.societe }}"></div>
+        </div>
+        <div class="field" style="max-width:280px">
+          <label>Date d'expiration (vide = aucune)</label>
+          <input type="date" name="expiration" value="{% if row.expiration_ts %}{{ row.expiration_ts | ts_to_iso }}{% endif %}">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Accès</h2>
+      <div style="padding:14px 18px">
+        <div class="row">
+          <div class="field">
+            <label>Droit d'accès</label>
+            <select name="droit_acces" id="role-select" onchange="toggleChauff()">
+              {% for code, label in roles %}
+              <option value="{{ code }}" {% if code == row.droit_acces %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="field" id="chauff-block">
+          <label>Chaufferies</label>
+          <div class="chaufferies-all" id="chauff-all" hidden>
+            Rôle <b>Admin</b> — accès à <b>toutes</b> les chaufferies, y compris celles qui seront ajoutées plus tard.
+          </div>
+          <div id="chauff-list">
+            {% with selected_ids = row.chaufferies %}{% include "_chaufferies_multiselect.html" %}{% endwith %}
+          </div>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" name="access_rapport" {% if row.access_rapport %}checked{% endif %}> Accès au rapport</label>
+          <label><input type="checkbox" name="access_retroview" {% if row.access_retroview %}checked{% endif %}> Accès au retroview</label>
+          <label><input type="checkbox" name="access_spherys" {% if row.access_spherys %}checked{% endif %}> Accès à spherys</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="submit-bar">
+      <a class="btn ghost" href="{{ root }}/">Annuler</a>
+      <button type="submit" class="btn">Enregistrer</button>
+    </div>
+  </form>
+
+  <a class="return-home" href="{{ root }}/">Retourner à l'accueil</a>
+</main>
+<script>
+function toggleChauff(){
+  var sel = document.getElementById('role-select');
+  var isAdmin = sel && sel.value === 'admin';
+  {% if row.is_tenant_admin %}isAdmin = true;{% endif %}
+  document.getElementById('chauff-list').hidden = isAdmin;
+  document.getElementById('chauff-all').hidden = !isAdmin;
+}
+toggleChauff();
+</script>
+</body></html>

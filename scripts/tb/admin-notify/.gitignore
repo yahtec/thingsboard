@@ -1,0 +1,10 @@
+# Secrets & runtime — ne JAMAIS committer
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+# Backups générés au déploiement
+templates.bak.*/
+*.bak-*
