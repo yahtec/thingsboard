@@ -40,7 +40,15 @@ public class DefaultAccessScopeService implements AccessScopeService {
 
     private final RelationService relationService;
     private final UserAuthDetailsCache userAuthDetailsCache;
-    private final Cache<CustomerId, AccessScope> cache;
+    private final Cache<ScopeCacheKey, AccessScope> cache;
+
+    /**
+     * Cache key composite (customerId + role). Deux users du MEME customer mais de roles
+     * differents (ex. PARTY vs STAFF) ne doivent PAS partager la meme entree de cache, sinon le
+     * premier resolu impose son scope au second.
+     */
+    private record ScopeCacheKey(CustomerId customerId, PortfolioAccess.Role role) {
+    }
 
     public DefaultAccessScopeService(RelationService relationService, UserAuthDetailsCache userAuthDetailsCache) {
         this.relationService = relationService;
@@ -75,7 +83,8 @@ public class DefaultAccessScopeService implements AccessScopeService {
         }
         CustomerId customerId = user.getCustomerId();
         PortfolioAccess.Role role = resolveRole(user);
-        return cache.get(customerId, cid -> computeScope(user.getTenantId(), cid, role));
+        return cache.get(new ScopeCacheKey(customerId, role),
+                key -> computeScope(user.getTenantId(), key.customerId(), key.role()));
     }
 
     private AccessScope computeScope(TenantId tenantId, CustomerId customerId, PortfolioAccess.Role role) {
@@ -120,7 +129,12 @@ public class DefaultAccessScopeService implements AccessScopeService {
 
     @Override
     public void invalidate(CustomerId customerId) {
-        cache.invalidate(customerId);
+        if (customerId == null) {
+            return;
+        }
+        // La cle est composite (customerId, role) : on purge toutes les entrees de ce customer,
+        // quel que soit le role.
+        cache.asMap().keySet().removeIf(key -> customerId.equals(key.customerId()));
     }
 
     @Override
