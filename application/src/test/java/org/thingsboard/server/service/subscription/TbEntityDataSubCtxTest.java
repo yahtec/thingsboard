@@ -71,7 +71,7 @@ public class TbEntityDataSubCtxTest {
     @BeforeEach
     public void setUp() {
         when(webSocketSessionRef.getSessionId()).thenReturn(sessionId);
-        subCtx = new TbEntityDataSubCtx(serviceId, webSocketService, mock(), mock(), mock(), mock(), webSocketSessionRef, cmdId, maxEntitiesPerDataSubscription);
+        subCtx = new TbEntityDataSubCtx(serviceId, webSocketService, mock(), mock(), mock(), mock(), webSocketSessionRef, cmdId, maxEntitiesPerDataSubscription, mock());
 
         Map<Integer, EntityId> subToEntityIdMap = new HashMap<>();
         subToEntityIdMap.put(subscriptionId, deviceId);
