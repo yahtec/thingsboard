@@ -51,6 +51,7 @@ import org.thingsboard.server.common.msg.tools.TbRateLimitsException;
 import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
 import org.thingsboard.server.dao.entity.EntityService;
+import org.thingsboard.server.service.security.scope.AccessScopeService;
 import org.thingsboard.server.dao.timeseries.TimeseriesService;
 import org.thingsboard.server.queue.discovery.TbServiceInfoProvider;
 import org.thingsboard.server.queue.util.TbCoreComponent;
@@ -106,6 +107,9 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
 
     @Autowired
     private EntityService entityService;
+
+    @Autowired
+    private AccessScopeService accessScopeService;
 
     @Autowired
     private AlarmService alarmService;
@@ -549,7 +553,7 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
     private TbEntityDataSubCtx createSubCtx(WebSocketSessionRef sessionRef, EntityDataCmd cmd) {
         Map<Integer, TbAbstractSubCtx> sessionSubs = subscriptionsBySessionId.computeIfAbsent(sessionRef.getSessionId(), k -> new ConcurrentHashMap<>());
         TbEntityDataSubCtx ctx = new TbEntityDataSubCtx(serviceId, wsService, entityService, localSubscriptionService,
-                attributesService, stats, sessionRef, cmd.getCmdId(), maxEntitiesPerDataSubscription);
+                attributesService, stats, sessionRef, cmd.getCmdId(), maxEntitiesPerDataSubscription, accessScopeService);
         if (cmd.getQuery() != null) {
             ctx.setAndResolveQuery(cmd.getQuery());
         }
@@ -573,7 +577,7 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
         Map<Integer, TbAbstractSubCtx> sessionSubs = subscriptionsBySessionId.computeIfAbsent(sessionRef.getSessionId(), k -> new ConcurrentHashMap<>());
         TbAlarmDataSubCtx ctx = new TbAlarmDataSubCtx(serviceId, wsService, entityService, localSubscriptionService,
                 attributesService, stats, alarmService, sessionRef, cmd.getCmdId(), maxEntitiesPerAlarmSubscription,
-                maxAlarmQueriesPerRefreshInterval);
+                maxAlarmQueriesPerRefreshInterval, accessScopeService);
         ctx.setAndResolveQuery(cmd.getQuery());
         sessionSubs.put(cmd.getCmdId(), ctx);
         return ctx;

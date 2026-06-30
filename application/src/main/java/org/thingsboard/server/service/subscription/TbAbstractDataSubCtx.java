@@ -27,8 +27,12 @@ import org.thingsboard.server.common.data.query.EntityDataQuery;
 import org.thingsboard.server.common.data.query.EntityKey;
 import org.thingsboard.server.common.data.query.EntityKeyType;
 import org.thingsboard.server.common.data.query.TsValue;
+import org.thingsboard.server.common.data.permission.CustomerScopeMode;
 import org.thingsboard.server.dao.attributes.AttributesService;
 import org.thingsboard.server.dao.entity.EntityService;
+import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.security.scope.AccessScope;
+import org.thingsboard.server.service.security.scope.AccessScopeService;
 import org.thingsboard.server.service.ws.WebSocketService;
 import org.thingsboard.server.service.ws.WebSocketSessionRef;
 import org.thingsboard.server.service.ws.telemetry.sub.TelemetrySubscriptionUpdate;
@@ -50,12 +54,16 @@ public abstract class TbAbstractDataSubCtx<T extends AbstractDataQuery<? extends
     @Getter
     protected PageData<EntityData> data;
 
+    protected final AccessScopeService accessScopeService;
+
     public TbAbstractDataSubCtx(String serviceId, WebSocketService wsService,
                                 EntityService entityService, TbLocalSubscriptionService localSubscriptionService,
                                 AttributesService attributesService, SubscriptionServiceStatistics stats,
-                                WebSocketSessionRef sessionRef, int cmdId) {
+                                WebSocketSessionRef sessionRef, int cmdId,
+                                AccessScopeService accessScopeService) {
         super(serviceId, wsService, entityService, localSubscriptionService, attributesService, stats, sessionRef, cmdId);
         this.subToEntityIdMap = new ConcurrentHashMap<>();
+        this.accessScopeService = accessScopeService;
     }
 
     @Override
@@ -64,7 +72,16 @@ public abstract class TbAbstractDataSubCtx<T extends AbstractDataQuery<? extends
     }
 
     protected PageData<EntityData> findEntityData() {
-        PageData<EntityData> result = entityService.findEntityDataByQuery(getTenantId(), getCustomerId(), buildEntityDataQuery());
+        SecurityUser user = sessionRef.getSecurityCtx();
+        AccessScope scope = accessScopeService.resolve(user);
+        PageData<EntityData> result;
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            result = entityService.findEntityDataByQuery(getTenantId(), getCustomerId(), buildEntityDataQuery());
+        } else {
+            CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE
+                    ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
+            result = entityService.findEntityDataByQueryScoped(getTenantId(), scope.customerUuids(), mode, buildEntityDataQuery());
+        }
         if (log.isTraceEnabled()) {
             result.getData().forEach(ed -> {
                 log.trace("[{}][{}] EntityData: {}", getSessionId(), getCmdId(), ed);

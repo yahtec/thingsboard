@@ -39,6 +39,7 @@ import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
 import org.thingsboard.server.dao.entity.EntityService;
 import org.thingsboard.server.dao.sql.query.EntityKeyMapping;
+import org.thingsboard.server.service.security.scope.AccessScopeService;
 import org.thingsboard.server.service.ws.WebSocketService;
 import org.thingsboard.server.service.ws.WebSocketSessionRef;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmDataUpdate;
@@ -84,8 +85,9 @@ public class TbAlarmDataSubCtx extends TbAbstractDataSubCtx<AlarmDataQuery> {
                              EntityService entityService, TbLocalSubscriptionService localSubscriptionService,
                              AttributesService attributesService, SubscriptionServiceStatistics stats, AlarmService alarmService,
                              WebSocketSessionRef sessionRef, int cmdId,
-                             int maxEntitiesPerAlarmSubscription, int maxAlarmQueriesPerRefreshInterval) {
-        super(serviceId, wsService, entityService, localSubscriptionService, attributesService, stats, sessionRef, cmdId);
+                             int maxEntitiesPerAlarmSubscription, int maxAlarmQueriesPerRefreshInterval,
+                             AccessScopeService accessScopeService) {
+        super(serviceId, wsService, entityService, localSubscriptionService, attributesService, stats, sessionRef, cmdId, accessScopeService);
         this.maxEntitiesPerAlarmSubscription = maxEntitiesPerAlarmSubscription;
         this.maxAlarmQueriesPerRefreshInterval = maxAlarmQueriesPerRefreshInterval;
         this.alarmService = alarmService;
