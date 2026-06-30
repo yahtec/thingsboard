@@ -19,7 +19,6 @@ import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -538,28 +537,96 @@ public class DefaultTbCoreConsumerServiceTest {
         then(statsMock).should(never()).log(inactivityMsg);
     }
 
-    @Disabled("proto drift pre-existant yahtec-main — DeviceInactivityTimeoutUpdateProto overload manquante")
     @Test
     public void givenProcessingSuccess_whenForwardingInactivityTimeoutUpdateMsgToStateService_thenOnSuccessCallbackIsCalled() {
-        // corps supprimé : overload forwardToStateService(DeviceInactivityTimeoutUpdateProto) absente du jar proto local
+        // GIVEN
+        var inactivityTimeoutUpdateMsg = TransportProtos.DeviceInactivityTimeoutUpdateProto.newBuilder()
+                .setTenantIdMSB(tenantId.getId().getMostSignificantBits())
+                .setTenantIdLSB(tenantId.getId().getLeastSignificantBits())
+                .setDeviceIdMSB(deviceId.getId().getMostSignificantBits())
+                .setDeviceIdLSB(deviceId.getId().getLeastSignificantBits())
+                .setInactivityTimeout(time)
+                .build();
+
+        doCallRealMethod().when(defaultTbCoreConsumerServiceMock).forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // WHEN
+        defaultTbCoreConsumerServiceMock.forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // THEN
+        then(stateServiceMock).should().onDeviceInactivityTimeoutUpdate(tenantId, deviceId, time);
+        then(tbCallbackMock).should().onSuccess();
+        then(tbCallbackMock).should(never()).onFailure(any());
     }
 
-    @Disabled("proto drift pre-existant yahtec-main — DeviceInactivityTimeoutUpdateProto overload manquante")
     @Test
     public void givenProcessingFailure_whenForwardingInactivityTimeoutUpdateMsgToStateService_thenOnFailureCallbackIsCalled() {
-        // corps supprimé : overload forwardToStateService(DeviceInactivityTimeoutUpdateProto) absente du jar proto local
+        // GIVEN
+        var inactivityTimeoutUpdateMsg = TransportProtos.DeviceInactivityTimeoutUpdateProto.newBuilder()
+                .setTenantIdMSB(tenantId.getId().getMostSignificantBits())
+                .setTenantIdLSB(tenantId.getId().getLeastSignificantBits())
+                .setDeviceIdMSB(deviceId.getId().getMostSignificantBits())
+                .setDeviceIdLSB(deviceId.getId().getLeastSignificantBits())
+                .setInactivityTimeout(time)
+                .build();
+
+        doCallRealMethod().when(defaultTbCoreConsumerServiceMock).forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        var runtimeException = new RuntimeException("Something bad happened!");
+        doThrow(runtimeException).when(stateServiceMock).onDeviceInactivityTimeoutUpdate(tenantId, deviceId, time);
+
+        // WHEN
+        defaultTbCoreConsumerServiceMock.forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // THEN
+        then(tbCallbackMock).should(never()).onSuccess();
+        then(tbCallbackMock).should().onFailure(runtimeException);
     }
 
-    @Disabled("proto drift pre-existant yahtec-main — DeviceInactivityTimeoutUpdateProto overload manquante")
     @Test
     public void givenStatsEnabled_whenForwardingInactivityTimeoutUpdateMsgToStateService_thenStatsAreRecorded() {
-        // corps supprimé : overload forwardToStateService(DeviceInactivityTimeoutUpdateProto) absente du jar proto local
+        // GIVEN
+        ReflectionTestUtils.setField(defaultTbCoreConsumerServiceMock, "stats", statsMock);
+        ReflectionTestUtils.setField(defaultTbCoreConsumerServiceMock, "statsEnabled", true);
+
+        var inactivityTimeoutUpdateMsg = TransportProtos.DeviceInactivityTimeoutUpdateProto.newBuilder()
+                .setTenantIdMSB(tenantId.getId().getMostSignificantBits())
+                .setTenantIdLSB(tenantId.getId().getLeastSignificantBits())
+                .setDeviceIdMSB(deviceId.getId().getMostSignificantBits())
+                .setDeviceIdLSB(deviceId.getId().getLeastSignificantBits())
+                .setInactivityTimeout(time)
+                .build();
+
+        doCallRealMethod().when(defaultTbCoreConsumerServiceMock).forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // WHEN
+        defaultTbCoreConsumerServiceMock.forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // THEN
+        then(statsMock).should().log(inactivityTimeoutUpdateMsg);
     }
 
-    @Disabled("proto drift pre-existant yahtec-main — DeviceInactivityTimeoutUpdateProto overload manquante")
     @Test
     public void givenStatsDisabled_whenForwardingInactivityTimeoutUpdateMsgToStateService_thenStatsAreNotRecorded() {
-        // corps supprimé : overload forwardToStateService(DeviceInactivityTimeoutUpdateProto) absente du jar proto local
+        // GIVEN
+        ReflectionTestUtils.setField(defaultTbCoreConsumerServiceMock, "stats", statsMock);
+        ReflectionTestUtils.setField(defaultTbCoreConsumerServiceMock, "statsEnabled", false);
+
+        var inactivityTimeoutUpdateMsg = TransportProtos.DeviceInactivityTimeoutUpdateProto.newBuilder()
+                .setTenantIdMSB(tenantId.getId().getMostSignificantBits())
+                .setTenantIdLSB(tenantId.getId().getLeastSignificantBits())
+                .setDeviceIdMSB(deviceId.getId().getMostSignificantBits())
+                .setDeviceIdLSB(deviceId.getId().getLeastSignificantBits())
+                .setInactivityTimeout(time)
+                .build();
+
+        doCallRealMethod().when(defaultTbCoreConsumerServiceMock).forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // WHEN
+        defaultTbCoreConsumerServiceMock.forwardToStateService(inactivityTimeoutUpdateMsg, tbCallbackMock);
+
+        // THEN
+        then(statsMock).should(never()).log(inactivityTimeoutUpdateMsg);
     }
 
     @Test
