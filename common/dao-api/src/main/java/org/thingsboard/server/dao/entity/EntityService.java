@@ -57,8 +57,10 @@ public interface EntityService {
 
     ListenableFuture<PageData<EntityData>> findEntityDataByQueryAsync(TenantId tenantId, CustomerId customerId, EntityDataQuery query);
 
-    long countEntitiesByQueryScoped(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query);
+    long countEntitiesByQueryScoped(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query);
 
-    PageData<EntityData> findEntityDataByQueryScoped(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query);
+    PageData<EntityData> findEntityDataByQueryScoped(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query);
+
+    ListenableFuture<PageData<EntityData>> findEntityDataByQueryScopedAsync(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query);
 
 }

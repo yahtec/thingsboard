@@ -57,8 +57,21 @@ public class QueryContext {
     }
 
     public QueryContext(TenantId tenantId, EntityType entityType, List<UUID> customerIds, CustomerScopeMode scopeMode) {
+        this(tenantId, null, entityType, customerIds, scopeMode);
+    }
+
+    /**
+     * Scoped constructor that ALSO carries the querying user's own customerId.
+     *
+     * <p>The portfolio scope ({@code customerIds} + {@code scopeMode}) is applied only to the
+     * customer-owned entity types ({@code DEVICE/ASSET/ENTITY_VIEW/EDGE}); for every other entity
+     * type the repository falls back to the legacy own-customer filter, which relies on
+     * {@link #getCustomerId()}. Storing the own customerId here keeps that fallback safe
+     * (equivalent to a non-scoped customer user) instead of leaking tenant-wide.
+     */
+    public QueryContext(TenantId tenantId, CustomerId ownCustomerId, EntityType entityType, List<UUID> customerIds, CustomerScopeMode scopeMode) {
         this.tenantId = tenantId;
-        this.customerId = null;
+        this.customerId = ownCustomerId;
         this.entityType = entityType;
         this.ignorePermissionCheck = false;
         this.customerIds = customerIds;

@@ -441,17 +441,17 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
     }
 
     @Override
-    public long countEntitiesByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query) {
+    public long countEntitiesByQuery(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query) {
         EntityType entityType = resolveEntityType(query.getEntityFilter());
-        SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, entityType, customerIds, scopeMode));
+        SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, ownCustomerId, entityType, customerIds, scopeMode));
         return countEntitiesByQueryCtx(ctx, query);
     }
 
     @Override
-    public PageData<EntityData> findEntityDataByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query) {
+    public PageData<EntityData> findEntityDataByQuery(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query) {
         return transactionTemplate.execute(status -> {
             EntityType entityType = resolveEntityType(query.getEntityFilter());
-            SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, entityType, customerIds, scopeMode));
+            SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, ownCustomerId, entityType, customerIds, scopeMode));
             return findEntityDataByQueryCtx(ctx, query);
         });
     }
@@ -637,10 +637,14 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
         ctx.addUuidParameter("permissions_tenant_id", ctx.getTenantId().getId());
 
         // Couche Yahtec : scope multi-customer (portefeuilles). UNRESTRICTED = comportement historique.
+        // ALLOWLIST (et non plus denylist) : le scoping multi-customer IN/NOT IN ne s'applique
+        // qu'aux types d'entites possedees par un customer via la colonne customer_id
+        // (DEVICE/ASSET/ENTITY_VIEW/EDGE). Pour TOUS les autres types (USER, CUSTOMER, DASHBOARD,
+        // API_USAGE_STATE, ...) on retombe sur la branche historique ci-dessous, qui filtre sur le
+        // customerId PROPRE de l'utilisateur (getCustomerId()) — equivalent a un customer user non
+        // scope, donc sur.
         if (ctx.getScopeMode() != null && ctx.getScopeMode() != CustomerScopeMode.UNRESTRICTED
-                && ctx.getEntityType() != EntityType.CUSTOMER
-                && ctx.getEntityType() != EntityType.API_USAGE_STATE
-                && ctx.getEntityType() != EntityType.DASHBOARD) {
+                && isCustomerScopedEntityType(ctx.getEntityType())) {
             List<UUID> ids = ctx.getCustomerIds();
             if (ctx.getScopeMode() == CustomerScopeMode.INCLUDE) {
                 if (ids == null || ids.isEmpty()) {
@@ -672,6 +676,18 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
         } else {
             return "e.tenant_id=:permissions_tenant_id";
         }
+    }
+
+    /**
+     * Entity types whose rows carry a {@code customer_id} column on which the multi-customer
+     * portfolio scope (INCLUDE/EXCLUDE) is meaningful. Anything else must NOT be filtered with the
+     * portfolio customer set (e.g. tb_user.customer_id NOT IN (...) would leak other parties' users).
+     */
+    private static boolean isCustomerScopedEntityType(EntityType entityType) {
+        return entityType == EntityType.DEVICE
+                || entityType == EntityType.ASSET
+                || entityType == EntityType.ENTITY_VIEW
+                || entityType == EntityType.EDGE;
     }
 
     private String buildEntityFilterQuery(SqlQueryContext ctx, EntityFilter entityFilter) {

@@ -46,12 +46,12 @@ public class JpaEntityQueryDao implements EntityQueryDao {
     }
 
     @Override
-    public long countEntitiesByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query) {
-        return entityQueryRepository.countEntitiesByQuery(tenantId, customerIds, scopeMode, query);
+    public long countEntitiesByQuery(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query) {
+        return entityQueryRepository.countEntitiesByQuery(tenantId, ownCustomerId, customerIds, scopeMode, query);
     }
 
     @Override
-    public PageData<EntityData> findEntityDataByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query) {
-        return entityQueryRepository.findEntityDataByQuery(tenantId, customerIds, scopeMode, query);
+    public PageData<EntityData> findEntityDataByQuery(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query) {
+        return entityQueryRepository.findEntityDataByQuery(tenantId, ownCustomerId, customerIds, scopeMode, query);
     }
 }

@@ -201,22 +201,39 @@ public class BaseEntityService extends AbstractEntityService implements EntitySe
     }
 
     @Override
-    public long countEntitiesByQueryScoped(TenantId tenantId, java.util.List<java.util.UUID> customerIds,
+    public long countEntitiesByQueryScoped(TenantId tenantId, CustomerId ownCustomerId,
+                                           java.util.List<java.util.UUID> customerIds,
                                            org.thingsboard.server.common.data.permission.CustomerScopeMode scopeMode,
                                            EntityCountQuery query) {
         validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
         validateEntityCountQuery(query);
-        return entityQueryDao.countEntitiesByQuery(tenantId, customerIds, scopeMode, query);
+        return entityQueryDao.countEntitiesByQuery(tenantId, ownCustomerId, customerIds, scopeMode, query);
     }
 
     @Override
-    public PageData<EntityData> findEntityDataByQueryScoped(TenantId tenantId, java.util.List<java.util.UUID> customerIds,
+    public PageData<EntityData> findEntityDataByQueryScoped(TenantId tenantId, CustomerId ownCustomerId,
+                                                            java.util.List<java.util.UUID> customerIds,
                                                             org.thingsboard.server.common.data.permission.CustomerScopeMode scopeMode,
                                                             EntityDataQuery query) {
         validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
         validateEntityDataQuery(query);
         // BYPASS EDQS volontaire : le scoping multi-customer n'est appliqué que par le chemin SQL.
-        return entityQueryDao.findEntityDataByQuery(tenantId, customerIds, scopeMode, query);
+        return entityQueryDao.findEntityDataByQuery(tenantId, ownCustomerId, customerIds, scopeMode, query);
+    }
+
+    @Override
+    public ListenableFuture<PageData<EntityData>> findEntityDataByQueryScopedAsync(TenantId tenantId, CustomerId ownCustomerId,
+                                                                                   java.util.List<java.util.UUID> customerIds,
+                                                                                   org.thingsboard.server.common.data.permission.CustomerScopeMode scopeMode,
+                                                                                   EntityDataQuery query) {
+        try {
+            validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
+            validateEntityDataQuery(query);
+        } catch (Exception e) {
+            return Futures.immediateFailedFuture(e);
+        }
+        // BYPASS EDQS volontaire : le scoping multi-customer n'est appliqué que par le chemin SQL.
+        return jpaExecutorService.submit(() -> entityQueryDao.findEntityDataByQuery(tenantId, ownCustomerId, customerIds, scopeMode, query));
     }
 
     private boolean validForEdqs(EntityCountQuery query) { // for compatibility with PE
