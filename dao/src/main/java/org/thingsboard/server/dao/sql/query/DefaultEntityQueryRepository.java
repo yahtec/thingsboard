@@ -357,6 +357,11 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
     public long countEntitiesByQuery(TenantId tenantId, CustomerId customerId, EntityCountQuery query) {
         EntityType entityType = resolveEntityType(query.getEntityFilter());
         SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, customerId, entityType, TenantId.SYS_TENANT_ID.equals(tenantId)));
+        return countEntitiesByQueryCtx(ctx, query);
+    }
+
+    private long countEntitiesByQueryCtx(SqlQueryContext ctx, EntityCountQuery query) {
+        EntityType entityType = ctx.getEntityType();
         if (query.getKeyFilters() == null || query.getKeyFilters().isEmpty()) {
             ctx.append("select count(e.id) from ");
             ctx.append(addEntityTableQuery(ctx, query.getEntityFilter()));
@@ -435,11 +440,33 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
         return findEntityDataByQuery(tenantId, customerId, query, false);
     }
 
+    @Override
+    public long countEntitiesByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query) {
+        EntityType entityType = resolveEntityType(query.getEntityFilter());
+        SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, entityType, customerIds, scopeMode));
+        return countEntitiesByQueryCtx(ctx, query);
+    }
+
+    @Override
+    public PageData<EntityData> findEntityDataByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query) {
+        return transactionTemplate.execute(status -> {
+            EntityType entityType = resolveEntityType(query.getEntityFilter());
+            SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, entityType, customerIds, scopeMode));
+            return findEntityDataByQueryCtx(ctx, query);
+        });
+    }
+
     public PageData<EntityData> findEntityDataByQuery(TenantId tenantId, CustomerId customerId, EntityDataQuery query, boolean ignorePermissionCheck) {
         return transactionTemplate.execute(status -> {
             EntityType entityType = resolveEntityType(query.getEntityFilter());
             SqlQueryContext ctx = new SqlQueryContext(new QueryContext(tenantId, customerId, entityType, ignorePermissionCheck));
-            EntityDataPageLink pageLink = query.getPageLink();
+            return findEntityDataByQueryCtx(ctx, query);
+        });
+    }
+
+    private PageData<EntityData> findEntityDataByQueryCtx(SqlQueryContext ctx, EntityDataQuery query) {
+        EntityType entityType = ctx.getEntityType();
+        EntityDataPageLink pageLink = query.getPageLink();
 
             List<EntityKeyMapping> mappings = EntityKeyMapping.prepareKeyMapping(entityType, query);
 
@@ -544,7 +571,6 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
                 queryLog.logQuery(ctx, dataQuery, System.currentTimeMillis() - startTs);
             }
             return EntityDataAdapter.createEntityData(pageLink, selectionMapping, rows, totalElements);
-        });
     }
 
     private String resolveNullsOrder() {

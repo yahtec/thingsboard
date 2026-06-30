@@ -200,6 +200,25 @@ public class BaseEntityService extends AbstractEntityService implements EntitySe
         return new PageData<>(entities, entityDataByQuery.getTotalPages(), entityDataByQuery.getTotalElements(), entityDataByQuery.hasNext());
     }
 
+    @Override
+    public long countEntitiesByQueryScoped(TenantId tenantId, java.util.List<java.util.UUID> customerIds,
+                                           org.thingsboard.server.common.data.permission.CustomerScopeMode scopeMode,
+                                           EntityCountQuery query) {
+        validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
+        validateEntityCountQuery(query);
+        return entityQueryDao.countEntitiesByQuery(tenantId, customerIds, scopeMode, query);
+    }
+
+    @Override
+    public PageData<EntityData> findEntityDataByQueryScoped(TenantId tenantId, java.util.List<java.util.UUID> customerIds,
+                                                            org.thingsboard.server.common.data.permission.CustomerScopeMode scopeMode,
+                                                            EntityDataQuery query) {
+        validateId(tenantId, id -> INCORRECT_TENANT_ID + id);
+        validateEntityDataQuery(query);
+        // BYPASS EDQS volontaire : le scoping multi-customer n'est appliqué que par le chemin SQL.
+        return entityQueryDao.findEntityDataByQuery(tenantId, customerIds, scopeMode, query);
+    }
+
     private boolean validForEdqs(EntityCountQuery query) { // for compatibility with PE
         return true;
     }
