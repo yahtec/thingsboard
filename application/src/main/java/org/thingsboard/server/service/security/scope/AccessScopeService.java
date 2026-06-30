@@ -24,6 +24,8 @@ public interface AccessScopeService {
 
     boolean canView(SecurityUser user, CustomerId entityCustomerId);
 
+    boolean isReadOnly(SecurityUser user);
+
     void invalidate(CustomerId customerId);
 
     void invalidateAll();
