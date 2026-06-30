@@ -32,8 +32,8 @@ public interface EntityQueryDao {
 
     PageData<EntityData> findEntityDataByQuery(TenantId tenantId, CustomerId customerId, EntityDataQuery query);
 
-    long countEntitiesByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query);
+    long countEntitiesByQuery(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityCountQuery query);
 
-    PageData<EntityData> findEntityDataByQuery(TenantId tenantId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query);
+    PageData<EntityData> findEntityDataByQuery(TenantId tenantId, CustomerId ownCustomerId, List<UUID> customerIds, CustomerScopeMode scopeMode, EntityDataQuery query);
 
 }

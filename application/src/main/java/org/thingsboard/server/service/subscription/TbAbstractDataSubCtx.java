@@ -80,7 +80,7 @@ public abstract class TbAbstractDataSubCtx<T extends AbstractDataQuery<? extends
         } else {
             CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE
                     ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
-            result = entityService.findEntityDataByQueryScoped(getTenantId(), scope.customerUuids(), mode, buildEntityDataQuery());
+            result = entityService.findEntityDataByQueryScoped(getTenantId(), getCustomerId(), scope.customerUuids(), mode, buildEntityDataQuery());
         }
         if (log.isTraceEnabled()) {
             result.getData().forEach(ed -> {
