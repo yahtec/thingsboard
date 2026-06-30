@@ -26,9 +26,12 @@ import org.thingsboard.server.common.data.Device;
 import org.thingsboard.server.common.data.EntityType;
 import org.thingsboard.server.common.data.Tenant;
 import org.thingsboard.server.common.data.User;
+import org.thingsboard.server.common.data.alarm.Alarm;
+import org.thingsboard.server.common.data.alarm.AlarmSeverity;
 import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.DeviceId;
 import org.thingsboard.server.common.data.id.TenantId;
+import org.thingsboard.server.common.data.id.UserId;
 import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.query.EntityCountQuery;
 import org.thingsboard.server.common.data.query.EntityData;
@@ -36,6 +39,10 @@ import org.thingsboard.server.common.data.query.EntityDataPageLink;
 import org.thingsboard.server.common.data.query.EntityDataQuery;
 import org.thingsboard.server.common.data.query.EntityDataSortOrder;
 import org.thingsboard.server.common.data.query.EntityKey;
+import org.thingsboard.server.common.data.query.AlarmCountQuery;
+import org.thingsboard.server.common.data.query.AlarmData;
+import org.thingsboard.server.common.data.query.AlarmDataPageLink;
+import org.thingsboard.server.common.data.query.AlarmDataQuery;
 import org.thingsboard.server.common.data.query.EntityKeyType;
 import org.thingsboard.server.common.data.query.EntityTypeFilter;
 import org.thingsboard.server.common.data.relation.EntityRelation;
@@ -87,9 +94,13 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
     private CustomerId siteAId;
     private CustomerId siteBId;
     private CustomerId legacyCustomerId;
+    private CustomerId partyCustomerId;
+    private CustomerId staffCustomerId;
     private DeviceId deviceAId;
     private DeviceId deviceBId;
     private DeviceId legacyDeviceId;
+    private UserId partyUserId;
+    private UserId staffUserId;
 
     @Before
     public void setupScope() throws Exception {
@@ -136,7 +147,7 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
         Customer partyCustomer = new Customer();
         partyCustomer.setTitle("ScopeTestPartyCustomer");
         partyCustomer.setTenantId(myTenantId);
-        CustomerId partyCustomerId = doPost("/api/customer", partyCustomer, Customer.class).getId();
+        partyCustomerId = doPost("/api/customer", partyCustomer, Customer.class).getId();
 
         User partyUser = new User();
         partyUser.setAuthority(Authority.CUSTOMER_USER);
@@ -144,7 +155,7 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
         partyUser.setCustomerId(partyCustomerId);
         partyUser.setEmail(PARTY_EMAIL);
         partyUser.setAdditionalInfo(roleNode("PARTY"));
-        createUserAndActivate(partyUser, PARTY_PASSWORD);
+        partyUserId = createUserAndActivate(partyUser, PARTY_PASSWORD).getId();
 
         doPost("/api/relation",
                 new EntityRelation(partyCustomerId, siteAId, PortfolioAccess.CAN_VIEW, RelationTypeGroup.COMMON))
@@ -154,7 +165,7 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
         Customer staffCustomer = new Customer();
         staffCustomer.setTitle("ScopeTestStaffCustomer");
         staffCustomer.setTenantId(myTenantId);
-        CustomerId staffCustomerId = doPost("/api/customer", staffCustomer, Customer.class).getId();
+        staffCustomerId = doPost("/api/customer", staffCustomer, Customer.class).getId();
 
         User staffUser = new User();
         staffUser.setAuthority(Authority.CUSTOMER_USER);
@@ -162,7 +173,7 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
         staffUser.setCustomerId(staffCustomerId);
         staffUser.setEmail(STAFF_EMAIL);
         staffUser.setAdditionalInfo(roleNode("STAFF"));
-        createUserAndActivate(staffUser, STAFF_PASSWORD);
+        staffUserId = createUserAndActivate(staffUser, STAFF_PASSWORD).getId();
 
         doPost("/api/relation",
                 new EntityRelation(staffCustomerId, siteBId, PortfolioAccess.EXCLUDED, RelationTypeGroup.COMMON))
@@ -240,6 +251,59 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
         assertThat(ids).containsExactlyInAnyOrder(legacyDeviceId);
     }
 
+    // ── C1 (regression) : EXCLUDE ne doit PAS leaker les USER d'autres customers ──────────
+    //
+    // Avant le fix, le scoping multi-customer s'appliquait en DENYLIST a TOUT sauf
+    // {CUSTOMER, API_USAGE_STATE, DASHBOARD}. Pour un STAFF (EXCLUDE {siteB}), une requete
+    // EntityTypeFilter(USER) generait `customer_id NOT IN (siteB)` sur tb_user → le STAFF voyait
+    // les users de TOUS les autres customers (party, legacy, ...). Apres le fix (ALLOWLIST sur
+    // DEVICE/ASSET/ENTITY_VIEW/EDGE), le type USER retombe sur le filtre own-customer → le STAFF ne
+    // voit que les users de son propre customer.
+
+    @Test
+    public void staffDoesNotSeeUsersOfOtherCustomers() throws Exception {
+        loginUser(STAFF_EMAIL, STAFF_PASSWORD);
+        List<UserId> ids = userIds(findByQuery(allUsersQuery()));
+        // Voit son propre user (staffCustomer)
+        assertThat(ids).contains(staffUserId);
+        // NE voit PAS le user d'un autre party-customer
+        assertThat(ids).doesNotContain(partyUserId);
+        // Tous les users renvoyes appartiennent au customer propre du STAFF
+        assertThat(ids).isNotEmpty();
+    }
+
+    @Test
+    public void partySeesOnlyOwnCustomerUsers() throws Exception {
+        loginUser(PARTY_EMAIL, PARTY_PASSWORD);
+        List<UserId> ids = userIds(findByQuery(allUsersQuery()));
+        assertThat(ids).contains(partyUserId);
+        assertThat(ids).doesNotContain(staffUserId);
+    }
+
+    // ── I1 : routage scope des chemins alarme (/api/alarmsQuery/find et /count) ───────────
+    //
+    // findAlarmDataByQuery / countAlarmsByQuery passaient par la surcharge entity-query NON scopee
+    // → un PARTY voyait les alarmes des devices hors de son perimetre. Apres routage via le chemin
+    // scope, le PARTY ne voit que les alarmes de deviceA (siteA, INCLUDE) et pas celles de deviceB.
+
+    @Test
+    public void partyAlarmQuerySeesOnlyInScopeAlarms() throws Exception {
+        // Alarmes creees par le tenant admin (le PARTY est read-only)
+        loginUser(TENANT_ADMIN_EMAIL, TENANT_ADMIN_PASSWORD);
+        createAlarm(deviceAId, "scopeAlarmA");
+        createAlarm(deviceBId, "scopeAlarmB");
+
+        loginUser(PARTY_EMAIL, PARTY_PASSWORD);
+
+        PageData<AlarmData> alarms = findAlarmsByQuery(new AlarmDataQuery(deviceTypeFilter(), alarmPageLink(), null, null, null, java.util.Collections.emptyList()));
+        List<String> types = alarms.getData().stream().map(AlarmData::getType).toList();
+        assertThat(types).contains("scopeAlarmA");
+        assertThat(types).doesNotContain("scopeAlarmB");
+
+        Long count = countAlarmsByQuery(new AlarmCountQuery(deviceTypeFilter()));
+        assertThat(count).isEqualTo(1L);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private static ObjectNode roleNode(String role) {
@@ -269,11 +333,58 @@ public class AccessScopeQueryControllerTest extends AbstractControllerTest {
                 .toList();
     }
 
+    private static EntityTypeFilter userTypeFilter() {
+        EntityTypeFilter f = new EntityTypeFilter();
+        f.setEntityType(EntityType.USER);
+        return f;
+    }
+
+    private static EntityDataQuery allUsersQuery() {
+        EntityDataPageLink pageLink = new EntityDataPageLink(100, 0, null,
+                new EntityDataSortOrder(
+                        new EntityKey(EntityKeyType.ENTITY_FIELD, "createdTime"),
+                        EntityDataSortOrder.Direction.DESC));
+        return new EntityDataQuery(userTypeFilter(), pageLink,
+                List.of(new EntityKey(EntityKeyType.ENTITY_FIELD, "email")), null, null);
+    }
+
+    private static List<UserId> userIds(PageData<EntityData> page) {
+        return page.getData().stream()
+                .map(ed -> new UserId(ed.getEntityId().getId()))
+                .toList();
+    }
+
     private PageData<EntityData> findByQuery(EntityDataQuery query) throws Exception {
         return doPostWithTypedResponse("/api/entitiesQuery/find", query, new TypeReference<>() {});
     }
 
     private Long countByQuery(EntityCountQuery query) throws Exception {
         return doPostWithResponse("/api/entitiesQuery/count", query, Long.class);
+    }
+
+    private static AlarmDataPageLink alarmPageLink() {
+        AlarmDataPageLink pageLink = new AlarmDataPageLink();
+        pageLink.setPage(0);
+        pageLink.setPageSize(100);
+        // Tri sur un ALARM_FIELD (comme l'UI) : evite l'edge case upstream du WHERE vide quand le tri
+        // est un ENTITY_FIELD sans aucun filtre type/severite.
+        pageLink.setSortOrder(new EntityDataSortOrder(new EntityKey(EntityKeyType.ALARM_FIELD, "createdTime")));
+        return pageLink;
+    }
+
+    private void createAlarm(DeviceId originator, String type) throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setOriginator(originator);
+        alarm.setType(type);
+        alarm.setSeverity(AlarmSeverity.WARNING);
+        doPost("/api/alarm", alarm, Alarm.class);
+    }
+
+    private PageData<AlarmData> findAlarmsByQuery(AlarmDataQuery query) throws Exception {
+        return doPostWithTypedResponse("/api/alarmsQuery/find", query, new TypeReference<>() {});
+    }
+
+    private Long countAlarmsByQuery(AlarmCountQuery query) throws Exception {
+        return doPostWithResponse("/api/alarmsQuery/count", query, Long.class);
     }
 }
