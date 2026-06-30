@@ -56,4 +56,16 @@ class AccessScopeTest {
         assertThat(scope.canView(b)).isTrue();
         assertThat(scope.canView(null)).isFalse();
     }
+
+    @Test
+    void customerUuidsInclude() {
+        AccessScope scope = AccessScope.include(Set.of(a, b));
+        assertThat(scope.customerUuids()).containsExactlyInAnyOrder(a.getId(), b.getId());
+    }
+
+    @Test
+    void customerUuidsExclude() {
+        AccessScope scope = AccessScope.exclude(Set.of(a));
+        assertThat(scope.customerUuids()).containsExactly(a.getId());
+    }
 }

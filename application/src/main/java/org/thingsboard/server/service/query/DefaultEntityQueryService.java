@@ -56,6 +56,7 @@ import org.thingsboard.server.common.data.query.FilterPredicateType;
 import org.thingsboard.server.common.data.query.KeyFilter;
 import org.thingsboard.server.common.data.query.KeyFilterPredicate;
 import org.thingsboard.server.common.data.query.SimpleKeyFilterPredicate;
+import org.thingsboard.server.common.data.permission.CustomerScopeMode;
 import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
 import org.thingsboard.server.dao.entity.EntityService;
@@ -64,6 +65,8 @@ import org.thingsboard.server.dao.timeseries.TimeseriesService;
 import org.thingsboard.server.queue.util.TbCoreComponent;
 import org.thingsboard.server.service.executors.DbCallbackExecutorService;
 import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.security.scope.AccessScope;
+import org.thingsboard.server.service.security.scope.AccessScopeService;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -88,6 +91,9 @@ public class DefaultEntityQueryService implements EntityQueryService {
     private EntityService entityService;
 
     @Autowired
+    private AccessScopeService accessScopeService;
+
+    @Autowired
     private AlarmService alarmService;
 
     @Value("${server.ws.max_entities_per_alarm_subscription:1000}")
@@ -104,7 +110,12 @@ public class DefaultEntityQueryService implements EntityQueryService {
 
     @Override
     public long countEntitiesByQuery(SecurityUser securityUser, EntityCountQuery query) {
-        return entityService.countEntitiesByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+        AccessScope scope = accessScopeService.resolve(securityUser);
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            return entityService.countEntitiesByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+        }
+        CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
+        return entityService.countEntitiesByQueryScoped(securityUser.getTenantId(), scope.customerUuids(), mode, query);
     }
 
     @Override
@@ -117,7 +128,12 @@ public class DefaultEntityQueryService implements EntityQueryService {
                     securityUser
             );
         }
-        return entityService.findEntityDataByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+        AccessScope scope = accessScopeService.resolve(securityUser);
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            return entityService.findEntityDataByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+        }
+        CustomerScopeMode mode = scope.getMode() == AccessScope.Mode.INCLUDE ? CustomerScopeMode.INCLUDE : CustomerScopeMode.EXCLUDE;
+        return entityService.findEntityDataByQueryScoped(securityUser.getTenantId(), scope.customerUuids(), mode, query);
     }
 
     private void resolveDynamicValuesInPredicates(List<KeyFilterPredicate> predicates, SecurityUser user) {
