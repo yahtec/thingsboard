@@ -88,6 +88,15 @@ public class DefaultAccessScopeService implements AccessScopeService {
     }
 
     @Override
+    public boolean isReadOnly(SecurityUser user) {
+        if (user.getAuthority() != Authority.CUSTOMER_USER) {
+            return false;
+        }
+        PortfolioAccess.Role role = PortfolioAccess.roleOf(user);
+        return role == PortfolioAccess.Role.PARTY || role == PortfolioAccess.Role.STAFF;
+    }
+
+    @Override
     public void invalidate(CustomerId customerId) {
         cache.invalidate(customerId);
     }

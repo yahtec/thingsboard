@@ -122,6 +122,26 @@ class DefaultAccessScopeServiceTest {
     }
 
     @Test
+    void tenantAdminIsNotReadOnly() {
+        assertThat(service.isReadOnly(user(Authority.TENANT_ADMIN, null, null))).isFalse();
+    }
+
+    @Test
+    void partyIsReadOnly() {
+        assertThat(service.isReadOnly(user(Authority.CUSTOMER_USER, new CustomerId(UUID.randomUUID()), "PARTY"))).isTrue();
+    }
+
+    @Test
+    void staffIsReadOnly() {
+        assertThat(service.isReadOnly(user(Authority.CUSTOMER_USER, new CustomerId(UUID.randomUUID()), "STAFF"))).isTrue();
+    }
+
+    @Test
+    void legacyCustomerUserIsNotReadOnly() {
+        assertThat(service.isReadOnly(user(Authority.CUSTOMER_USER, new CustomerId(UUID.randomUUID()), null))).isFalse();
+    }
+
+    @Test
     void scopeIsCachedThenInvalidated() {
         CustomerId party = new CustomerId(UUID.randomUUID());
         when(relationService.findByFromAndType(eq(tenantId), eq(party), eq(PortfolioAccess.CAN_VIEW), any()))
