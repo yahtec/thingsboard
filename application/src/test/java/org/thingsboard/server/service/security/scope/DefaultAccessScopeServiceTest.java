@@ -29,6 +29,7 @@ import org.thingsboard.server.common.data.relation.EntityRelation;
 import org.thingsboard.server.common.data.security.Authority;
 import org.thingsboard.server.dao.relation.RelationService;
 import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.user.cache.UserAuthDetailsCache;
 
 import java.util.List;
 import java.util.UUID;
@@ -46,13 +47,16 @@ class DefaultAccessScopeServiceTest {
     @Mock
     RelationService relationService;
 
+    @Mock
+    UserAuthDetailsCache userAuthDetailsCache;
+
     DefaultAccessScopeService service;
 
     final TenantId tenantId = new TenantId(UUID.randomUUID());
 
     @BeforeEach
     void setUp() {
-        service = new DefaultAccessScopeService(relationService);
+        service = new DefaultAccessScopeService(relationService, userAuthDetailsCache);
     }
 
     private SecurityUser user(Authority authority, CustomerId customerId, String role) {

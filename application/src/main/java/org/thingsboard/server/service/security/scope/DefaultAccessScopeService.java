@@ -15,10 +15,12 @@
  */
 package org.thingsboard.server.service.security.scope;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
 import org.thingsboard.server.common.data.EntityType;
+import org.thingsboard.server.common.data.UserAuthDetails;
 import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.EntityId;
 import org.thingsboard.server.common.data.id.TenantId;
@@ -26,6 +28,7 @@ import org.thingsboard.server.common.data.relation.EntityRelation;
 import org.thingsboard.server.common.data.security.Authority;
 import org.thingsboard.server.dao.relation.RelationService;
 import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.user.cache.UserAuthDetailsCache;
 
 import java.time.Duration;
 import java.util.HashSet;
@@ -36,14 +39,33 @@ import java.util.Set;
 public class DefaultAccessScopeService implements AccessScopeService {
 
     private final RelationService relationService;
+    private final UserAuthDetailsCache userAuthDetailsCache;
     private final Cache<CustomerId, AccessScope> cache;
 
-    public DefaultAccessScopeService(RelationService relationService) {
+    public DefaultAccessScopeService(RelationService relationService, UserAuthDetailsCache userAuthDetailsCache) {
         this.relationService = relationService;
+        this.userAuthDetailsCache = userAuthDetailsCache;
         this.cache = Caffeine.newBuilder()
                 .maximumSize(10_000)
                 .expireAfterWrite(Duration.ofMinutes(10))
                 .build();
+    }
+
+    /**
+     * Returns the portfolio role for a user, falling back to a DB lookup if
+     * additionalInfo is absent from the JWT-parsed SecurityUser.
+     */
+    private PortfolioAccess.Role resolveRole(SecurityUser user) {
+        JsonNode info = user.getAdditionalInfo();
+        if (info != null && info.hasNonNull(PortfolioAccess.ROLE_FIELD)) {
+            return PortfolioAccess.roleOf(user);
+        }
+        // JWT tokens do not carry additionalInfo — load the full user from cache/DB.
+        UserAuthDetails details = userAuthDetailsCache.getUserAuthDetails(user.getTenantId(), user.getId());
+        if (details != null) {
+            return PortfolioAccess.roleOf(new SecurityUser(details.user(), true, null));
+        }
+        return PortfolioAccess.Role.LEGACY;
     }
 
     @Override
@@ -52,7 +74,7 @@ public class DefaultAccessScopeService implements AccessScopeService {
             return AccessScope.unrestricted();
         }
         CustomerId customerId = user.getCustomerId();
-        PortfolioAccess.Role role = PortfolioAccess.roleOf(user);
+        PortfolioAccess.Role role = resolveRole(user);
         return cache.get(customerId, cid -> computeScope(user.getTenantId(), cid, role));
     }
 
@@ -92,7 +114,7 @@ public class DefaultAccessScopeService implements AccessScopeService {
         if (user.getAuthority() != Authority.CUSTOMER_USER) {
             return false;
         }
-        PortfolioAccess.Role role = PortfolioAccess.roleOf(user);
+        PortfolioAccess.Role role = resolveRole(user);
         return role == PortfolioAccess.Role.PARTY || role == PortfolioAccess.Role.STAFF;
     }
 
