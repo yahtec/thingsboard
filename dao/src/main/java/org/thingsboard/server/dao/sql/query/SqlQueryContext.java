@@ -144,6 +144,14 @@ public class SqlQueryContext implements SqlParameterSource {
         return securityCtx.getCustomerId();
     }
 
+    public java.util.List<java.util.UUID> getCustomerIds() {
+        return securityCtx.getCustomerIds();
+    }
+
+    public org.thingsboard.server.common.data.permission.CustomerScopeMode getScopeMode() {
+        return securityCtx.getScopeMode();
+    }
+
     public EntityType getEntityType() {
         return securityCtx.getEntityType();
     }
