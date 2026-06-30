@@ -160,4 +160,64 @@ class DefaultAccessScopeServiceTest {
         service.resolve(u);
         verify(relationService, times(2)).findByFromAndType(eq(tenantId), eq(party), eq(PortfolioAccess.CAN_VIEW), any());
     }
+
+    // ── I2 : la cle de cache est composite (customerId, role) ────────────────────────────
+    //
+    // Avant le fix, le cache etait keye sur customerId seul → deux users du MEME customer mais de
+    // roles differents (ex. PARTY vs STAFF) partageaient l'entree, et le premier resolu imposait
+    // son scope au second. Apres le fix, chaque (customer, role) a sa propre entree.
+
+    @Test
+    void sameCustomerDifferentRolesGetDistinctScopes() {
+        CustomerId customer = new CustomerId(UUID.randomUUID());
+        CustomerId site = new CustomerId(UUID.randomUUID());
+        CustomerId excluded = new CustomerId(UUID.randomUUID());
+
+        when(relationService.findByFromAndType(tenantId, customer, PortfolioAccess.CAN_VIEW, PortfolioAccess.RELATION_GROUP))
+                .thenReturn(List.of(rel(customer, site, PortfolioAccess.CAN_VIEW)));
+        when(relationService.findByFromAndType(tenantId, customer, PortfolioAccess.EXCLUDED, PortfolioAccess.RELATION_GROUP))
+                .thenReturn(List.of(rel(customer, excluded, PortfolioAccess.EXCLUDED)));
+
+        SecurityUser party = user(Authority.CUSTOMER_USER, customer, "PARTY");
+        SecurityUser staff = user(Authority.CUSTOMER_USER, customer, "STAFF");
+
+        // PARTY resolu d'abord : INCLUDE {site}
+        AccessScope partyScope = service.resolve(party);
+        assertThat(partyScope.getMode()).isEqualTo(AccessScope.Mode.INCLUDE);
+
+        // STAFF (meme customer) ne doit PAS heriter de l'entree PARTY mise en cache
+        AccessScope staffScope = service.resolve(staff);
+        assertThat(staffScope.getMode()).isEqualTo(AccessScope.Mode.EXCLUDE);
+
+        // Verification croisee : PARTY voit le site et pas l'exclu ; STAFF l'inverse
+        assertThat(service.canView(party, site)).isTrue();
+        assertThat(service.canView(party, excluded)).isFalse();
+        assertThat(service.canView(staff, excluded)).isFalse();
+        assertThat(service.canView(staff, site)).isTrue();
+    }
+
+    @Test
+    void invalidatePurgesAllRolesOfCustomer() {
+        CustomerId customer = new CustomerId(UUID.randomUUID());
+        when(relationService.findByFromAndType(eq(tenantId), eq(customer), eq(PortfolioAccess.CAN_VIEW), any()))
+                .thenReturn(List.of());
+        when(relationService.findByFromAndType(eq(tenantId), eq(customer), eq(PortfolioAccess.EXCLUDED), any()))
+                .thenReturn(List.of());
+
+        SecurityUser party = user(Authority.CUSTOMER_USER, customer, "PARTY");
+        SecurityUser staff = user(Authority.CUSTOMER_USER, customer, "STAFF");
+
+        service.resolve(party);
+        service.resolve(staff);
+        verify(relationService, times(1)).findByFromAndType(eq(tenantId), eq(customer), eq(PortfolioAccess.CAN_VIEW), any());
+        verify(relationService, times(1)).findByFromAndType(eq(tenantId), eq(customer), eq(PortfolioAccess.EXCLUDED), any());
+
+        // Une seule invalidation doit purger LES DEUX entrees (PARTY et STAFF) de ce customer
+        service.invalidate(customer);
+
+        service.resolve(party);
+        service.resolve(staff);
+        verify(relationService, times(2)).findByFromAndType(eq(tenantId), eq(customer), eq(PortfolioAccess.CAN_VIEW), any());
+        verify(relationService, times(2)).findByFromAndType(eq(tenantId), eq(customer), eq(PortfolioAccess.EXCLUDED), any());
+    }
 }

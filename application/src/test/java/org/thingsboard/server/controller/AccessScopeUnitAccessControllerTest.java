@@ -167,4 +167,16 @@ public class AccessScopeUnitAccessControllerTest extends AbstractControllerTest 
                 .andExpect(status().isForbidden())
                 .andExpect(statusReason(containsString(msgErrorPermission)));
     }
+
+    // ── M1 : un PARTY (lecture seule) ne doit PAS pouvoir lire les credentials d'un device,
+    // meme dans son perimetre (operation READ_CREDENTIALS non accordee aux customer users).
+
+    @Test
+    public void partyUserCannotReadDeviceCredentialsInScope() throws Exception {
+        loginUser(PARTY_USER_EMAIL, PARTY_USER_PASSWORD);
+
+        doGet("/api/device/" + deviceAId.getId().toString() + "/credentials")
+                .andExpect(status().isForbidden())
+                .andExpect(statusReason(containsString(msgErrorPermission)));
+    }
 }
