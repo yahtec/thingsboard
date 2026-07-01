@@ -33,11 +33,11 @@ import { ActiveComponentService } from '@core/services/active-component.service'
 import { RouterTabsComponent } from '@home/components/router-tabs.component';
 import { FormBuilder } from '@angular/forms';
 import { ActivatedRoute, NavigationEnd, Router } from '@angular/router';
-import { HttpClient } from '@angular/common/http';
 import { isDefined, isDefinedAndNotNull } from '@core/utils';
 import { Authority } from '@shared/models/authority.enum';
 import { filter } from 'rxjs/operators';
 import { AuthService } from '@core/auth/auth.service';
+import { YahtecRoleService } from '@core/auth/yahtec-role.service';
 
 // Yahtec : dashboard "Mes Installations" custom navigation
 const YAHTEC_DASHBOARD_ID = '0964da30-3e56-11f1-bbfe-e1395562cba0';
@@ -104,8 +104,8 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
               private activeComponentService: ActiveComponentService,
               private fb: FormBuilder,
               private router: Router,
-              private http: HttpClient,
               private authService: AuthService,
+              private yahtecRole: YahtecRoleService,
               public breakpointObserver: BreakpointObserver) {
     super(store);
   }
@@ -160,22 +160,9 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
   }
 
   private checkYahtecComptesAccess() {
-    const auth = this.authState.authUser;
-    if (!auth) { this.yahtecCanAccessComptes = false; return; }
-    if (auth.authority === Authority.TENANT_ADMIN || auth.authority === Authority.SYS_ADMIN) {
-      this.yahtecCanAccessComptes = true;
-      return;
-    }
-    if (auth.authority !== Authority.CUSTOMER_USER) { this.yahtecCanAccessComptes = false; return; }
-    // Fetch is_admin attribute
-    this.http.get<Array<{key: string; value: any}>>(
-      `/api/plugins/telemetry/USER/${auth.userId}/values/attributes/SERVER_SCOPE?keys=is_admin`
-    ).pipe(takeUntil(this.destroy$)).subscribe({
-      next: (attrs) => {
-        this.yahtecCanAccessComptes = (attrs || []).some(a => a.key === 'is_admin' && a.value === true);
-      },
-      error: () => { this.yahtecCanAccessComptes = false; }
-    });
+    this.yahtecRole.canAccessAdminFeatures$().pipe(takeUntil(this.destroy$)).subscribe(
+      v => this.yahtecCanAccessComptes = v
+    );
   }
 
   // Yahtec : navigation vers un state du dashboard

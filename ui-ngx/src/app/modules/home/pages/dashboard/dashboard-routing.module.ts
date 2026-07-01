@@ -26,7 +26,7 @@ import { mergeMap, Observable, of, throwError } from 'rxjs';
 import { Dashboard } from '@app/shared/models/dashboard.models';
 import { DashboardService } from '@core/http/dashboard.service';
 import { DashboardUtilsService } from '@core/services/dashboard-utils.service';
-import { catchError, map, tap } from 'rxjs/operators';
+import { catchError, map } from 'rxjs/operators';
 import { UserSettingsService } from '@core/http/user-settings.service';
 import { UserDashboardAction } from '@shared/models/user-settings.models';
 import { Store } from '@ngrx/store';
@@ -34,7 +34,7 @@ import { AppState } from '@core/core.state';
 import { getCurrentAuthUser } from '@core/auth/auth.selectors';
 import { ConfirmOnExitGuard } from '@core/guards/confirm-on-exit.guard';
 import { MenuId } from '@core/services/menu.models';
-import { HttpClient } from '@angular/common/http';
+import { YahtecRoleService } from '@core/auth/yahtec-role.service';
 
 // Yahtec : dashboards reserves aux admins (TENANT_ADMIN OR CUSTOMER_USER avec is_admin=true)
 const YAHTEC_SUPERVISION_DASHBOARD_ID = '4aa4ccd0-422a-11f1-bbfe-e1395562cba0';
@@ -48,7 +48,7 @@ export class DashboardResolver  {
               private dashboardService: DashboardService,
               private userSettingService: UserSettingsService,
               private dashboardUtils: DashboardUtilsService,
-              private http: HttpClient,
+              private yahtecRole: YahtecRoleService,
               private router: Router) {
   }
 
@@ -60,7 +60,7 @@ export class DashboardResolver  {
     if (YAHTEC_ADMIN_RESTRICTED_DASHBOARDS.has(dashboardId)) {
       const authUser = getCurrentAuthUser(this.store);
       if (authUser && authUser.authority === Authority.CUSTOMER_USER) {
-        return this.yahtecCheckCustomerAdmin(authUser.userId).pipe(
+        return this.yahtecRole.canAccessAdminFeatures$().pipe(
           mergeMap(isAdmin => {
             if (!isAdmin) {
               this.router.navigate(['dashboards', YAHTEC_MES_INSTALLATIONS_ID]);
@@ -72,24 +72,6 @@ export class DashboardResolver  {
       }
     }
     return this.loadDashboard(dashboardId);
-  }
-
-  // Yahtec : verifie is_admin=true en attribute USER. Cache result en sessionStorage.
-  private yahtecCheckCustomerAdmin(userId: string): Observable<boolean> {
-    try {
-      const cached = sessionStorage.getItem('yahtec.user.isAdmin');
-      if (cached === '1') return of(true);
-      if (cached === '0') return of(false);
-    } catch {}
-    return this.http.get<Array<{key: string; value: any}>>(
-      `/api/plugins/telemetry/USER/${userId}/values/attributes/SERVER_SCOPE?keys=is_admin`
-    ).pipe(
-      map((attrs: Array<{key: string; value: any}>) => (attrs || []).some(a => a.key === 'is_admin' && a.value === true)),
-      tap((isAdmin: boolean) => {
-        try { sessionStorage.setItem('yahtec.user.isAdmin', isAdmin ? '1' : '0'); } catch {}
-      }),
-      catchError(() => of(false))
-    );
   }
 
   private loadDashboard(dashboardId: string): Observable<Dashboard> {
