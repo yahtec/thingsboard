@@ -19,7 +19,16 @@ import { select, Store } from '@ngrx/store';
 import { AppState } from '../core.state';
 import { getCurrentOpenedMenuSections, selectAuth, selectIsAuthenticated } from '../auth/auth.selectors';
 import { filter, map, take } from 'rxjs/operators';
-import { buildUserHome, buildUserMenu, HomeSection, MenuId, MenuSection } from '@core/services/menu.models';
+import {
+    buildUserHome,
+    buildUserMenu,
+    HomeSection,
+    MenuId,
+    MenuSection,
+    YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS,
+    yahtecFilterAdminOpsMenu
+} from '@core/services/menu.models';
+import { Authority } from '@shared/models/authority.enum';
 import { Observable, ReplaySubject, Subject } from 'rxjs';
 import { AuthState } from '@core/auth/auth.models';
 import { NavigationEnd, Router } from '@angular/router';
@@ -57,7 +66,13 @@ export class MenuService {
     this.store.pipe(select(selectAuth), take(1)).subscribe(
       (authState: AuthState) => {
         if (authState.authUser) {
-          this.currentMenuSections = buildUserMenu(authState);
+          let menuSections = buildUserMenu(authState);
+          // Yahtec : masquer les sections dev pour les TENANT_ADMIN avec portfolioRole=ADMIN_OPS
+          if (authState.authUser.authority === Authority.TENANT_ADMIN
+              && (authState.userDetails?.additionalInfo as Record<string, any>)?.['portfolioRole'] === 'ADMIN_OPS') {
+              menuSections = yahtecFilterAdminOpsMenu(menuSections, YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS);
+          }
+          this.currentMenuSections = menuSections;
           this.updateOpenedMenuSections();
           this.menuSections$.next(this.currentMenuSections);
           const availableMenuSections = this.allMenuSections(this.currentMenuSections);

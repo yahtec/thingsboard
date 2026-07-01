@@ -1114,3 +1114,32 @@ const homeReferenceToHomeSection = (availableMenuSections: MenuSection[], refere
     return undefined;
   }
 };
+
+// Yahtec : sections masquées pour les TENANT_ADMIN avec portfolioRole=ADMIN_OPS
+// (sections "dev" non pertinentes pour les exploitants opérationnels).
+export const YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS: ReadonlyArray<MenuId> = [
+    MenuId.rule_chains, MenuId.device_profiles, MenuId.asset_profiles,
+    MenuId.widget_library, MenuId.widget_types, MenuId.widgets_bundles,
+    MenuId.scada_symbols, MenuId.javascript_library, MenuId.resources_library,
+    MenuId.calculated_fields, MenuId.version_control, MenuId.otaUpdates,
+    MenuId.edge_management, MenuId.repository_settings, MenuId.auto_commit_settings,
+    MenuId.trendz_settings, MenuId.ai_models
+];
+
+/**
+ * Filtre récursivement les sections dont l'id est dans hiddenIds.
+ * Pur (sans effet de bord) — testable en isolation.
+ */
+export const yahtecFilterAdminOpsMenu = (
+    sections: Array<MenuSection>,
+    hiddenIds: ReadonlyArray<MenuId | string>
+): Array<MenuSection> =>
+    sections
+        .filter(s => !hiddenIds.includes(s.id as MenuId))
+        .map(s => {
+            if (s.pages && s.pages.length) {
+                const filteredPages = yahtecFilterAdminOpsMenu(s.pages, hiddenIds);
+                return { ...s, pages: filteredPages };
+            }
+            return s;
+        });
