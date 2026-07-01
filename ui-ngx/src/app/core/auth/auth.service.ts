@@ -47,6 +47,7 @@ import { OAuth2ClientLoginInfo, PlatformType } from '@shared/models/oauth2.model
 import { isMobileApp } from '@core/utils';
 import { TwoFactorAuthProviderType, TwoFaProviderInfo } from '@shared/models/two-factor-auth.models';
 import { UserPasswordPolicy } from '@shared/models/settings.models';
+import { YahtecRoleService } from '@core/auth/yahtec-role.service';
 
 @Injectable({
     providedIn: 'root'
@@ -62,7 +63,8 @@ export class AuthService {
     private zone: NgZone,
     private utils: UtilsService,
     private translate: TranslateService,
-    private dialog: MatDialog
+    private dialog: MatDialog,
+    private yahtecRole: YahtecRoleService
   ) {
   }
 
@@ -196,6 +198,9 @@ export class AuthService {
     if (captureLastUrl) {
       this.redirectUrl = this.router.url;
     }
+    // Yahtec : vider le cache is_admin à chaque déconnexion pour éviter qu'un
+    // prochain login ne récupère le statut admin d'une session précédente.
+    this.yahtecRole.clearCache();
     if (!ignoreRequest) {
       this.http.post('/api/auth/logout', null, defaultHttpOptions(true, true))
         .subscribe(() => {
