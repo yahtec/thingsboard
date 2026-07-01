@@ -33,9 +33,10 @@ import { EntityAction } from '@home/models/entity/entity-component.models';
 import { forkJoin, Observable, of } from 'rxjs';
 import { select, Store } from '@ngrx/store';
 import { selectAuthUser } from '@core/auth/auth.selectors';
-import { catchError, map, mergeMap, take, tap } from 'rxjs/operators';
+import { map, mergeMap, take } from 'rxjs/operators';
 import { AppState } from '@core/core.state';
 import { Authority } from '@app/shared/models/authority.enum';
+import { YahtecRoleService } from '@core/auth/yahtec-role.service';
 import { CustomerService } from '@core/http/customer.service';
 import { Customer } from '@app/shared/models/customer.model';
 import { MatDialog } from '@angular/material/dialog';
@@ -82,7 +83,6 @@ import {
   ImportDashboardFileDialogComponent
 } from "@home/pages/dashboard/import-dashboard-file-dialog.component";
 import { PageLink } from "@shared/models/page/page-link";
-import { HttpClient } from '@angular/common/http';
 
 // Yahtec : dashboards admin-only (cf dashboard-routing.module.ts)
 const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>(['4aa4ccd0-422a-11f1-bbfe-e1395562cba0']);
@@ -103,7 +103,7 @@ export class DashboardsTableConfigResolver {
               private datePipe: DatePipe,
               private router: Router,
               private dialog: MatDialog,
-              private http: HttpClient) {
+              private yahtecRole: YahtecRoleService) {
 
     this.config.entityType = EntityType.DASHBOARD;
     this.config.entityComponent = DashboardFormComponent;
@@ -235,7 +235,7 @@ export class DashboardsTableConfigResolver {
       take(1),
       mergeMap(authUser => {
         if (!authUser || authUser.authority !== Authority.CUSTOMER_USER) return of(page);
-        return this.yahtecCheckCustomerAdmin(authUser.userId).pipe(
+        return this.yahtecRole.canAccessAdminFeatures$().pipe(
           map(isAdmin => {
             if (isAdmin) return page;
             const filtered = page.data.filter(d => !d.id || !YAHTEC_ADMIN_RESTRICTED_DASHBOARDS.has(d.id.id));
@@ -243,23 +243,6 @@ export class DashboardsTableConfigResolver {
           })
         );
       })
-    );
-  }
-
-  private yahtecCheckCustomerAdmin(userId: string): Observable<boolean> {
-    try {
-      const cached = sessionStorage.getItem('yahtec.user.isAdmin');
-      if (cached === '1') return of(true);
-      if (cached === '0') return of(false);
-    } catch {}
-    return this.http.get<Array<{key: string; value: any}>>(
-      `/api/plugins/telemetry/USER/${userId}/values/attributes/SERVER_SCOPE?keys=is_admin`
-    ).pipe(
-      map((attrs: Array<{key: string; value: any}>) => (attrs || []).some(a => a.key === 'is_admin' && a.value === true)),
-      tap((isAdmin: boolean) => {
-        try { sessionStorage.setItem('yahtec.user.isAdmin', isAdmin ? '1' : '0'); } catch {}
-      }),
-      catchError(() => of(false))
     );
   }
 
