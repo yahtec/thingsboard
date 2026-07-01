@@ -33,7 +33,7 @@ import { EntityAction } from '@home/models/entity/entity-component.models';
 import { forkJoin, Observable, of } from 'rxjs';
 import { select, Store } from '@ngrx/store';
 import { selectAuthUser } from '@core/auth/auth.selectors';
-import { map, mergeMap, take } from 'rxjs/operators';
+import { map, mergeMap, take, tap } from 'rxjs/operators';
 import { AppState } from '@core/core.state';
 import { Authority } from '@app/shared/models/authority.enum';
 import { YahtecRoleService } from '@core/auth/yahtec-role.service';

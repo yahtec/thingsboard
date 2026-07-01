@@ -27,6 +27,7 @@ import { Dashboard } from '@app/shared/models/dashboard.models';
 import { DashboardService } from '@core/http/dashboard.service';
 import { DashboardUtilsService } from '@core/services/dashboard-utils.service';
 import { catchError, map } from 'rxjs/operators';
+
 import { UserSettingsService } from '@core/http/user-settings.service';
 import { UserDashboardAction } from '@shared/models/user-settings.models';
 import { Store } from '@ngrx/store';
