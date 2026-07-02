@@ -1,0 +1,13 @@
+{
+  "_comment": "Portefeuille de DEMO pour valider le RBAC. Aucune credential ici (mdp passe via --new-user-pwd a l'apply). Utilise 2 vraies PAC.",
+  "sites": [
+    { "title": "Site 2602000001", "device": "2602000001" },
+    { "title": "Site 2623001001", "device": "2623001001" }
+  ],
+  "parties": [
+    { "title": "Syndic Demo", "role": "PARTY", "userEmail": "syndic-demo@yahtec.com", "canView": ["Site 2602000001"] }
+  ],
+  "staff": [
+    { "title": "Technicien Demo", "role": "STAFF", "userEmail": "tech-demo@yahtec.com", "excluded": ["Site 2623001001"] }
+  ]
+}
