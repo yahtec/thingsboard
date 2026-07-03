@@ -192,3 +192,31 @@ def ensure_relation(t, from_cust_id, to_cust_id, rel_type, apply):
             'type': rel_type, 'typeGroup': COMMON}
     http_post('/api/relation', body, t)
     print(f'  relation CREE     : {from_cust_id} -{rel_type}-> {to_cust_id}')
+
+
+# ---------- Attributs (marqueur) ----------
+
+def set_server_attribute(t, device_id, key, value, apply):
+    """Pose un attribut SERVER_SCOPE {key: value} sur un device."""
+    if not apply:
+        print(f'  [DRY] poserait attr SERVER {key}={value} sur device {device_id}')
+        return
+    http_post(f'/api/plugins/telemetry/DEVICE/{device_id}/attributes/SERVER_SCOPE', {key: value}, t)
+    print(f'  attr SERVER pose   : {key}={value} sur {device_id}')
+
+
+# ---------- Revocation de relations (grant/revoke declaratif) ----------
+
+def find_relations_from(t, from_id, rel_type):
+    """Relations COMMON {from_id -rel_type-> *} (from = CUSTOMER)."""
+    rels = http_get(f'/api/relations?{_q(fromId=from_id, fromType="CUSTOMER")}', t, allow_404=True) or []
+    return [r for r in rels if r.get('type') == rel_type and r.get('typeGroup') == COMMON]
+
+
+def delete_relation(t, from_id, to_id, rel_type, apply):
+    if not apply:
+        print(f'  [DRY] retirerait relation : {from_id} -{rel_type}-> {to_id}')
+        return
+    p = f'/api/relation?{_q(fromId=from_id, fromType="CUSTOMER", relationType=rel_type, relationTypeGroup=COMMON, toId=to_id, toType="CUSTOMER")}'
+    http_delete(p, t)
+    print(f'  relation RETIREE  : {from_id} -{rel_type}-> {to_id}')
