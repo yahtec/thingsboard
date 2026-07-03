@@ -58,13 +58,16 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
   authState: AuthState = getCurrentAuthState(this.store);
 
   // Yahtec: distinction entre la navbar "native ThingsBoard" (pour les
-  // admins, conserve tout — github badge, fullscreen, rôle, menu 3 points,
-  // sidebar) et la navbar "custom TSmart" (pour les Customer Users et liens
-  // publics — simplifiée, profil cliquable, pas de sidebar).
-  isAdmin = this.authState.authUser?.authority === Authority.SYS_ADMIN
-    || this.authState.authUser?.authority === Authority.TENANT_ADMIN;
+  // TENANT_ADMIN dev — conserve tout : github badge, fullscreen, menu 3 points,
+  // sidebar) et la navbar "custom TSmart" (pour les CUSTOMER_USER ET les
+  // TENANT_ADMIN ADMIN_OPS — simplifiée : barre custom, pas de sidebar).
+  // Les ADMIN_OPS (portfolioRole=ADMIN_OPS) restent TENANT_ADMIN côté backend
+  // (accès unrestricted) mais reçoivent le chrome customer TSmart.
+  isAdmin = (this.authState.authUser?.authority === Authority.SYS_ADMIN
+      || this.authState.authUser?.authority === Authority.TENANT_ADMIN)
+    && (this.authState.userDetails?.additionalInfo as Record<string, any>)?.['portfolioRole'] !== 'ADMIN_OPS';
 
-  // La sidebar latérale est masquée pour les non-admins (= mode TSmart custom).
+  // La sidebar latérale est masquée pour les non-admins et les ADMIN_OPS (= mode TSmart custom).
   forceFullscreen = !this.isAdmin;
 
   // Yahtec : navbar TB native customisee pour le dashboard "Mes Installations"
