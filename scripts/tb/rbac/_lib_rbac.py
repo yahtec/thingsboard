@@ -146,8 +146,8 @@ def ensure_user(t, email, authority, customer_id, role, password, apply):
         print(f'  user role MAJ     : {email} -> {role}')
         return u['id']['id']
     if not apply:
-        print(f'  [DRY] creerait user : {email} authority={authority} role={role}'
-              + ('' if customer_id else ' (tenant admin)'))
+        ta = ' (tenant admin)' if authority == 'TENANT_ADMIN' else ''
+        print(f'  [DRY] creerait user : {email} authority={authority} role={role}{ta}')
         return None
     body = {'email': email, 'authority': authority, 'additionalInfo': {'portfolioRole': role}}
     if customer_id:
