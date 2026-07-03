@@ -6,7 +6,9 @@ Apres 'originator -> device(${id})' :
   -> [Provisionnee ?] (filtre) : ss_site_assigned == 'true' ?
        True  -> 'save TS (per-id device)'      (provisionnee : on ne reassigne pas)
        False -> 'Assign to Yahtec'              (nouvelle : zone d'attente)
-Idempotent (skip si 'Provisionnee ?' existe). Dry-run par defaut ; --apply pour ecrire.
+Idempotent sur le cablage actif (skip si originator --Success--> 'load site_assigned' existe deja).
+Reutilise les nodes orphelins (laisses par revert-guard-assign.py) au lieu d'en dupliquer.
+Dry-run par defaut ; --apply pour ecrire.
 """
 import argparse, json, os, sys, time, urllib.request, urllib.error
 
@@ -65,9 +67,6 @@ def main():
     for req in (ORIG, SAVE, ASSIGN):
         if req not in idx:
             sys.exit(f'Node requis introuvable : {req!r}')
-    if FILTER in idx:
-        print(f'"{FILTER}" existe deja -> idempotent skip')
-        return
     orig_i, save_i, assign_i = idx[ORIG], idx[SAVE], idx[ASSIGN]
 
     getattr_node = {
@@ -94,8 +93,23 @@ def main():
         'additionalInfo': {'layoutX': 720, 'layoutY': 260,
             'description': "True=provisionnee (skip assign). False/absent=zone d'attente yahtec."},
     }
-    nodes.append(getattr_node); getattr_i = len(nodes) - 1
-    nodes.append(filter_node);  filter_i  = len(nodes) - 1
+
+    getattr_existing = idx.get(GETATTR)
+    filter_existing = idx.get(FILTER)
+    guard_active = getattr_existing is not None and any(
+        c['fromIndex'] == orig_i and c['toIndex'] == getattr_existing and c['type'] == 'Success'
+        for c in conns)
+    if guard_active:
+        print('garde deja active -> idempotent skip')
+        return
+    elif getattr_existing is not None and filter_existing is not None:
+        getattr_i, filter_i = getattr_existing, filter_existing
+        reused = True
+        print(f'nodes orphelins reutilises ({GETATTR} @ {getattr_i}, {FILTER} @ {filter_i})')
+    else:
+        nodes.append(getattr_node); getattr_i = len(nodes) - 1
+        nodes.append(filter_node);  filter_i  = len(nodes) - 1
+        reused = False
 
     new_conns = [c for c in conns
                  if not (c['fromIndex'] == orig_i and c['toIndex'] == assign_i and c['type'] == 'Success')]
@@ -108,7 +122,7 @@ def main():
     ]
     meta['connections'] = new_conns
 
-    print(f'nodes: +2 ({GETATTR} @ {getattr_i}, {FILTER} @ {filter_i})')
+    print(f'nodes: {"reused" if reused else "+2"} ({GETATTR} @ {getattr_i}, {FILTER} @ {filter_i})')
     print(f'rewire: {ORIG} --Success--> {GETATTR} --> {FILTER} --True--> {SAVE} / --False--> {ASSIGN}')
     print(f'  drop 1 edge {ORIG} --Success--> {ASSIGN}')
 
