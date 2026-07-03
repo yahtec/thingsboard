@@ -53,6 +53,12 @@ def http_get(p, t, allow_404=False):
         sys.exit(f'GET {p} -> HTTP {e.code}: {e.read().decode("utf-8", errors="replace")[:400]}')
 
 
+def http_get_text(p, t):
+    """GET renvoyant du TEXTE brut (ex. /activationLink renvoie l'URL, pas du JSON)."""
+    with urllib.request.urlopen(_req('GET', p, t), timeout=60) as o:
+        return o.read().decode('utf-8')
+
+
 def http_post(p, b, t):
     try:
         with urllib.request.urlopen(_req('POST', p, t, b), timeout=120) as o:
@@ -155,10 +161,10 @@ def ensure_user(t, email, authority, customer_id, role, password, apply):
     created = http_post('/api/user?sendActivationMail=false', body, t)
     uid = created['id']['id']
     if password:
-        link = http_get(f'/api/user/{uid}/activationLink', t)  # renvoie l'URL avec activateToken
-        tok = urllib.parse.parse_qs(urllib.parse.urlparse(str(link)).query).get('activateToken', [None])[0]
+        link = http_get_text(f'/api/user/{uid}/activationLink', t)  # URL en texte brut avec activateToken
+        tok = urllib.parse.parse_qs(urllib.parse.urlparse(link.strip()).query).get('activateToken', [None])[0]
         if tok:
-            http_post('/api/noauth/activate?sendActivationMail=false', {'activateToken': tok, 'password': password}, t)
+            http_post('/api/noauth/activate', {'activateToken': tok, 'password': password}, t)
             print(f'  user CREE+ACTIVE  : {email} (role={role})')
         else:
             print(f'  user CREE (activation manuelle requise, lien: {link}) : {email}')
