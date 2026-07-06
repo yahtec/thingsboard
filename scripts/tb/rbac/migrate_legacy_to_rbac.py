@@ -8,7 +8,7 @@ B) Pour chaque CUSTOMER_USER sous yahtec avec attribut chaufferies non vide : pa
 C) Supprime les comptes nus at@test.com + ac+user@yahtec.com.
 D) ac@yahtec.com -> additionalInfo.portfolioRole=ADMIN_OPS (update en place).
 
-DRY-RUN par defaut ; --apply pour ecrire ; --new-user-pwd requis avec --apply (recreate users).
+DRY-RUN par defaut ; --apply envoie un mail d'activation aux users recrees (ils choisissent leur mot de passe).
 """
 import argparse, json, os, sys, urllib.parse
 import _lib_rbac as tb
@@ -37,7 +37,7 @@ def _users_under(t, customer_id):
     return out
 
 
-def _migrate_user(t, u, pwd, apply):
+def _migrate_user(t, u, apply):
     email = u['email']
     uid = u['id']['id']
     attrs = tb.get_server_attrs(t, 'USER', uid, USER_ATTR_KEYS)
@@ -82,18 +82,11 @@ def _migrate_user(t, u, pwd, apply):
             body['firstName'] = fn
         if ln:
             body['lastName'] = ln
-        created = tb.http_post('/api/user?sendActivationMail=false', body, t)
+        created = tb.http_post('/api/user?sendActivationMail=true', body, t)
         new_uid = created['id']['id']
-        link = tb.http_get_text(f'/api/user/{new_uid}/activationLink', t)
-        atok = urllib.parse.parse_qs(urllib.parse.urlparse(link.strip()).query).get('activateToken', [None])[0]
-        if atok:
-            tb.http_post('/api/noauth/activate', {'activateToken': atok, 'password': pwd}, t)
-            pwd_note = 'mdp reset'
-        else:
-            pwd_note = f'!! ACTIVATION MANUELLE REQUISE (lien: {link.strip()})'
         if keep:
             tb.save_server_attrs(t, 'USER', new_uid, keep, apply)
-        print(f'    RECREE {email} sous {party_cid} (role={role}), {pwd_note}, attributs re-appliques')
+        print(f"    RECREE {email} sous {party_cid} (role={role}), mail d'activation envoye, attributs re-appliques")
     except BaseException as e:
         print(f'    !!!! ECHEC MIGRATION {email} APRES DELETE — user potentiellement supprime sans remplacement.')
         print(f'         Donnee de recuperation conservee dans : {bpath}')
@@ -111,12 +104,9 @@ def main():
     ap.add_argument('--user', default='je@yahtec.com')
     ap.add_argument('--pwd', default=None)
     ap.add_argument('--apply', action='store_true')
-    ap.add_argument('--new-user-pwd', default=None)
     args = ap.parse_args()
     t = tb.token_or_login(args.user, args.pwd)
     apply = args.apply
-    if apply and not args.new_user_pwd:
-        sys.exit('--new-user-pwd requis avec --apply (recreate users)')
     print(f'== Migration LEGACY -> RBAC — {"APPLY (ecriture prod)" if apply else "DRY-RUN"} — {tb.BASE_URL} ==\n')
 
     print('[A] Deplacement devices pac hybride -> site-customers')
@@ -134,7 +124,7 @@ def main():
 
     print('\n[B] Migration users LEGACY scopes -> PARTY')
     for u in _users_under(t, YAHTEC_CID):
-        _migrate_user(t, u, args.new_user_pwd, apply)
+        _migrate_user(t, u, apply)
 
     print('\n[C] Suppression comptes nus')
     for email in DELETE_BARE:
