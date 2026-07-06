@@ -220,3 +220,27 @@ def delete_relation(t, from_id, to_id, rel_type, apply):
     p = f'/api/relation?{_q(fromId=from_id, fromType="CUSTOMER", relationType=rel_type, relationTypeGroup=COMMON, toId=to_id, toType="CUSTOMER")}'
     http_delete(p, t)
     print(f'  relation RETIREE  : {from_id} -{rel_type}-> {to_id}')
+
+
+# ---------- Lecture devices / attributs (onboarding) ----------
+
+def list_devices_by_profile(t, profile_name):
+    """Tous les devices dont le type (= nom de profil) == profile_name (pagine)."""
+    out, page = [], 0
+    while True:
+        d = http_get(f'/api/tenant/devices?{_q(pageSize=200, page=page)}', t)
+        for dev in (d or {}).get('data', []):
+            if dev.get('type') == profile_name:
+                out.append(dev)
+        if not (d or {}).get('hasNext'):
+            break
+        page += 1
+    return out
+
+
+def get_server_attrs(t, entity_type, entity_id, keys=None):
+    """Attributs SERVER_SCOPE {key: value} (optionnellement filtres par keys)."""
+    p = f'/api/plugins/telemetry/{entity_type}/{entity_id}/values/attributes/SERVER_SCOPE'
+    if keys:
+        p += '?keys=' + ','.join(keys)
+    return {a['key']: a['value'] for a in (http_get(p, t) or [])}
