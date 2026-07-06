@@ -244,3 +244,12 @@ def get_server_attrs(t, entity_type, entity_id, keys=None):
     if keys:
         p += '?keys=' + ','.join(keys)
     return {a['key']: a['value'] for a in (http_get(p, t) or [])}
+
+
+def save_server_attrs(t, entity_type, entity_id, attrs, apply):
+    """Pose plusieurs attributs SERVER_SCOPE d'un coup ({key: value})."""
+    if not apply:
+        print(f'  [DRY] poserait attrs SERVER {list(attrs)} sur {entity_type} {entity_id}')
+        return
+    http_post(f'/api/plugins/telemetry/{entity_type}/{entity_id}/attributes/SERVER_SCOPE', attrs, t)
+    print(f'  attrs SERVER poses : {list(attrs)} sur {entity_id}')
