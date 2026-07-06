@@ -10,7 +10,7 @@ D) ac@yahtec.com -> additionalInfo.portfolioRole=ADMIN_OPS (update en place).
 
 DRY-RUN par defaut ; --apply pour ecrire ; --new-user-pwd requis avec --apply (recreate users).
 """
-import argparse, json, sys, urllib.parse
+import argparse, json, os, sys, urllib.parse
 import _lib_rbac as tb
 
 YAHTEC_CID = '2e521d10-3e5d-11f1-bbfe-e1395562cba0'
@@ -64,24 +64,42 @@ def _migrate_user(t, u, pwd, apply):
         print(f'    [DRY] recreerait {email} sous party-customer (role={role}) + re-appliquerait attributs')
         return
     fn, ln = u.get('firstName'), u.get('lastName')
-    tb.http_delete(f'/api/user/{uid}', t)
-    body = {'email': email, 'authority': 'CUSTOMER_USER',
-            'customerId': {'id': party_cid, 'entityType': 'CUSTOMER'},
-            'additionalInfo': dict(KIOSK_INFO, portfolioRole=role)}
-    if fn:
-        body['firstName'] = fn
-    if ln:
-        body['lastName'] = ln
-    created = tb.http_post('/api/user?sendActivationMail=false', body, t)
-    new_uid = created['id']['id']
-    link = tb.http_get_text(f'/api/user/{new_uid}/activationLink', t)
-    atok = urllib.parse.parse_qs(urllib.parse.urlparse(link.strip()).query).get('activateToken', [None])[0]
-    if atok:
-        tb.http_post('/api/noauth/activate', {'activateToken': atok, 'password': pwd}, t)
     keep = {k: attrs[k] for k in USER_ATTR_KEYS if k in attrs}
-    if keep:
-        tb.save_server_attrs(t, 'USER', new_uid, keep, apply)
-    print(f'    RECREE {email} sous {party_cid} (role={role}), mdp reset, attributs re-appliques')
+    # Filet de securite (migration destructive) : dumper la donnee de recuperation AVANT le delete.
+    recovery = {'email': email, 'firstName': fn, 'lastName': ln,
+                'party_customer_id': party_cid, 'portfolioRole': role, 'server_attrs': keep}
+    bdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migration-backup')
+    os.makedirs(bdir, exist_ok=True)
+    bpath = os.path.join(bdir, email.replace('/', '_').replace('@', '_at_') + '.json')
+    with open(bpath, 'w', encoding='utf-8') as f:
+        json.dump(recovery, f, ensure_ascii=False, indent=2)
+    try:
+        tb.http_delete(f'/api/user/{uid}', t)
+        body = {'email': email, 'authority': 'CUSTOMER_USER',
+                'customerId': {'id': party_cid, 'entityType': 'CUSTOMER'},
+                'additionalInfo': dict(KIOSK_INFO, portfolioRole=role)}
+        if fn:
+            body['firstName'] = fn
+        if ln:
+            body['lastName'] = ln
+        created = tb.http_post('/api/user?sendActivationMail=false', body, t)
+        new_uid = created['id']['id']
+        link = tb.http_get_text(f'/api/user/{new_uid}/activationLink', t)
+        atok = urllib.parse.parse_qs(urllib.parse.urlparse(link.strip()).query).get('activateToken', [None])[0]
+        if atok:
+            tb.http_post('/api/noauth/activate', {'activateToken': atok, 'password': pwd}, t)
+            pwd_note = 'mdp reset'
+        else:
+            pwd_note = f'!! ACTIVATION MANUELLE REQUISE (lien: {link.strip()})'
+        if keep:
+            tb.save_server_attrs(t, 'USER', new_uid, keep, apply)
+        print(f'    RECREE {email} sous {party_cid} (role={role}), {pwd_note}, attributs re-appliques')
+        os.remove(bpath)
+    except BaseException as e:
+        print(f'    !!!! ECHEC MIGRATION {email} APRES DELETE — user potentiellement supprime sans remplacement.')
+        print(f'         Donnee de recuperation conservee dans : {bpath}')
+        print(f'         Erreur : {e}')
+        raise
 
 
 def main():
