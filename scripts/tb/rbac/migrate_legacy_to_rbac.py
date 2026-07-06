@@ -94,12 +94,16 @@ def _migrate_user(t, u, pwd, apply):
         if keep:
             tb.save_server_attrs(t, 'USER', new_uid, keep, apply)
         print(f'    RECREE {email} sous {party_cid} (role={role}), {pwd_note}, attributs re-appliques')
-        os.remove(bpath)
     except BaseException as e:
         print(f'    !!!! ECHEC MIGRATION {email} APRES DELETE — user potentiellement supprime sans remplacement.')
         print(f'         Donnee de recuperation conservee dans : {bpath}')
         print(f'         Erreur : {e}')
         raise
+    # Succes : retirer le backup de recuperation (echec de suppression sans gravite -> il persiste)
+    try:
+        os.remove(bpath)
+    except OSError:
+        pass
 
 
 def main():
