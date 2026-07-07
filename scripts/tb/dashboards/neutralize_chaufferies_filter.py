@@ -1,122 +1,107 @@
 #!/usr/bin/env python3
-"""Neutralise le filtre client 'chaufferies' d'un dashboard : l'expression
-fetch(...keys=chaufferies...) resolue en Set|null est remplacee par
-Promise.resolve(null). Idempotent. Dry-run par defaut ; --apply pour ecrire.
+"""Neutralise le filtre client 'chaufferies' d'un dashboard, SANS toucher a la
+structure JS du widget.
+
+Approche (balance-neutral, zero risque de corruption) : on renomme la CLE d'URL
+'keys=chaufferies' -> 'keys=rbaconly_c4' dans le(s) fetch(...) du widget. La cle
+'rbaconly_c4' n'existe pas cote TB -> l'endpoint renvoie [] -> le code existant
+`var v = arr.filter(a=>a.key==='chaufferies')[0]; if (!v) return null;` resout la
+promesse a null -> AUCUN filtre client -> le menu affiche ce que l'alias renvoie
+(deja scope par le RBAC serveur). Le chemin `null` est exactement celui, eprouve,
+des tenant-admins. On ne remplace qu'une chaine sans parentheses/accolades par une
+autre : l'equilibrage du JS est PRESERVE (verifie par --self-test).
+
+Historique : une 1re approche (remplacer toute l'expression fetch(...).catch(...)
+par Promise.resolve(null)) a ete abandonnee — sur la vraie structure
+`(function(){ ... return fetch()...; }).catch()`, le .catch est chaine a l'IIFE
+englobante, et la regex mangeait le `})` de l'IIFE (balance -1,-1) -> JS casse.
 
 Usage: TB_TOKEN=... python neutralize_chaufferies_filter.py <dashboardId> [--apply]
        python neutralize_chaufferies_filter.py --self-test
 """
-import argparse, json, os, re, sys
+import argparse, json, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rbac'))
 import _lib_rbac as tb
 
-# Remplace toute expression fetch(...) chainee (.then/.catch) qui contient
-# 'keys=chaufferies' par Promise.resolve(null). Regex bornee au fetch( ... )
-# jusqu'a la fermeture complete du .catch(function(...){...}) final.
-# NB : le prefixe utilise [^;]*? (et non [^'"]*) entre la quote d'ouverture et
-# 'keys=chaufferies' pour traverser la concatenation de chaines JS
-# ('...'+uid+'...keys=chaufferies') qu'utilise le widget reel.
-# NB2 : la queue ne s'arrete plus au premier ')' suivi de ';' (ancien bug :
-# un catch dont le corps contient un appel-puis-';' interne, ex.
-# function(){ console.log('e'); return null; }, n'etait matche que
-# partiellement et le replace laissait un fragment JS pendouillant). La
-# queue matche desormais tout le callback function(...){ ... } du catch en
-# excluant les accolades imbriquees ([^{}]*) : elle consomme donc le corps
-# du catch en entier quand il est plat, et echoue proprement (0 match, texte
-# inchange) si le corps contient des accolades imbriquees (if/for/etc.),
-# plutot que de produire un JS corrompu (verifie par --self-test).
-FETCH_RE = re.compile(
-    r"fetch\(\s*['\"][^;]*?keys=chaufferies.*?\.catch\(function\s*\([^)]*\)\s*\{[^{}]*\}\s*\)",
-    re.DOTALL)
-REPLACEMENT = 'Promise.resolve(null)'
+NEEDLE = 'keys=chaufferies'      # cle d'URL du fetch de filtrage
+REPL = 'keys=rbaconly_c4'        # cle inexistante -> [] -> filtre resout null. NE contient PAS 'chaufferies'.
 
 def neutralize(text):
-    """Retourne (nouveau_texte, nb_remplacements)."""
-    return FETCH_RE.subn(REPLACEMENT, text)
+    """Retourne (nouveau_texte, nb_remplacements). Renomme la cle d'URL uniquement."""
+    n = text.count(NEEDLE)
+    return (text.replace(NEEDLE, REPL), n) if n else (text, 0)
 
 def walk(obj, counter, spans=None):
-    """Applique la neutralisation sur toutes les chaines JSON du dashboard.
-    Si spans est une liste, y accumule le texte exact (avant remplacement)
-    de chaque expression neutralisee, pour affichage en dry-run (l'operateur
-    peut ainsi verifier a l'oeil ce qui est effectivement remplace, les
-    compteurs seuls ayant ete juges insuffisants)."""
+    """Applique neutralize() sur toutes les chaines JSON du dashboard.
+    Si spans est une liste, y accumule un extrait de contexte autour de chaque
+    occurrence renommee (pour relecture en dry-run)."""
     if isinstance(obj, str):
         if spans is not None:
-            spans.extend(m.group(0) for m in FETCH_RE.finditer(obj))
-        new, n = neutralize(obj)
-        counter[0] += n
-        return new
+            i = obj.find(NEEDLE)
+            while i != -1:
+                spans.append(obj[max(0, i - 90):i + 60])
+                i = obj.find(NEEDLE, i + 1)
+        return neutralize(obj)[0] if _bump(obj, counter) else obj
     if isinstance(obj, list):
         return [walk(x, counter, spans) for x in obj]
     if isinstance(obj, dict):
         return {k: walk(v, counter, spans) for k, v in obj.items()}
     return obj
 
-# Sample JS extrait du widget reel (structure .then/.then/.catch avec ';'
-# final) : sert de fixture hors-ligne pour --self-test, sans toucher au reseau.
+def _bump(text, counter):
+    n = text.count(NEEDLE)
+    counter[0] += n
+    return n > 0
+
+def _balance(t):
+    """Delta (parentheses, accolades, crochets) — 0 partout = equilibre."""
+    return (t.count('(') - t.count(')'),
+            t.count('{') - t.count('}'),
+            t.count('[') - t.count(']'))
+
+# Fixture fidele a la structure REELLE du widget (IIFE englobante + .catch chaine
+# a l'IIFE + `})();` final), et NON une chaine .then().catch() simplifiee.
 SELFTEST_SAMPLE = (
-    "var p = fetch('/api/plugins/telemetry/USER/'+uid+'/values/attributes/SERVER_SCOPE?keys=chaufferies', { headers: H() })\n"
-    "  .then(function(rr){ return rr.ok ? rr.json() : []; })\n"
-    "  .then(function(arr){ var v = (arr||[]).filter(function(a){return a.key==='chaufferies';})[0];\n"
-    "     if (!v) return null; var list = v.value; if (typeof list==='string'){try{list=JSON.parse(list);}catch(e){list=[];}}\n"
-    "     if (!Array.isArray(list)||!list.length) return null; var s=new Set(); list.forEach(function(x){s.add(String(x));}); return s; })\n"
-    "  .catch(function(){ return null; });\n")
-
-# Variante du sample ci-dessus avec un corps de catch NON trivial : un
-# appel de fonction suivi d'un ';' interne (console.log('e');). Reproduit le
-# bug corrige par Fix A, ou l'ancienne regex (tete .*? bornee au premier ')'
-# suivi de ';') coupait le catch en plein milieu et laissait un fragment JS
-# pendouillant ('; return null; });') dans le dashboard neutralise.
-SELFTEST_SAMPLE_CATCH_MODERATE = SELFTEST_SAMPLE.replace(
-    '.catch(function(){ return null; });',
-    ".catch(function(){ console.log('e'); return null; });")
-
-# Variante avec un corps de catch contenant des accolades imbriquees
-# (if(x){...}) : la nouvelle regex ([^{}]* dans la queue) ne peut pas la
-# consommer entierement et doit donc echouer proprement (0 match, texte
-# inchange) plutot que produire un remplacement partiel/corrompu.
-SELFTEST_SAMPLE_CATCH_NESTED = SELFTEST_SAMPLE.replace(
-    '.catch(function(){ return null; });',
-    '.catch(function(){ if(x){ y(); } return null; });')
+    "SF.allowedP = (function(){\n"
+    "      if (!u || !u.authority) return null;\n"
+    "      if (u.authority === 'TENANT_ADMIN') return null;\n"
+    "      var uid = u.id && u.id.id; if (!uid) return null;\n"
+    "      return fetch('/api/plugins/telemetry/USER/'+uid+'/values/attributes/SERVER_SCOPE?keys=chaufferies', { headers: H() })\n"
+    "        .then(function(rr){ return rr.ok ? rr.json() : []; })\n"
+    "        .then(function(arr){\n"
+    "          var v = (arr || []).filter(function(a){ return a.key === 'chaufferies'; })[0];\n"
+    "          if (!v) return null; var list = v.value;\n"
+    "          if (!Array.isArray(list) || !list.length) return null;\n"
+    "          var s = new Set(); list.forEach(function(x){ s.add(String(x)); }); return s;\n"
+    "        });\n"
+    "    }).catch(function(){ return null; });\n"
+    "})();\n")
 
 def self_test():
-    """Verifie neutralize() hors-ligne (aucun appel reseau). Leve AssertionError si KO."""
-    # Cas 1 : catch trivial -> neutralisation complete + idempotence.
-    out1, n1 = neutralize(SELFTEST_SAMPLE)
-    assert n1 == 1, f'attendu 1 remplacement sur le sample, obtenu {n1}'
-    assert 'Promise.resolve(null)' in out1, 'Promise.resolve(null) absent du resultat'
-    assert 'keys=chaufferies' not in out1, 'keys=chaufferies encore present apres neutralisation'
-
-    out2, n2 = neutralize(out1)
-    assert n2 == 0, f'non idempotent : {n2} remplacement(s) supplementaire(s) sur une 2e passe'
-
-    # Cas 2 : catch avec appel-puis-';' interne -> doit etre consomme EN
-    # ENTIER. Si la regex coupe prematurement (ancien bug), le fragment
-    # 'console.log' survit dans le resultat -> JS corrompu.
-    assert SELFTEST_SAMPLE_CATCH_MODERATE != SELFTEST_SAMPLE, 'fixture catch-moderate mal construite (replace no-op)'
-    out3, n3 = neutralize(SELFTEST_SAMPLE_CATCH_MODERATE)
-    assert n3 == 1, f'attendu 1 remplacement sur le sample catch-moderate, obtenu {n3}'
-    assert 'console.log' not in out3, ("fragment \"console.log\" encore present apres neutralisation "
-                                       "(catch coupe prematurement -> JS corrompu)")
-
-    # Cas 3 : catch avec accolades imbriquees -> doit echouer proprement
-    # (0 match, texte totalement inchange), jamais de remplacement partiel.
-    assert SELFTEST_SAMPLE_CATCH_NESTED != SELFTEST_SAMPLE, 'fixture catch-nested mal construite (replace no-op)'
-    out4, n4 = neutralize(SELFTEST_SAMPLE_CATCH_NESTED)
-    assert n4 == 0, f'attendu 0 remplacement sur le sample catch-nested (accolades imbriquees), obtenu {n4}'
-    assert out4 == SELFTEST_SAMPLE_CATCH_NESTED, 'texte modifie alors que 0 remplacement attendu (corruption)'
-
-    # Cas 4 : fetch non lie (keys=other) -> jamais touche.
-    _, n5 = neutralize("fetch('x?keys=other').catch(function(){});")
-    assert n5 == 0, 'ne doit pas neutraliser un fetch keys=other non lie'
-
+    """Verifie neutralize() hors-ligne (aucun reseau). Leve AssertionError si KO."""
+    out, n = neutralize(SELFTEST_SAMPLE)
+    assert n == 1, f'attendu 1 renommage, obtenu {n}'
+    assert 'keys=chaufferies' not in out, "'keys=chaufferies' encore present"
+    assert 'keys=rbaconly_c4' in out, 'cle de remplacement absente'
+    # LE point cle : la structure JS est intacte -> equilibrage PRESERVE.
+    assert _balance(out) == _balance(SELFTEST_SAMPLE), (
+        f'balance modifiee ! avant={_balance(SELFTEST_SAMPLE)} apres={_balance(out)} -> corruption')
+    # Le chemin null existant est preserve (structure non touchee).
+    for marker in ('if (!v) return null;', '.catch(function(){ return null; })', '})();'):
+        assert marker in out, f'marqueur structurel disparu : {marker!r}'
+    # Idempotence : 2e passe ne renomme rien de plus.
+    _, n2 = neutralize(out)
+    assert n2 == 0, f'non idempotent : {n2} renommage(s) en 2e passe'
+    # fetch non lie (keys=other) -> jamais touche.
+    _, n3 = neutralize("fetch('x?keys=other')")
+    assert n3 == 0, 'ne doit pas toucher un fetch keys=other'
     print('SELF-TEST OK')
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dashboard_id', nargs='?', default=None)
     ap.add_argument('--apply', action='store_true')
-    ap.add_argument('--self-test', action='store_true', help='teste neutralize() hors-ligne et quitte (aucun reseau)')
+    ap.add_argument('--self-test', action='store_true', help='teste neutralize() hors-ligne et quitte')
     ap.add_argument('--user', default=os.environ.get('TB_USER', 'je@yahtec.com'))
     ap.add_argument('--pwd', default=os.environ.get('TB_PWD'))
     args = ap.parse_args()
@@ -124,45 +109,38 @@ def main():
     if args.self_test:
         self_test()
         return
-
     if not args.dashboard_id:
         ap.error('dashboard_id est requis (sauf en mode --self-test)')
 
     t = tb.token_or_login(args.user, args.pwd)
-
     d = tb.http_get(f'/api/dashboard/{args.dashboard_id}', t)
-    before = json.dumps(d.get('configuration', {}), ensure_ascii=False)
-    n_before_fetch = before.count('keys=chaufferies')
+    cfg = d.get('configuration', {})
+    before = json.dumps(cfg, ensure_ascii=False)
+    bal_before = _balance(before)
+    n_before = before.count(NEEDLE)
     counter = [0]
     spans = []
-    d['configuration'] = walk(d.get('configuration', {}), counter, spans)
+    d['configuration'] = walk(cfg, counter, spans)
     after = json.dumps(d.get('configuration', {}), ensure_ascii=False)
-    n_after_fetch = after.count('keys=chaufferies')
+    n_after = after.count(NEEDLE)
+    bal_after = _balance(after)
 
     print(f'dashboard {args.dashboard_id}')
-    print(f'  occurrences "keys=chaufferies" AVANT={n_before_fetch}  APRES={n_after_fetch}')
-    print(f'  expressions fetch neutralisees = {counter[0]}')
-
+    print(f'  occurrences "{NEEDLE}" AVANT={n_before}  APRES={n_after}  (renommees={counter[0]})')
+    print(f'  balance JSON AVANT={bal_before}  APRES={bal_after}')
     if not args.apply and spans:
-        # Dry-run : affiche le texte exact matche (avant remplacement) pour
-        # que l'operateur puisse le relire, les compteurs seuls ne suffisant
-        # pas a garantir l'absence de coupe partielle.
         for i, s in enumerate(spans, 1):
-            snippet = s if len(s) <= 300 else s[:300] + '...'
-            print(f'--- span neutralise {i}/{len(spans)} ---')
-            print(snippet)
+            print(f'--- contexte renomme {i}/{len(spans)} ---\n{s}')
 
-    if n_before_fetch > 0 and counter[0] == 0:
-        # Le motif cible est present mais la regex n'a rien remplace : mieux
-        # vaut abandonner que POSTer un dashboard inchange en pretendant
-        # avoir applique la neutralisation.
-        print('  ERREUR : "keys=chaufferies" present mais aucune expression neutralisee '
-              '(FETCH_RE ne matche pas ce JS) — ABANDON, rien ecrit.', file=sys.stderr)
+    # Garde-fou balance : le renommage NE DOIT PAS changer l'equilibrage.
+    if bal_after != bal_before:
+        print('  ERREUR : balance modifiee par le renommage — ABANDON, rien ecrit.', file=sys.stderr)
+        sys.exit(4)
+    if n_before > 0 and counter[0] == 0:
+        print(f'  ERREUR : "{NEEDLE}" present mais aucun renommage — ABANDON.', file=sys.stderr)
         sys.exit(3)
-
     if counter[0] == 0:
         print('  (rien a faire : deja neutralise)')
-
     if not args.apply:
         print('DRY-RUN : rien ecrit. --apply pour appliquer.')
         return
