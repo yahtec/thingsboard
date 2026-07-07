@@ -64,7 +64,9 @@ def _migrate_user(t, u, apply):
         print(f'    [DRY] recreerait {email} sous party-customer (role={role}) + re-appliquerait attributs')
         return
     fn, ln = u.get('firstName'), u.get('lastName')
-    keep = {k: attrs[k] for k in USER_ATTR_KEYS if k in attrs}
+    # Chantier #4 : ne plus poser l'attribut chaufferies (bascule CanView-only).
+    # La CanView (creee ci-dessus) porte l'acces ; l'attribut est laisse inerte.
+    keep = {k: attrs[k] for k in USER_ATTR_KEYS if k in attrs and k != 'chaufferies'}
     # Filet de securite (migration destructive) : dumper la donnee de recuperation AVANT le delete.
     recovery = {'email': email, 'firstName': fn, 'lastName': ln,
                 'party_customer_id': party_cid, 'portfolioRole': role, 'server_attrs': keep}
