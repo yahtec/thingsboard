@@ -46,3 +46,5 @@ scripts/server/__pycache__/
 notes/
 # Yahtec : plans/specs/notes superpowers (artefacts IA, hors appli TB)
 docs/superpowers/
+# Yahtec : scratchpad IA (backups, snapshots, copies de travail tb-notify, tests jetables, tokens) — hors git
+scratchpad/
