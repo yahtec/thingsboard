@@ -19,7 +19,11 @@ EXCLUDED = 'Excluded'
 COMMON = 'COMMON'
 KIOSK_DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'  # dashboard "Mes Installations"
 KIOSK_INFO = {'homeDashboardId': KIOSK_DASH, 'homeDashboardHideToolbar': True,
-              'defaultDashboardId': KIOSK_DASH, 'defaultDashboardFullscreen': True}
+              # defaultDashboardFullscreen=False : JAMAIS True pour un non-dev (PARTY/STAFF/ADMIN_OPS).
+              # True -> route /dashboard/{id} SINGULIER = fullscreen standalone SANS yahtec-nav (barre
+              # TB native) ; False -> /dashboards/{id} PLURIEL = home.component AVEC yahtec-nav.
+              # Cf spec chrome 3 roles. Le landing reste assure par defaultDashboardId+homeDashboardId.
+              'defaultDashboardId': KIOSK_DASH, 'defaultDashboardFullscreen': False}
 
 
 def login(user, pwd):
