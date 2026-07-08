@@ -17,6 +17,7 @@ BASE_URL = os.environ.get('TB_BASE_URL', 'https://thingsboard.tsmart.fr')
 CANVIEW = 'CanView'
 EXCLUDED = 'Excluded'
 COMMON = 'COMMON'
+KIOSK_DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'  # dashboard "Mes Installations"
 
 
 def login(user, pwd):
@@ -116,6 +117,26 @@ def assign_device_to_customer(t, device_id, customer_id, apply):
         return
     http_post(f'/api/customer/{customer_id}/device/{device_id}', {}, t)
     print(f'  device ASSIGNE    : {device_id} -> customer {customer_id}')
+
+
+# ---------- Dashboards ----------
+
+def customer_has_dashboard(t, customer_id, dashboard_id):
+    """True si dashboard_id figure déjà parmi les dashboards assignés au customer."""
+    d = http_get(f'/api/customer/{customer_id}/dashboards?{_q(pageSize=200, page=0)}', t)
+    return any((x.get('id') or {}).get('id') == dashboard_id for x in (d or {}).get('data', []))
+
+
+def assign_dashboard_to_customer(t, customer_id, dashboard_id, apply):
+    """Assigne un dashboard à un customer (idempotent : no-op si déjà assigné)."""
+    if customer_has_dashboard(t, customer_id, dashboard_id):
+        print(f'  dashboard OK      : {dashboard_id} deja assigne -> customer {customer_id}')
+        return
+    if not apply:
+        print(f'  [DRY] assignerait dashboard {dashboard_id} -> customer {customer_id}')
+        return
+    http_post(f'/api/customer/{customer_id}/dashboard/{dashboard_id}', {}, t)
+    print(f'  dashboard ASSIGNE : {dashboard_id} -> customer {customer_id}')
 
 
 # ---------- Users ----------
