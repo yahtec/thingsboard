@@ -8,7 +8,7 @@ additionalInfo.portfolioRole in {PARTY, STAFF}. Idempotent, dry-run par défaut.
   python assign_dashboard_party_customers.py --apply --user je@yahtec.com --pwd '***'
   python assign_dashboard_party_customers.py --self-test                        # offline
 """
-import argparse, sys
+import argparse
 import _lib_rbac as tb
 
 YAHTEC_CID = '2e521d10-3e5d-11f1-bbfe-e1395562cba0'

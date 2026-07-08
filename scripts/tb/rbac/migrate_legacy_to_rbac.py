@@ -14,13 +14,10 @@ import argparse, json, os, sys, urllib.parse
 import _lib_rbac as tb
 
 YAHTEC_CID = '2e521d10-3e5d-11f1-bbfe-e1395562cba0'
-KIOSK_DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'
 PROFILE = 'pac hybride'
 USER_ATTR_KEYS = ['chaufferies', 'droit_acces', 'societe',
                   'access_rapport', 'access_retroview', 'access_spherys', 'expiration_ts']
 DELETE_BARE = ['at@test.com', 'ac+user@yahtec.com']
-KIOSK_INFO = {'homeDashboardId': KIOSK_DASH, 'homeDashboardHideToolbar': True,
-              'defaultDashboardId': KIOSK_DASH, 'defaultDashboardFullscreen': True}
 
 
 def _users_under(t, customer_id):
@@ -84,7 +81,7 @@ def _migrate_user(t, u, apply):
         # Le routage email tb-notify ne dépend plus de ce flag (garde robuste A1).
         body = {'email': email, 'authority': 'CUSTOMER_USER',
                 'customerId': {'id': party_cid, 'entityType': 'CUSTOMER'},
-                'additionalInfo': dict(KIOSK_INFO, portfolioRole=role)}
+                'additionalInfo': dict(tb.KIOSK_INFO, portfolioRole=role)}
         if fn:
             body['firstName'] = fn
         if ln:

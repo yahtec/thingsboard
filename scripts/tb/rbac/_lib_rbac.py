@@ -161,6 +161,8 @@ def _set_role(user_obj, role):
 def ensure_user(t, email, authority, customer_id, role, password, apply):
     """Cree (si absent) un user avec additionalInfo.portfolioRole ; sinon met a jour le role.
     authority = 'CUSTOMER_USER' (customer_id requis) ou 'TENANT_ADMIN' (customer_id=None).
+    Un user cree avec role PARTY ou STAFF recoit en plus les champs de landing kiosk
+    (issus de KIOSK_INFO) pour atterrir direct sur le dashboard "Mes Installations".
     """
     u = find_user_by_email(t, email)
     if u:
