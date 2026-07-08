@@ -63,6 +63,8 @@ def main():
     print('\n[PARTIES]')
     for p in cfg.get('parties', []):
         cid = tb.ensure_customer(t, p['title'], apply)
+        if cid is not None:
+            tb.assign_dashboard_to_customer(t, cid, tb.KIOSK_DASH, apply)
         tb.ensure_user(t, p['userEmail'], 'CUSTOMER_USER', cid, p.get('role', 'PARTY'),
                        args.new_user_pwd, apply)
         desired = {site_ids[s] for s in p.get('canView', []) if site_ids.get(s)}
@@ -82,6 +84,8 @@ def main():
     print('\n[STAFF]')
     for st in cfg.get('staff', []):
         cid = tb.ensure_customer(t, st['title'], apply)
+        if cid is not None:
+            tb.assign_dashboard_to_customer(t, cid, tb.KIOSK_DASH, apply)
         tb.ensure_user(t, st['userEmail'], 'CUSTOMER_USER', cid, st.get('role', 'STAFF'),
                        args.new_user_pwd, apply)
         desired = {site_ids[s] for s in st.get('excluded', []) if site_ids.get(s)}
