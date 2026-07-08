@@ -18,6 +18,8 @@ CANVIEW = 'CanView'
 EXCLUDED = 'Excluded'
 COMMON = 'COMMON'
 KIOSK_DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'  # dashboard "Mes Installations"
+KIOSK_INFO = {'homeDashboardId': KIOSK_DASH, 'homeDashboardHideToolbar': True,
+              'defaultDashboardId': KIOSK_DASH, 'defaultDashboardFullscreen': True}
 
 
 def login(user, pwd):
@@ -176,7 +178,10 @@ def ensure_user(t, email, authority, customer_id, role, password, apply):
         ta = ' (tenant admin)' if authority == 'TENANT_ADMIN' else ''
         print(f'  [DRY] creerait user : {email} authority={authority} role={role}{ta}')
         return None
-    body = {'email': email, 'authority': authority, 'additionalInfo': {'portfolioRole': role}}
+    # Landing kiosk pour les intervenants (aligne provision_portfolio sur migrate/tb-notify) :
+    # un PARTY/STAFF atterrit direct sur "Mes Installations" plein écran après login/activation.
+    info = dict(KIOSK_INFO, portfolioRole=role) if role in ('PARTY', 'STAFF') else {'portfolioRole': role}
+    body = {'email': email, 'authority': authority, 'additionalInfo': info}
     if customer_id:
         body['customerId'] = {'id': customer_id, 'entityType': 'CUSTOMER'}
     created = http_post('/api/user?sendActivationMail=false', body, t)
