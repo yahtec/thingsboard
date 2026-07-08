@@ -245,6 +245,12 @@ def find_relations_from(t, from_id, rel_type):
     return [r for r in rels if r.get('type') == rel_type and r.get('typeGroup') == COMMON]
 
 
+def find_relations_to(t, to_id, rel_type):
+    """Relations COMMON {* -rel_type-> to_id} (to = CUSTOMER). Symetrique de find_relations_from."""
+    rels = http_get(f'/api/relations?{_q(toId=to_id, toType="CUSTOMER")}', t, allow_404=True) or []
+    return [r for r in rels if r.get('type') == rel_type and r.get('typeGroup') == COMMON]
+
+
 def delete_relation(t, from_id, to_id, rel_type, apply):
     if not apply:
         print(f'  [DRY] retirerait relation : {from_id} -{rel_type}-> {to_id}')
