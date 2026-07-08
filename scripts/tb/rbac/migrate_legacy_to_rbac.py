@@ -51,6 +51,8 @@ def _migrate_user(t, u, apply):
     role = 'ADMIN_OPS' if droit == 'admin' else 'PARTY'
     print(f'  MIGRE {email} : droit={droit} -> {role}, {len(chauff)} chaufferie(s)')
     party_cid = tb.ensure_customer(t, f'Party — {email}', apply)
+    if party_cid is not None:
+        tb.assign_dashboard_to_customer(t, party_cid, tb.KIOSK_DASH, apply)
     for dev_id in chauff:
         site_cid = tb.get_server_attrs(t, 'DEVICE', dev_id, ['site_customer_id']).get('site_customer_id')
         if not site_cid:
@@ -77,6 +79,9 @@ def _migrate_user(t, u, apply):
         json.dump(recovery, f, ensure_ascii=False, indent=2)
     try:
         tb.http_delete(f'/api/user/{uid}', t)
+        # Chantier #5 (A3) : userCredentialsEnabled/userActivated sont posés par TB
+        # (false à la création d'un compte non-activé) et corrigés au 1er login, PAS ici.
+        # Le routage email tb-notify ne dépend plus de ce flag (garde robuste A1).
         body = {'email': email, 'authority': 'CUSTOMER_USER',
                 'customerId': {'id': party_cid, 'entityType': 'CUSTOMER'},
                 'additionalInfo': dict(KIOSK_INFO, portfolioRole=role)}
