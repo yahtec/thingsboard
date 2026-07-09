@@ -3,6 +3,15 @@
 > **Source de verite** : spec Section 4 + plan Phase 1 Tasks 1-4.
 > Cette procedure ajoute 5 nodes en parallele de `save TS (per-id device)` dans la rule chain `PAC Hybride Router` (UUID `b6af0570-4226-11f1-bbfe-e1395562cba0`). Option B (transition flat + json_v).
 
+## Garde site_assigned
+
+`guard-assign-node.py` insère/recâble la garde `Provisionnee ?`. La branche `True`
+rejoint `{Filter HPs present v2, mark active, DeviceProfile (alarms)}` (= branche False
+moins l'assign) — jamais un noeud de save brut. Un garde-fou abort si `Assign to Yahtec`
+ne pointe plus vers ces 3 cibles. Testé par `tests/test_guard_wiring.py`.
+L'ancien patch `fix-guard-true-branch.py` est supprimé : sa logique est absorbée ici
+(commit d'origine du fix : voir historique git avant 2026-07-09).
+
 ## Pre-requis
 
 - PowerShell 5.1+ ou PowerShell Core

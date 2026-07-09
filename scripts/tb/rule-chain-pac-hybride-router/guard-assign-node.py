@@ -4,18 +4,24 @@
 Apres 'originator -> device(${id})' :
   -> [load site_assigned] (TbGetAttributesNode, server, tolere absence)
   -> [Provisionnee ?] (filtre) : ss_site_assigned == 'true' ?
-       True  -> 'save TS (per-id device)'      (provisionnee : on ne reassigne pas)
-       False -> 'Assign to Yahtec'              (nouvelle : zone d'attente)
-Idempotent sur le cablage actif (skip si originator --Success--> 'load site_assigned' existe deja).
-Reutilise les nodes orphelins (laisses par revert-guard-assign.py) au lieu d'en dupliquer.
-Dry-run par defaut ; --apply pour ecrire.
+       True  -> {Filter HPs present v2, mark active, DeviceProfile (alarms)}  (provisionnee :
+                on ne reassigne pas, mais on REJOINT le pipeline normal = branche False MOINS l'assign)
+       False -> 'Assign to Yahtec'                                            (nouvelle : zone d'attente)
+
+La branche True ne doit JAMAIS finir sur un noeud de save brut (bug historique corrige :
+c'etait 'save TS (per-id device)', une impasse qui figeait pac_v2 + coupait alarmes/mark active).
+Ce script absorbe l'ancien patch fix-guard-true-branch.py.
+
+Idempotent (skip si garde deja active). Reutilise les nodes orphelins. Dry-run par defaut ; --apply pour ecrire.
 """
 import argparse, json, os, sys, time, urllib.request, urllib.error
 
 RC_ID    = 'b6af0570-4226-11f1-bbfe-e1395562cba0'
 BASE_URL = os.environ.get('TB_BASE_URL', 'https://thingsboard.tsmart.fr')
-ORIG, SAVE, ASSIGN = 'originator -> device(${id})', 'save TS (per-id device)', 'Assign to Yahtec'
+ORIG, ASSIGN = 'originator -> device(${id})', 'Assign to Yahtec'
 GETATTR, FILTER = 'load site_assigned', 'Provisionnee ?'
+# Branche True = branche False MOINS l'assign : les memes cibles que 'Assign to Yahtec --Success-->'.
+GOOD_TARGETS = ['Filter HPs present v2', 'mark active', 'DeviceProfile (alarms)']
 
 
 def _req(method, p, t, body=None):
@@ -52,24 +58,8 @@ def token_or_login(user, pwd):
     return json.loads(urllib.request.urlopen(r).read().decode('utf-8'))['token']
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--user', default='je@yahtec.com')
-    ap.add_argument('--pwd', default=None)
-    ap.add_argument('--apply', action='store_true')
-    args = ap.parse_args()
-
-    t = token_or_login(args.user, args.pwd)
-    meta = http_get(f'/api/ruleChain/{RC_ID}/metadata', t)
-    nodes, conns = meta['nodes'], meta['connections']
-    idx = {n['name']: i for i, n in enumerate(nodes)}
-
-    for req in (ORIG, SAVE, ASSIGN):
-        if req not in idx:
-            sys.exit(f'Node requis introuvable : {req!r}')
-    orig_i, save_i, assign_i = idx[ORIG], idx[SAVE], idx[ASSIGN]
-
-    getattr_node = {
+def _getattr_node():
+    return {
         'name': GETATTR,
         'type': 'org.thingsboard.rule.engine.metadata.TbGetAttributesNode',
         'configuration': {
@@ -82,7 +72,10 @@ def main():
         'additionalInfo': {'layoutX': 520, 'layoutY': 260,
             'description': "Charge l'attribut serveur site_assigned -> metadata ss_site_assigned. Tolere l'absence."},
     }
-    filter_node = {
+
+
+def _filter_node():
+    return {
         'name': FILTER,
         'type': 'org.thingsboard.rule.engine.filter.TbJsFilterNode',
         'configuration': {
@@ -91,24 +84,48 @@ def main():
             'tbelScript': "return metadata.ss_site_assigned == 'true';",
         },
         'additionalInfo': {'layoutX': 720, 'layoutY': 260,
-            'description': "True=provisionnee (skip assign). False/absent=zone d'attente yahtec."},
+            'description': "True=provisionnee (rejoint le pipeline sans reassigner). False/absent=zone d'attente yahtec."},
     }
 
-    getattr_existing = idx.get(GETATTR)
-    filter_existing = idx.get(FILTER)
+
+def apply_guard(meta):
+    """Mute meta en place pour inserer/recabler la garde. Pure (aucun HTTP).
+
+    - sys.exit(...) si un noeud requis manque, ou si le garde-fou echoue
+      ('Assign to Yahtec --Success-->' != GOOD_TARGETS => le modele a change).
+    - {'status': 'active'} si la garde est deja cablee (idempotent, meta inchange).
+    - {'status': 'applied', 'reused', 'getattr_i', 'filter_i', 'good_is'} sinon.
+    """
+    nodes, conns = meta['nodes'], meta['connections']
+    idx = {n['name']: i for i, n in enumerate(nodes)}
+
+    for req in (ORIG, ASSIGN, *GOOD_TARGETS):
+        if req not in idx:
+            sys.exit(f'Node requis introuvable : {req!r}')
+    orig_i, assign_i = idx[ORIG], idx[ASSIGN]
+    good_is = [idx[n] for n in GOOD_TARGETS]
+
+    # Garde-fou : la branche de reference (Assign to Yahtec --Success-->) doit
+    # aller EXACTEMENT vers GOOD_TARGETS. Sinon le rule chain a change -> abort.
+    ref_success = {c['toIndex'] for c in conns
+                   if c['fromIndex'] == assign_i and c['type'] == 'Success'}
+    if ref_success != set(good_is):
+        got = sorted(nodes[i]['name'] for i in ref_success)
+        sys.exit(f'ERREUR garde-fou : "{ASSIGN}" --Success--> {got} != {GOOD_TARGETS}. '
+                 'Le rule chain a change ; revalider a la main.')
+
+    getattr_existing, filter_existing = idx.get(GETATTR), idx.get(FILTER)
     guard_active = getattr_existing is not None and any(
         c['fromIndex'] == orig_i and c['toIndex'] == getattr_existing and c['type'] == 'Success'
         for c in conns)
     if guard_active:
-        print('garde deja active -> idempotent skip')
-        return
-    elif getattr_existing is not None and filter_existing is not None:
-        getattr_i, filter_i = getattr_existing, filter_existing
-        reused = True
-        print(f'nodes orphelins reutilises ({GETATTR} @ {getattr_i}, {FILTER} @ {filter_i})')
+        return {'status': 'active'}
+
+    if getattr_existing is not None and filter_existing is not None:
+        getattr_i, filter_i, reused = getattr_existing, filter_existing, True
     else:
-        nodes.append(getattr_node); getattr_i = len(nodes) - 1
-        nodes.append(filter_node);  filter_i  = len(nodes) - 1
+        nodes.append(_getattr_node()); getattr_i = len(nodes) - 1
+        nodes.append(_filter_node());  filter_i  = len(nodes) - 1
         reused = False
 
     new_conns = [c for c in conns
@@ -117,13 +134,44 @@ def main():
         {'fromIndex': orig_i,    'toIndex': getattr_i, 'type': 'Success'},
         {'fromIndex': getattr_i, 'toIndex': filter_i,  'type': 'Success'},
         {'fromIndex': getattr_i, 'toIndex': filter_i,  'type': 'Failure'},
-        {'fromIndex': filter_i,  'toIndex': save_i,     'type': 'True'},
-        {'fromIndex': filter_i,  'toIndex': assign_i,   'type': 'False'},
+        {'fromIndex': filter_i,  'toIndex': assign_i,  'type': 'False'},
     ]
+    new_conns += [{'fromIndex': filter_i, 'toIndex': ti, 'type': 'True'} for ti in good_is]
     meta['connections'] = new_conns
+    return {'status': 'applied', 'reused': reused,
+            'getattr_i': getattr_i, 'filter_i': filter_i, 'good_is': good_is}
 
-    print(f'nodes: {"reused" if reused else "+2"} ({GETATTR} @ {getattr_i}, {FILTER} @ {filter_i})')
-    print(f'rewire: {ORIG} --Success--> {GETATTR} --> {FILTER} --True--> {SAVE} / --False--> {ASSIGN}')
+
+def _show_true_branch(meta, label):
+    nodes = meta['nodes']
+    fi = next((i for i, n in enumerate(nodes) if n['name'] == FILTER), None)
+    if fi is None:
+        print(f'  [{label}] noeud {FILTER!r} absent'); return
+    print(f'  [{label}] {FILTER} --True-->')
+    for c in meta['connections']:
+        if c['fromIndex'] == fi and c['type'] == 'True':
+            print(f'      -> {nodes[c["toIndex"]]["name"]}')
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--user', default='je@yahtec.com')
+    ap.add_argument('--pwd', default=None)
+    ap.add_argument('--apply', action='store_true')
+    args = ap.parse_args()
+
+    t = token_or_login(args.user, args.pwd)
+    meta = http_get(f'/api/ruleChain/{RC_ID}/metadata', t)
+
+    info = apply_guard(meta)  # peut sys.exit sur garde-fou
+    if info['status'] == 'active':
+        print('garde deja active -> idempotent skip')
+        return
+
+    print(f'nodes: {"reused" if info["reused"] else "+2"} '
+          f'({GETATTR} @ {info["getattr_i"]}, {FILTER} @ {info["filter_i"]})')
+    print(f'rewire: {ORIG} --Success--> {GETATTR} --> {FILTER} '
+          f'--True--> {GOOD_TARGETS} / --False--> {ASSIGN}')
     print(f'  drop 1 edge {ORIG} --Success--> {ASSIGN}')
 
     if not args.apply:
@@ -137,6 +185,10 @@ def main():
     print(f'backup: {bpath}')
     res = http_post('/api/ruleChain/metadata', meta, t)
     print(f'OK — rule chain a {len(res.get("nodes", []))} nodes')
+
+    meta2 = http_get(f'/api/ruleChain/{RC_ID}/metadata', t)
+    print('Relecture de verification :')
+    _show_true_branch(meta2, 'RELU')
 
 
 if __name__ == '__main__':
