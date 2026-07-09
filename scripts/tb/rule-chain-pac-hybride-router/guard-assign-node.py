@@ -12,7 +12,9 @@ La branche True ne doit JAMAIS finir sur un noeud de save brut (bug historique c
 c'etait 'save TS (per-id device)', une impasse qui figeait pac_v2 + coupait alarmes/mark active).
 Ce script absorbe l'ancien patch fix-guard-true-branch.py.
 
-Idempotent (skip si garde deja active). Reutilise les nodes orphelins. Dry-run par defaut ; --apply pour ecrire.
+Convergent : skip (no-op) seulement si le cablage est deja exactement celui desire,
+sinon (re)cable/repare la branche True meme si le garde etait deja present.
+Reutilise les nodes orphelins. Dry-run par defaut ; --apply pour ecrire.
 """
 import argparse, json, os, sys, time, urllib.request, urllib.error
 
@@ -91,10 +93,19 @@ def _filter_node():
 def apply_guard(meta):
     """Mute meta en place pour inserer/recabler la garde. Pure (aucun HTTP).
 
+    Declaratif/convergent : force TOUJOURS le cablage getattr/filter vers le
+    resultat desire (ORIG->getattr->filter, filter--False-->assign,
+    filter--True-->GOOD_TARGETS), meme si les noeuds existent deja. Repare donc
+    une branche True corrompue (ex: filter--True-->'save TS (per-id device)',
+    le bug historique de fix-guard-true-branch.py) au lieu de la laisser en
+    place sous pretexte que la garde est "presente".
+
     - sys.exit(...) si un noeud requis manque, ou si le garde-fou echoue
       ('Assign to Yahtec --Success-->' != GOOD_TARGETS => le modele a change).
-    - {'status': 'active'} si la garde est deja cablee (idempotent, meta inchange).
-    - {'status': 'applied', 'reused', 'getattr_i', 'filter_i', 'good_is'} sinon.
+    - {'status': 'active'} seulement si le cablage est DEJA exactement celui
+      desire (vrai no-op, meta inchange).
+    - {'status': 'applied', 'reused', 'getattr_i', 'filter_i', 'good_is'} sinon
+      (insertion neuve OU reparation d'un cablage existant mais incorrect).
     """
     nodes, conns = meta['nodes'], meta['connections']
     idx = {n['name']: i for i, n in enumerate(nodes)}
@@ -114,13 +125,10 @@ def apply_guard(meta):
         sys.exit(f'ERREUR garde-fou : "{ASSIGN}" --Success--> {got} != {GOOD_TARGETS}. '
                  'Le rule chain a change ; revalider a la main.')
 
+    # Reutilise les nodes getattr/filter s'ils sont deja tous les deux presents,
+    # sinon les ajoute. Convergent : ne fait JAMAIS confiance a leur cablage actuel,
+    # celui-ci est entierement re-derive plus bas (repare une branche True corrompue).
     getattr_existing, filter_existing = idx.get(GETATTR), idx.get(FILTER)
-    guard_active = getattr_existing is not None and any(
-        c['fromIndex'] == orig_i and c['toIndex'] == getattr_existing and c['type'] == 'Success'
-        for c in conns)
-    if guard_active:
-        return {'status': 'active'}
-
     if getattr_existing is not None and filter_existing is not None:
         getattr_i, filter_i, reused = getattr_existing, filter_existing, True
     else:
@@ -128,15 +136,28 @@ def apply_guard(meta):
         nodes.append(_filter_node());  filter_i  = len(nodes) - 1
         reused = False
 
-    new_conns = [c for c in conns
-                 if not (c['fromIndex'] == orig_i and c['toIndex'] == assign_i and c['type'] == 'Success')]
-    new_conns += [
-        {'fromIndex': orig_i,    'toIndex': getattr_i, 'type': 'Success'},
-        {'fromIndex': getattr_i, 'toIndex': filter_i,  'type': 'Success'},
-        {'fromIndex': getattr_i, 'toIndex': filter_i,  'type': 'Failure'},
-        {'fromIndex': filter_i,  'toIndex': assign_i,  'type': 'False'},
-    ]
-    new_conns += [{'fromIndex': filter_i, 'toIndex': ti, 'type': 'True'} for ti in good_is]
+    desired = [
+        (orig_i, getattr_i, 'Success'),
+        (getattr_i, filter_i, 'Success'),
+        (getattr_i, filter_i, 'Failure'),
+        (filter_i, assign_i, 'False'),
+    ] + [(filter_i, ti, 'True') for ti in good_is]
+
+    def _managed(c):
+        # Edges que cette fonction possede et re-derive entierement : tout ce qui
+        # part de getattr_i/filter_i, plus l'ancienne arete directe ORIG--Success-->ASSIGN.
+        return (c['fromIndex'] in (getattr_i, filter_i)) or \
+               (c['fromIndex'] == orig_i and c['type'] == 'Success' and c['toIndex'] in (assign_i, getattr_i))
+
+    kept = [c for c in conns if not _managed(c)]
+    new_conns = kept + [{'fromIndex': a, 'toIndex': b, 'type': t} for (a, b, t) in desired]
+
+    def _edgeset(cs):
+        return {(c['fromIndex'], c['toIndex'], c['type']) for c in cs}
+
+    if reused and _edgeset(new_conns) == _edgeset(conns):
+        return {'status': 'active'}
+
     meta['connections'] = new_conns
     return {'status': 'applied', 'reused': reused,
             'getattr_i': getattr_i, 'filter_i': filter_i, 'good_is': good_is}

@@ -57,3 +57,31 @@ def test_idempotent_when_guard_active():
     meta = base_meta()
     mod.apply_guard(meta)
     assert mod.apply_guard(meta)['status'] == 'active'
+
+
+def corrupted_meta_with_guard_present():
+    """Garde deja cablee (getattr+filter presents, ORIG->getattr->filter OK) mais
+    la branche True du filtre pointe vers SAVE au lieu de GOOD_TARGETS
+    (= le bug historique fix-guard-true-branch.py etait censee corriger)."""
+    names = [ORIG, SAVE, ASSIGN, mod.GETATTR, mod.FILTER, *mod.GOOD_TARGETS]
+    nodes = [{'name': n} for n in names]
+    i = {n: k for k, n in enumerate(names)}
+    conns = [
+        {'fromIndex': i[ASSIGN], 'toIndex': i[g], 'type': 'Success'} for g in mod.GOOD_TARGETS
+    ] + [
+        {'fromIndex': i[ORIG], 'toIndex': i[mod.GETATTR], 'type': 'Success'},
+        {'fromIndex': i[mod.GETATTR], 'toIndex': i[mod.FILTER], 'type': 'Success'},
+        {'fromIndex': i[mod.GETATTR], 'toIndex': i[mod.FILTER], 'type': 'Failure'},
+        {'fromIndex': i[mod.FILTER], 'toIndex': i[ASSIGN], 'type': 'False'},
+        {'fromIndex': i[mod.FILTER], 'toIndex': i[SAVE], 'type': 'True'},
+    ]
+    return {'nodes': nodes, 'connections': conns}
+
+
+def test_repairs_corrupted_true_branch_when_guard_already_present():
+    meta = corrupted_meta_with_guard_present()
+    info = mod.apply_guard(meta)
+    assert info['status'] == 'applied'
+    assert info['reused'] is True
+    assert _edges(meta, mod.FILTER, 'True') == sorted(mod.GOOD_TARGETS)
+    assert SAVE not in _edges(meta, mod.FILTER, 'True')
