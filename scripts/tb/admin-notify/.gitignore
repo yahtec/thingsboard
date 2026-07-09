@@ -8,3 +8,4 @@ __pycache__/
 # Backups générés au déploiement
 templates.bak.*/
 *.bak-*
+*.snap*
