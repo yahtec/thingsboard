@@ -72,8 +72,10 @@ foreach ($d in $dirs) {
 Write-Host "==> Upload (scp)" -ForegroundColor Cyan
 foreach ($f in $tracked) {
     $local  = Join-Path $AppDir ($f -replace '/','\')
-    $remote = "$Remote/$($f -replace '\\','/')"
-    & scp @SshOpts $local "${SshUser}@${SshHost}:$remote"
+    # NB: pas $remote — PowerShell est insensible a la casse, $remote ecraserait $Remote
+    # (base) et le chemin distant s'accumulerait a chaque iteration (.env.example/README.md/...).
+    $dest = "$Remote/$($f -replace '\\','/')"
+    & scp @SshOpts $local "${SshUser}@${SshHost}:$dest"
     if ($LASTEXITCODE -ne 0) { throw "scp echoue pour $f" }
     Write-Host "    -> $f"
 }
