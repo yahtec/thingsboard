@@ -8,5 +8,8 @@ PATH=/usr/bin:/bin
 # Digest to parc admins every 4 hours, only if open faults exist.
 0  */4  * * *   root  cd /home/dump/tb-notify && .venv/bin/python fault_digest.py >> /var/log/tb-notify-cron.log 2>&1
 
+# Vérifie la présence de la garde site_assigned (rule-chain) toutes les 15 min ; alerte par transition.
+*/15 *  * * *   root  cd /home/dump/tb-notify && .venv/bin/python guard_check.py >> /var/log/tb-notify-cron.log 2>&1
+
 # Désactive les comptes dont l'attribut user `expiration_ts` est échu (1/jour à 03:10).
 10 3   * * *   root  cd /home/dump/tb-notify && .venv/bin/python cleanup_expired.py >> /var/log/tb-notify-cron.log 2>&1

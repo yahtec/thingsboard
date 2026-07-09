@@ -9,3 +9,5 @@ __pycache__/
 templates.bak.*/
 *.bak-*
 *.snap*
+# Runtime state files
+.guard_check_state.json
