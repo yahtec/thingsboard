@@ -56,7 +56,11 @@ if (-not $Apply) {
 $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 Write-Host "==> Backup distant : $Remote-deploy-backup-$ts.tgz" -ForegroundColor Cyan
-& ssh @SshOpts "${SshUser}@${SshHost}" "cd $Remote && tar czf $Remote-deploy-backup-$ts.tgz --exclude=.venv --exclude=__pycache__ . 2>/dev/null; echo backup-done"
+$backupFile = "$Remote-deploy-backup-$ts.tgz"
+$backupOutput = & ssh @SshOpts "${SshUser}@${SshHost}" "cd $Remote && tar czf $backupFile --exclude=.venv --exclude=__pycache__ . && test -s $backupFile && echo BACKUP_OK"
+if ($LASTEXITCODE -ne 0 -or ($backupOutput -notmatch 'BACKUP_OK')) {
+    throw "backup distant echoue - abort avant tout scp"
+}
 
 # Cree les sous-dossiers distants necessaires.
 $dirs = @($tracked | ForEach-Object { Split-Path $_ -Parent } | Where-Object { $_ } | Sort-Object -Unique)
@@ -79,5 +83,8 @@ if ($NoRestart) {
 } else {
     Write-Host "==> Restart tb-notify-web" -ForegroundColor Cyan
     & ssh @SshOpts "${SshUser}@${SshHost}" "systemctl restart tb-notify-web && sleep 1 && systemctl is-active tb-notify-web"
+    if ($LASTEXITCODE -ne 0) {
+        throw "restart tb-notify-web a echoue - service peut etre DOWN"
+    }
 }
 Write-Host "OK." -ForegroundColor Green
