@@ -12,6 +12,22 @@ ne pointe plus vers ces 3 cibles. Testé par `tests/test_guard_wiring.py`.
 L'ancien patch `fix-guard-true-branch.py` est supprimé : sa logique est absorbée ici
 (commit d'origine du fix : voir historique git avant 2026-07-09).
 
+### Monitoring & runbook
+
+Un check serveur (`scripts/tb/admin-notify/guard_check.py`, cron 15 min) alerte par email
+si la garde est perdue/mal câblée. Réponses :
+
+1. **Sur alerte** : `guard-assign-node.py --check` (confirme la dérive, read-only) →
+   `guard-assign-node.py --apply` (répare, convergent).
+2. **Après merge lts-4.3** : lancer `--check` (étape post-merge obligatoire) + ré-exporter
+   le snapshot (`export-metadata.py --write`) et committer.
+3. **⚠ Récupération** : re-câbler la garde STOPPE la casse mais ne remet PAS les devices déjà
+   réassignés à yahtec (`2e521d10`) sous leur site-customer — re-provisioning séparé
+   (`scripts/tb/rbac/provision_portfolio.py` / re-poser `site_assigned=true`). Devices concernés =
+   ceux sous `yahtec` ayant un attribut `site_customer_id`.
+
+Snapshot versionné de référence : `metadata.snapshot.json` (diff = revue de dérive).
+
 ## Pre-requis
 
 - PowerShell 5.1+ ou PowerShell Core

@@ -16,7 +16,7 @@ Convergent : skip (no-op) seulement si le cablage est deja exactement celui desi
 sinon (re)cable/repare la branche True meme si le garde etait deja present.
 Reutilise les nodes orphelins. Dry-run par defaut ; --apply pour ecrire.
 """
-import argparse, json, os, sys, time, urllib.request, urllib.error
+import argparse, copy, json, os, sys, time, urllib.request, urllib.error
 
 RC_ID    = 'b6af0570-4226-11f1-bbfe-e1395562cba0'
 BASE_URL = os.environ.get('TB_BASE_URL', 'https://thingsboard.tsmart.fr')
@@ -163,6 +163,11 @@ def apply_guard(meta):
             'getattr_i': getattr_i, 'filter_i': filter_i, 'good_is': good_is}
 
 
+def guard_status(meta):
+    """Statut sans muter l'argument : 'active' (conforme) ou 'applied' (dérive)."""
+    return apply_guard(copy.deepcopy(meta))['status']
+
+
 def _show_true_branch(meta, label):
     nodes = meta['nodes']
     fi = next((i for i, n in enumerate(nodes) if n['name'] == FILTER), None)
@@ -178,11 +183,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--user', default='je@yahtec.com')
     ap.add_argument('--pwd', default=None)
+    ap.add_argument('--check', action='store_true',
+                    help='read-only : exit 0 si garde conforme, 2 si dérive (ne POST jamais)')
     ap.add_argument('--apply', action='store_true')
     args = ap.parse_args()
 
     t = token_or_login(args.user, args.pwd)
     meta = http_get(f'/api/ruleChain/{RC_ID}/metadata', t)
+
+    if args.check:
+        st = guard_status(meta)
+        if st == 'active':
+            print('garde OK (conforme)')
+            sys.exit(0)
+        print('DÉRIVE : la garde n\'est pas conforme (relancer avec --apply pour réparer)')
+        sys.exit(2)
 
     info = apply_guard(meta)  # peut sys.exit sur garde-fou
     if info['status'] == 'active':

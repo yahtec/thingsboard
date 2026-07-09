@@ -85,3 +85,17 @@ def test_repairs_corrupted_true_branch_when_guard_already_present():
     assert info['reused'] is True
     assert _edges(meta, mod.FILTER, 'True') == sorted(mod.GOOD_TARGETS)
     assert SAVE not in _edges(meta, mod.FILTER, 'True')
+
+
+def test_guard_status_active_on_conforme():
+    meta = base_meta()
+    mod.apply_guard(meta)  # rend conforme
+    assert mod.guard_status(meta) == 'active'
+    # guard_status ne doit PAS muter l'argument
+    before = [dict(c) for c in meta['connections']]
+    mod.guard_status(meta)
+    assert meta['connections'] == before
+
+
+def test_guard_status_applied_on_corrupted():
+    assert mod.guard_status(base_meta()) == 'applied'
