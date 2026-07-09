@@ -51,6 +51,15 @@ def test_guard_absent():
     assert not ok and problems
 
 
+def test_getattr_to_filter_severed():
+    m = meta_ok()
+    names = [n['name'] for n in m['nodes']]
+    gi, fi = names.index(g.GETATTR), names.index(g.FILTER)
+    m = _drop(m, lambda c: c['fromIndex'] == gi and c['toIndex'] == fi and c['type'] == 'Success')
+    ok, problems = g.check_guard(m)
+    assert not ok and any('routage' in p or (g.GETATTR in p and g.FILTER in p) for p in problems)
+
+
 def test_decide_alert():
     assert g.decide_alert('OK', 'OK') == (False, None)
     assert g.decide_alert('OK', 'DRIFT') == (True, 'lost')
@@ -58,3 +67,10 @@ def test_decide_alert():
     assert g.decide_alert('DRIFT', 'DRIFT') == (False, None)
     assert g.decide_alert(None, 'OK') == (False, None)
     assert g.decide_alert(None, 'DRIFT') == (True, 'lost')
+
+
+def test_should_persist():
+    assert g.should_persist(False, False) is True
+    assert g.should_persist(False, True) is True
+    assert g.should_persist(True, True) is True
+    assert g.should_persist(True, False) is False

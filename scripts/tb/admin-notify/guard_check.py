@@ -21,7 +21,7 @@ STATE_FILE = os.environ.get('GUARD_STATE_FILE', '/home/dump/tb-notify/.guard_che
 
 
 def check_guard(meta):
-    """(ok, problems) — vérifie les 4 invariants de la garde contre la metadata."""
+    """(ok, problems) — vérifie les 5 invariants de la garde contre la metadata."""
     nodes = meta.get('nodes', [])
     conns = meta.get('connections', [])
     names = [n.get('name') for n in nodes]
@@ -42,6 +42,8 @@ def check_guard(meta):
         problems.append(f'{ORIG} --Success--> {GETATTR} absent (garde non branchée)')
     if ASSIGN in orig_succ:
         problems.append(f'BYPASS: {ORIG} --Success--> {ASSIGN} (garde contournée)')
+    if GETATTR in idx and FILTER not in targets(GETATTR, 'Success'):
+        problems.append(f'{GETATTR} --Success--> {FILTER} absent (routage interrompu)')
     true_t = targets(FILTER, 'True')
     if true_t != set(GOOD_TARGETS):
         problems.append(f'{FILTER} --True--> {sorted(true_t)} != {GOOD_TARGETS}')
@@ -74,6 +76,12 @@ def _read_prev():
         return None
 
 
+def should_persist(alert_needed, delivered):
+    """Persister l'état seulement si aucune alerte n'était requise, ou si elle a été livrée.
+    Sinon on NE persiste pas -> la transition est re-détectée au prochain tick et l'alerte retentée."""
+    return (not alert_needed) or delivered
+
+
 def _write_state(status, problems):
     try:
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
@@ -91,6 +99,7 @@ def main():
     ok, problems = check_guard(meta)
     cur = 'OK' if ok else 'DRIFT'
     should, kind = decide_alert(_read_prev(), cur)
+    delivered = False
     if should:
         to = _recipients()
         if not to:
@@ -108,9 +117,11 @@ def main():
                 html = '<p>La garde <code>site_assigned</code> est de nouveau correctement câblée.</p>'
             try:
                 common.send_mail(to, subject, html)
+                delivered = True
             except Exception as e:
                 print(f'guard_check: alerte non envoyée: {e}', file=sys.stderr)
-    _write_state(cur, problems)
+    if should_persist(should, delivered):
+        _write_state(cur, problems)
     print(f'guard_check: {cur}' + (f' — {"; ".join(problems)}' if problems else ''))
     sys.exit(0 if ok else 2)
 
