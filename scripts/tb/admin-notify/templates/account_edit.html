@@ -83,6 +83,33 @@
     </div>
   </form>
 
+  {% if not row.is_tenant_admin %}
+  <div class="card">
+    <h2>Statut du compte</h2>
+    <div style="padding:14px 18px">
+      <p class="meta" style="margin-bottom:12px">
+        État actuel :
+        {% if row.deactivated %}
+          <span class="badge" style="background:#ffebee;color:#c62828;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">Désactivé</span>
+          — connexion bloquée et mails de défaut coupés (réversible).
+        {% else %}
+          <span class="badge" style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">Actif</span>
+        {% endif %}
+      </p>
+      {% if row.deactivated %}
+      <form method="post" action="{{ root }}/accounts/{{ row.id }}/reactivate">
+        <button type="submit" class="btn">Réactiver le compte</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ root }}/accounts/{{ row.id }}/deactivate"
+            onsubmit="return confirm('Désactiver ce compte ? Connexion bloquée + mails de défaut coupés. Réversible.');">
+        <button type="submit" class="btn ghost">Désactiver le compte</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <a class="return-home" href="{{ root }}/">Retourner à l'accueil</a>
 </main>
 <script>

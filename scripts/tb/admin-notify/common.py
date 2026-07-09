@@ -22,6 +22,12 @@ load_dotenv(ROOT / ".env")
 LOG_DIR = Path(os.environ.get("TBN_LOG_DIR", "/var/log"))
 JWT_CACHE = Path("/tmp/tb-notify-jwt.json")
 
+# Profil devices + customer racine Yahtec (derivation CanView -> chaufferies).
+# TB_DEVICE_PROFILE_NAME est le meme env var que webapp.py -> valeurs coherentes.
+PROFILE = os.environ.get("TB_DEVICE_PROFILE_NAME", "pac hybride")
+YAHTEC_CID = "2e521d10-3e5d-11f1-bbfe-e1395562cba0"
+KIOSK_DASH = "0964da30-3e56-11f1-bbfe-e1395562cba0"
+
 # evt_* dictionaries — kept in sync with widgets/events-history.controller.js.
 FAULT_LABELS = {0:'',1:'Defaut sonde depart',2:'Defaut sonde retour',3:'Defaut sonde fumee',4:'Defaut sonde pression',5:'Defaut debit eau',6:'Defaut surpression eau',7:'Surchauffe',8:'Defaut bruleur',9:'Defaut ventil. bruleur',10:'Defaut preventilation',11:'Defaut delta temp.',12:'Defaut temp. fumee',13:'Defaut circuit fumee',14:'Bruleur non linearise',15:'Defaut communication',16:'Defaut sous-tension',17:'Defaut surtension',18:'Manque phase',19:'Marche a sec',20:'Pression trop forte',21:'Pression trop faible',22:'Moteur trop chaud',23:'Defaut moteur',24:'Pompe bloquee',25:'Surchauffe module',26:'Avertissement module',27:'Defaut module',28:'Defaut capteur',29:'Defaut communication',30:'Defaut vanne eau',31:'Utilisation excessive',32:'Adaptation plage',33:'Surcharge mecanique',34:'Defaut securite',35:'Erreur test clapet',36:'Temperature trop elevee',37:'Fumee detectee',38:'Defaut communication',39:'Defaut communication',40:'Defaut communication',41:'Pression trop faible',42:'Redemarrage regulateur',43:'Manipulation tactile',44:'Filtre encrasse',45:'Defaut carte 1',46:'Defaut carte 2',47:'Defaut carte 3',48:'Defaut carte 4',49:'Defaut carte 5',50:'Defaut carte 6',51:'Defaut carte 7',52:'Defaut bruleur 8',53:'Defaut bruleur 9',54:'Defaut bruleur 10',55:'Defaut bruleur 11',56:'Defaut bruleur 12',57:'Defaut bruleur 13',58:'Defaut interne boitier',59:'Defaut general boitier',60:'Nb max reset atteint',61:'Defaut pompe ECS',62:'Defaut module FTP',63:'Defaut pression fumee',70:'Defaut sonde T entree chaud.',71:'Defaut sonde T sortie chaud.',72:'Defaut sonde T fumee chaud.',73:'Defaut sonde T entree PAC',74:'Defaut sonde T BP',75:'Defaut sonde T HP-h',76:'Defaut sonde T HP-c',77:'Defaut sonde T air ext.',78:'Defaut pression air',79:'Defaut pression eau',80:'Defaut pression HP',81:'Defaut pression BP',82:'Gaz detecte',83:'Defaut surchauffe chaud.',84:'Defaut com. pompe',85:'Defaut com. compresseur',86:'Defaut com. gaz G20',87:'Defaut com. gaz R290',88:'Defaut communication',89:'Defaut pression eau',90:'Defaut HP max',91:'Defaut BP min',92:'Defaut variateur 0Hz',93:'Defaut variateur',94:'Defaut surchauffe PAC',95:'Defaut T sortie PAC',96:'Defaut T entree PAC',97:'Defaut T BP',98:'Defaut T HP chaud',99:'Defaut T HP froid',100:'Defaut pression eau bas',101:'Defaut pression eau haut',102:'Defaut pression air',103:'Defaut vitesse ventilateur',104:'Defaut sonde T entree module',105:'Defaut sonde T exterieure',106:'Defaut sonde T sortie ECS',107:'Defaut sonde T entree ECS',108:'Defaut sonde T sortie chauffage',109:'Defaut sonde T entree chauffage',110:'Defaut sonde T stockage',111:'Gaz R290 détecté',112:'Gaz G20 détecté',113:'Defaut temperature sortie chaudiere'}
 
@@ -149,6 +155,57 @@ class TBClient:
     def save_server_attrs(self, etype: str, eid: str, kv: dict) -> None:
         self.post_json(f"/api/plugins/telemetry/{etype}/{eid}/SERVER_SCOPE", kv)
 
+    # ── Customers / relations RBAC (grant/revoke CanView) ───────────────
+    def ensure_customer_by_title(self, title: str) -> str:
+        page = self.get(f"/api/customers?pageSize=200&page=0&textSearch={requests.utils.quote(title)}")
+        for c in page.get("data", []):
+            if c.get("title") == title:
+                return c["id"]["id"]
+        return self.post_json("/api/customer", {"title": title})["id"]["id"]
+
+    def customer_has_dashboard(self, customer_id: str, dashboard_id: str) -> bool:
+        d = self.get(f"/api/customer/{customer_id}/dashboards?pageSize=200&page=0")
+        return any((x.get("id") or {}).get("id") == dashboard_id for x in d.get("data", []))
+
+    def assign_dashboard_to_customer(self, customer_id: str, dashboard_id: str) -> None:
+        """Idempotent : no-op si déjà assigné."""
+        if not self.customer_has_dashboard(customer_id, dashboard_id):
+            self.post_json(f"/api/customer/{customer_id}/dashboard/{dashboard_id}", {})
+
+    def ensure_party_customer(self, email: str) -> str:
+        cid = self.ensure_customer_by_title(f"Party — {email}")
+        # Chantier #5 (B) : garantir l'accès au dashboard "Mes Installations".
+        self.assign_dashboard_to_customer(cid, KIOSK_DASH)
+        return cid
+
+    def list_canview(self, from_cid: str) -> list[str]:
+        rels = self.get(f"/api/relations?fromId={from_cid}&fromType=CUSTOMER")
+        return [r["to"]["id"] for r in rels
+                if r.get("type") == "CanView" and r.get("typeGroup") == "COMMON"]
+
+    def canview_site_ids(self, party_cid):
+        """Set des site-customer ids qu'un party-customer peut voir (relations CanView)."""
+        return set(self.list_canview(party_cid))
+
+    def create_relation(self, from_cid: str, to_cid: str) -> None:
+        self.post_json("/api/relation", {
+            "from": {"id": from_cid, "entityType": "CUSTOMER"},
+            "to": {"id": to_cid, "entityType": "CUSTOMER"},
+            "type": "CanView", "typeGroup": "COMMON"})
+
+    def delete_relation(self, from_cid: str, to_cid: str) -> None:
+        self.delete(f"/api/relation?fromId={from_cid}&fromType=CUSTOMER"
+                    f"&relationType=CanView&relationTypeGroup=COMMON"
+                    f"&toId={to_cid}&toType=CUSTOMER")
+
+    def reconcile_canview(self, party_cid: str, desired_site_ids, fleet_site_ids) -> None:
+        existing = set(self.list_canview(party_cid))
+        desired = set(desired_site_ids)
+        for sid in desired - existing:
+            self.create_relation(party_cid, sid)
+        for sid in (existing & set(fleet_site_ids)) - desired:
+            self.delete_relation(party_cid, sid)
+
     # ── Users ───────────────────────────────────────────────────────────
     def list_users(self) -> list[dict]:
         """Tous les users visibles par TENANT_ADMIN (admins tenant + customer users)."""
@@ -188,6 +245,12 @@ class TBClient:
     def delete_user(self, user_id: str) -> None:
         self.delete(f"/api/user/{user_id}")
 
+    def set_credentials_enabled(self, user_id: str, enabled: bool) -> None:
+        """Bloque (False) / debloque (True) la connexion TB de l'utilisateur.
+        userCredentialsEnabled=false invalide aussi les sessions cote TB."""
+        val = "true" if enabled else "false"
+        self.post_json(f"/api/user/{user_id}/userCredentialsEnabled?userCredentialsEnabled={val}", None)
+
     def activation_link(self, user_id: str) -> str:
         self._auth()
         r = self.s.get(f"{self.url}/api/user/{user_id}/activationLink", timeout=30)
@@ -207,29 +270,50 @@ class TBClient:
         return body.strip('"')
 
     # ── Email recipients (calculés depuis les comptes user) ─────────────
+    def site_of_devices(self, profile_name: str) -> dict:
+        """Map {device_id: site_customer_id} pour les devices du profil ayant un
+        site_customer_id. Base commune de la derivation CanView -> device-ids
+        (pre-cochage tb-notify webapp + routage des mails ci-dessous) : calculee
+        une fois, puis intersectee avec les CanView de chaque party-customer."""
+        out = {}
+        for d in self.list_devices_by_profile(profile_name):
+            scid = self.get_server_attrs("DEVICE", d["id"]["id"], ["site_customer_id"]).get("site_customer_id")
+            if scid:
+                out[d["id"]["id"]] = scid
+        return out
+
     def _collect_user_attrs(self) -> list[dict]:
-        """Pour chaque user : ses attributs is_admin/chaufferies + son email/authority.
+        """Pour chaque user : son is_admin + email/authority + la liste des
+        device-ids qu'il peut voir, DERIVEE DE CanView (l'attribut USER
+        `chaufferies` n'est plus ecrit ni lu — CanView est la seule source de
+        verite). Shape identique (liste de device-id str) : get_recipients_for_device
+        et get_admin_emails restent inchanges.
         Renvoie liste de dicts utilisables par get_recipients_for_device / get_admin_emails."""
+        site_of_dev = self.site_of_devices(PROFILE)  # {device_id: site_customer_id}, calcule 1 fois
         out = []
         for u in self.list_users():
             uid = u["id"]["id"]
             email = (u.get("email") or "").strip()
             if not email:
                 continue
-            add = u.get("additionalInfo") or {}
-            if isinstance(add, dict) and add.get("userCredentialsEnabled") is False:
-                continue  # compte bloqué (expiré / désactivé) — pas de mail
+            # Chantier #5 (A1) : NE PAS skipper sur additionalInfo.userCredentialsEnabled.
+            # TB le pose false à la création d'un compte non-activé et ne le corrige qu'au
+            # 1er login -> un intervenant activé mais jamais connecté était exclu à tort du
+            # routage. Le routage repose désormais sur la seule vérité RBAC (CanView + is_admin).
             try:
-                attrs = self.get_server_attrs("USER", uid, ["is_admin", "chaufferies"])
+                attrs = self.get_server_attrs("USER", uid, ["is_admin", "deactivated"])
             except Exception:
                 attrs = {}
-            chauff = attrs.get("chaufferies")
-            if isinstance(chauff, str):
-                try:
-                    chauff = json.loads(chauff)
-                except (json.JSONDecodeError, ValueError):
-                    chauff = []
-            if not isinstance(chauff, list):
+            if attrs.get("deactivated"):
+                continue  # compte desactive (tb-notify) -> pas de mail de defaut
+            # chaufferies = device-ids visibles via CanView du party-customer dedie.
+            # Tenant-admin / customer-user rattache a yahtec -> [] (ils passent par
+            # get_admin_emails, pas par le routage par-device).
+            party_cid = (u.get("customerId") or {}).get("id")
+            if u.get("authority") == "CUSTOMER_USER" and party_cid and party_cid != YAHTEC_CID:
+                site_ids = self.canview_site_ids(party_cid)
+                chauff = [dev_id for dev_id, sc in site_of_dev.items() if sc in site_ids]
+            else:
                 chauff = []
             out.append({
                 "email": email,

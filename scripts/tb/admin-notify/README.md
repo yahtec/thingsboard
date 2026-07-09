@@ -4,7 +4,7 @@ Notifications mail pour les défauts des chaufferies TDUO sur ThingsBoard yahtec
 
 - **`fault_notify.py`** — cron 1/min, mail aux gestionnaires d'une chaufferie quand un nouveau défaut apparaît (coalesce 60 s pour grouper les rafales).
 - **`fault_digest.py`** — cron toutes les 4 h, mail récap aux admins du parc s'il y a au moins un défaut actif.
-- **`webapp.py`** — petit formulaire web (`https://thingsboard.tsmart.fr/admin-notify/`) pour gérer les emails gestionnaires par chaufferie + la liste des admins du parc.
+- **`webapp.py`** — appli de gestion des comptes intervenants (`https://thingsboard.tsmart.fr/admin-notify/`) : invitation, édition (droits, chaufferies visibles), désactivation non-destructive. Les chaufferies cochées par compte sont réconciliées vers des relations RBAC **CanView** (party-customer → site-customer) — plus aucune liste d'emails n'est écrite en attribut.
 
 Source de vérité : télémétrie `evt_*` sur les devices `pac hybride` (mêmes mappings et même logique de pairing que le widget historique du dashboard).
 
@@ -60,15 +60,15 @@ sudo nginx -t && sudo systemctl reload nginx
 ### 5. Premier passage
 
 1. Ouvrir https://thingsboard.tsmart.fr/admin-notify/
-2. Se connecter avec un compte tenant admin yahtec
-3. Renseigner les emails gestionnaires par chaufferie + la liste des admins du parc
+2. Se connecter avec un compte tenant admin yahtec (ou `ADMIN_OPS`)
+3. Inviter un intervenant (`/invite`) ou éditer un compte existant (`/accounts/{uid}/edit`) : cocher les chaufferies visibles (réconciliées en relations CanView) et/ou le droit admin
 4. Enregistrer
 
 ### 6. Tests à la main
 
 ```bash
 cd /home/dump/tb-notify
-.venv/bin/python fault_notify.py        # devrait dire "no gestionnaires" tant que vide
+.venv/bin/python fault_notify.py        # log "no recipients" par device tant qu'aucun CanView n'est configuré
 .venv/bin/python fault_digest.py        # envoie le récap si défauts actifs
 ```
 
@@ -85,8 +85,16 @@ Curseur par device : attribut serveur `last_notified_evt_ts` (epoch ms).
 1. Lit `evt_*` entre `cursor` et `now − 60 s` (le buffer 60 s permet de grouper les rafales d'apparition multiples).
 2. Reproduit le pairing du widget : dédup 12 s + appariement apparition/résolution + résolutions inverse-paired.
 3. Garde uniquement les `evt_type == 1` apparus dans la fenêtre.
-4. Envoie 1 mail HTML par chaufferie listant tous les défauts apparus, aux emails de l'attribut `gestionnaires` (JSON `[{name, email}]`).
+4. Envoie 1 mail HTML par chaufferie listant tous les défauts apparus, aux destinataires calculés par `get_recipients_for_device()` (voir « Routage des destinataires » ci-dessous) — plus aucune liste d'emails n'est lue depuis un attribut `gestionnaires`.
 5. Avance le curseur uniquement si succès (sinon retry au prochain cron).
+
+### Routage des destinataires (RBAC CanView)
+
+Le routage des mails de défaut (notification immédiate) ne repose plus sur un attribut USER `chaufferies` (retiré) : il dérive dynamiquement les device-ids visibles par un intervenant de ses relations **CanView** (party-customer → site-customer). Concrètement, pour chaque device, `get_recipients_for_device()` retient les `CUSTOMER_USER` non-admin dont le party-customer a une relation CanView vers le site-customer propriétaire de ce device ; `webapp.py` réconcilie ces relations (`_sync_canview`) à chaque enregistrement d'un compte, à partir des chaufferies cochées dans le formulaire.
+
+Deux gardes s'appliquent en plus de ce calcul :
+- Un attribut USER `deactivated=true` (posé par la désactivation non-destructive d'un compte, cf. `webapp.py` / chantier RBAC) exclut l'intervenant de tout routage mail (immédiat et digest), quelles que soient ses relations CanView.
+- L'ancienne garde sur `additionalInfo.userCredentialsEnabled` a été **retirée** (chantier #5, A1) : TB positionne ce flag à `false` à la création du compte et ne le corrige qu'au premier login, ce qui excluait à tort un intervenant activé mais jamais encore connecté. `deactivated` est désormais la seule garde d'exclusion applicative.
 
 ### Digest 4 h (admins parc)
 
@@ -106,9 +114,19 @@ Curseur par device : attribut serveur `last_notified_evt_ts` (epoch ms).
 
 ## Schéma d'attributs
 
-| Entité | Attribut | Type | Usage |
+| Entité | Attribut / Relation | Type | Usage |
 |---|---|---|---|
-| `DEVICE` (pac hybride) | `gestionnaires` | `[{name, email}]` | Recipients notif immédiate. Édité via webapp. |
 | `DEVICE` (pac hybride) | `last_notified_evt_ts` | `long` | Curseur géré par `fault_notify.py`. |
 | `DEVICE` (pac hybride) | `address` / `label` | `string` | Affichage humain (déjà utilisé par les widgets). |
-| `CUSTOMER` (yahtec) | `parc_admins` | `[email]` ou `csv` | Recipients du digest 4 h. Édité via webapp. |
+| `DEVICE` (pac hybride) | `site_customer_id` | `string` (uuid) | Site-customer propriétaire du device ; base de la dérivation CanView → device-ids. |
+| `CUSTOMER` (party) → `CUSTOMER` (site) | relation `CanView` (typeGroup `COMMON`) | — | Source de vérité du routage par-device. Remplace l'ancien attribut USER `chaufferies` (retiré). Réconciliée par `webapp.py` (`_sync_canview`). |
+| `USER` | `is_admin` | `bool` | Compte inclus dans `get_admin_emails()` (digest 4 h) et exclu du routage par-device. |
+| `USER` | `deactivated` | `bool` | Posé par la désactivation non-destructive (`webapp.py`) ; exclut l'utilisateur de tout routage mail. |
+| `CUSTOMER` (yahtec) | `parc_admins` | `[email]` ou `csv` | Recipients du digest 4 h (fallback historique, hors-scope de ce changement). |
+
+## Tests
+
+```bash
+cd scripts/tb/admin-notify
+python -m pytest tests/          # offline, aucun appel réseau/TB — vérifie le routage CanView
+```

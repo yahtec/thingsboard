@@ -38,7 +38,10 @@ KIOSK_ADDITIONAL_INFO = {
     "homeDashboardId": KIOSK_DASH_ID,
     "homeDashboardHideToolbar": True,
     "defaultDashboardId": KIOSK_DASH_ID,
-    "defaultDashboardFullscreen": True,
+    # False : JAMAIS True pour un intervenant. True -> /dashboard/{id} SINGULIER = fullscreen
+    # standalone SANS yahtec-nav (barre TB native) ; False -> /dashboards/{id} PLURIEL AVEC
+    # yahtec-nav. Cf spec chrome 3 roles. Landing conserve via defaultDashboardId+homeDashboardId.
+    "defaultDashboardFullscreen": False,
 }
 SECRET = os.environ["WEB_SECRET"].encode()
 SESSION_TTL = 12 * 3600
@@ -50,7 +53,7 @@ ROOT_PATH = os.environ.get("WEB_ROOT_PATH", "/admin-notify")
 USER_ATTRS = [
     "is_admin", "societe", "droit_acces",
     "access_rapport", "access_retroview", "access_spherys",
-    "chaufferies", "expiration_ts",
+    "chaufferies", "expiration_ts", "deactivated",
 ]
 ROLES = [
     ("lecture", "Lecture"),
@@ -345,6 +348,20 @@ def _user_row(tb: TBClient, u: dict) -> dict:
         last_login = add.get("lastLoginTs")
     is_tenant_admin = u.get("authority") == "TENANT_ADMIN"
     is_admin_attr = bool(attrs.get("is_admin")) or is_tenant_admin
+    # Pre-cochage CanView-only (remplace l'ancienne lecture de l'attribut
+    # 'chaufferies' du user, qui n'est plus la source de verite). Pour un
+    # party-customer dedie (CUSTOMER_USER hors YAHTEC_CID), on derive les
+    # chaufferies visibles depuis les relations CanView du party-customer
+    # vers les site-customers. Tenant-admin / user sans party dedie ->
+    # aucune pre-selection RBAC (comportement actuel).
+    party_cid = (u.get("customerId") or {}).get("id")
+    chaufferies_ids: list[str] = []
+    if u.get("authority") == "CUSTOMER_USER" and party_cid and party_cid != YAHTEC_CID:
+        site_ids = tb.canview_site_ids(party_cid)
+        for dev in _list_chaufferies(tb):
+            sc = tb.get_server_attrs("DEVICE", dev["id"], ["site_customer_id"]).get("site_customer_id")
+            if sc in site_ids:
+                chaufferies_ids.append(dev["id"])
     return {
         "id": uid,
         "first_name": u.get("firstName") or "",
@@ -360,7 +377,8 @@ def _user_row(tb: TBClient, u: dict) -> dict:
         "access_rapport": bool(attrs.get("access_rapport")),
         "access_retroview": bool(attrs.get("access_retroview")),
         "access_spherys": bool(attrs.get("access_spherys")),
-        "chaufferies": attrs.get("chaufferies") or [],
+        "chaufferies": chaufferies_ids,
+        "deactivated": bool(attrs.get("deactivated")),
     }
 
 
@@ -373,6 +391,25 @@ def _list_chaufferies(tb: TBClient) -> list[dict]:
         rows.append({"id": d["id"]["id"], "name": d["name"], "display": display, "address": attrs.get("adresse") or ""})
     rows.sort(key=lambda r: r["display"].lower())
     return rows
+
+
+YAHTEC_CID = "2e521d10-3e5d-11f1-bbfe-e1395562cba0"
+
+
+def _sync_canview(tb: TBClient, party_cid: str, droit: str, device_ids) -> None:
+    """Réconcilie les CanView du party-customer vers les site-customers.
+    droit=='admin' -> toutes les chaufferies du parc ; sinon celles cochées."""
+    fleet = {}
+    for d in tb.list_devices_by_profile(PROFILE):
+        scid = tb.get_server_attrs("DEVICE", d["id"]["id"], ["site_customer_id"]).get("site_customer_id")
+        if scid:
+            fleet[d["id"]["id"]] = scid
+    fleet_site_ids = set(fleet.values())
+    if droit == "admin":
+        desired = fleet_site_ids
+    else:
+        desired = {fleet[did] for did in (device_ids or []) if did in fleet}
+    tb.reconcile_canview(party_cid, desired, fleet_site_ids)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -446,7 +483,8 @@ async def account_edit_save(uid: str, request: Request, user: dict = Depends(req
         "access_rapport": form.get("access_rapport") == "on",
         "access_retroview": form.get("access_retroview") == "on",
         "access_spherys": form.get("access_spherys") == "on",
-        "chaufferies": chaufferies,
+        # 'chaufferies' n'est plus ecrit ici : CanView (_sync_canview ci-dessous,
+        # alimente par la variable locale `chaufferies`) est la seule source de verite.
     }
     if expiration_ts is not None:
         attrs["expiration_ts"] = expiration_ts
@@ -454,6 +492,11 @@ async def account_edit_save(uid: str, request: Request, user: dict = Depends(req
         # explicit clear
         attrs["expiration_ts"] = 0
     tb.save_server_attrs("USER", uid, attrs)
+    # Yahtec RBAC : reconcilier CanView (party-customer du user -> site-customers)
+    fresh = tb.get_user(uid)
+    pcid = (fresh.get("customerId") or {}).get("id")
+    if fresh.get("authority") == "CUSTOMER_USER" and pcid and pcid != YAHTEC_CID:
+        _sync_canview(tb, pcid, droit, chaufferies)
     return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?saved=1", status_code=303)
 
 
@@ -465,6 +508,33 @@ def account_delete(uid: str, user: dict = Depends(require_user)):
     except requests.HTTPError as e:
         return RedirectResponse(f"{ROOT_PATH}/?error=delete_failed_{e.response.status_code}", status_code=303)
     return RedirectResponse(f"{ROOT_PATH}/?deleted=1", status_code=303)
+
+
+def _set_account_active(uid: str, active: bool, current_email: str | None = None):
+    tb = TBClient()
+    try:
+        u = tb.get_user(uid)
+    except requests.HTTPError:
+        return RedirectResponse(f"{ROOT_PATH}/?error=not_found", status_code=303)
+    # Garde-fou : jamais desactiver un tenant-admin (dev je@/af@ ou ADMIN_OPS).
+    if u.get("authority") == "TENANT_ADMIN":
+        return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?error=admin_no_deactivate", status_code=303)
+    # Garde-fou : ne pas se desactiver soi-meme (auto-verrouillage).
+    if not active and current_email and (u.get("email") or "").lower() == current_email.lower():
+        return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?error=cannot_deactivate_self", status_code=303)
+    tb.set_credentials_enabled(uid, active)
+    tb.save_server_attrs("USER", uid, {"deactivated": not active})
+    return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?saved=1", status_code=303)
+
+
+@app.post("/accounts/{uid}/deactivate")
+def account_deactivate(uid: str, user: dict = Depends(require_user)):
+    return _set_account_active(uid, False, user.get("u"))
+
+
+@app.post("/accounts/{uid}/reactivate")
+def account_reactivate(uid: str, user: dict = Depends(require_user)):
+    return _set_account_active(uid, True, user.get("u"))
 
 
 # ─── Invitations ────────────────────────────────────────────────────────────
@@ -530,26 +600,34 @@ def _parse_invitees(form) -> list[dict]:
 
 def _send_invitation(tb: TBClient, invitee: dict, attrs: dict) -> tuple[bool, str]:
     """Crée l'utilisateur TB, génère un lien d'activation, envoie l'email."""
+    party_cid = tb.ensure_party_customer(invitee["email"])
     payload = {
         "email": invitee["email"],
         "firstName": invitee["first_name"] or None,
         "lastName": invitee["last_name"] or None,
         "authority": "CUSTOMER_USER",
-        "additionalInfo": dict(KIOSK_ADDITIONAL_INFO),
+        "additionalInfo": dict(KIOSK_ADDITIONAL_INFO, portfolioRole="PARTY"),
+        "customerId": {"entityType": "CUSTOMER", "id": party_cid},
     }
-    if CUSTOMER_ID:
-        payload["customerId"] = {"entityType": "CUSTOMER", "id": CUSTOMER_ID}
     try:
         created = tb.create_user(payload, send_activation_mail=False)
     except requests.HTTPError as e:
         msg = "déjà existant" if e.response.status_code == 400 else f"erreur TB {e.response.status_code}"
         return False, msg
     uid = created["id"]["id"]
-    full_attrs = dict(attrs)
+    # 'chaufferies' n'est plus ecrit comme attribut USER : CanView (_sync_canview
+    # ci-dessous) est la seule source de verite. On la retire donc de full_attrs
+    # (le dict persiste), mais on garde `attrs` intact pour l'appel _sync_canview
+    # qui a besoin de attrs["chaufferies"].
+    full_attrs = {k: v for k, v in attrs.items() if k != "chaufferies"}
     if invitee.get("societe"):
         full_attrs["societe"] = invitee["societe"]
     try:
         tb.save_server_attrs("USER", uid, full_attrs)
+    except requests.HTTPError:
+        pass
+    try:
+        _sync_canview(tb, party_cid, attrs.get("droit_acces", "lecture"), attrs.get("chaufferies", []))
     except requests.HTTPError:
         pass
     try:
