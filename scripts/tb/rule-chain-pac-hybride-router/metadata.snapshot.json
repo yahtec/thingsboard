@@ -1,0 +1,834 @@
+{
+  "connections": [
+    {
+      "fromIndex": 0,
+      "toIndex": 1,
+      "type": "True"
+    },
+    {
+      "fromIndex": 0,
+      "toIndex": 7,
+      "type": "False"
+    },
+    {
+      "fromIndex": 1,
+      "toIndex": 2,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 2,
+      "toIndex": 4,
+      "type": "Failure"
+    },
+    {
+      "fromIndex": 2,
+      "toIndex": 21,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 4,
+      "toIndex": 5,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 5,
+      "toIndex": 6,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 7,
+      "toIndex": 8,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 8,
+      "toIndex": 9,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 11,
+      "toIndex": 12,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 13,
+      "toIndex": 14,
+      "type": "True"
+    },
+    {
+      "fromIndex": 13,
+      "toIndex": 19,
+      "type": "True"
+    },
+    {
+      "fromIndex": 13,
+      "toIndex": 20,
+      "type": "False"
+    },
+    {
+      "fromIndex": 14,
+      "toIndex": 15,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 15,
+      "toIndex": 16,
+      "type": "Post attributes"
+    },
+    {
+      "fromIndex": 15,
+      "toIndex": 17,
+      "type": "Post telemetry"
+    },
+    {
+      "fromIndex": 18,
+      "toIndex": 10,
+      "type": "Failure"
+    },
+    {
+      "fromIndex": 18,
+      "toIndex": 10,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 18,
+      "toIndex": 11,
+      "type": "Failure"
+    },
+    {
+      "fromIndex": 18,
+      "toIndex": 11,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 18,
+      "toIndex": 13,
+      "type": "Failure"
+    },
+    {
+      "fromIndex": 18,
+      "toIndex": 13,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 19,
+      "toIndex": 15,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 20,
+      "toIndex": 3,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 21,
+      "toIndex": 22,
+      "type": "Failure"
+    },
+    {
+      "fromIndex": 21,
+      "toIndex": 22,
+      "type": "Success"
+    },
+    {
+      "fromIndex": 22,
+      "toIndex": 10,
+      "type": "True"
+    },
+    {
+      "fromIndex": 22,
+      "toIndex": 11,
+      "type": "True"
+    },
+    {
+      "fromIndex": 22,
+      "toIndex": 13,
+      "type": "True"
+    },
+    {
+      "fromIndex": 22,
+      "toIndex": 18,
+      "type": "False"
+    }
+  ],
+  "firstNodeIndex": 0,
+  "nodes": [
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 100,
+        "layoutY": 100
+      },
+      "configuration": {
+        "jsScript": "return msg.id !== null && msg.id !== undefined && msg.id !== '';",
+        "scriptLang": "JS",
+        "tbelScript": "return msg.id != null && msg.id != '';"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069674,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "0005e4a0-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "id present?",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 300,
+        "layoutY": 100
+      },
+      "configuration": {
+        "jsScript": "metadata.targetDeviceName = String(msg.id); return {msg: msg, metadata: metadata, msgType: msgType};",
+        "scriptLang": "JS",
+        "tbelScript": "metadata.targetDeviceName = msg.id + ''; return {msg: msg, metadata: metadata, msgType: msgType};"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069676,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "000632c0-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "extract id -> metadata",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 520,
+        "layoutY": 100
+      },
+      "configuration": {
+        "entityNamePattern": "${targetDeviceName}",
+        "entityType": "DEVICE",
+        "originatorSource": "ENTITY"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069681,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "0006f610-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "originator -> device(${id})",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbChangeOriginatorNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 760,
+        "layoutY": 50
+      },
+      "configuration": {
+        "defaultTTL": 0,
+        "processingSettings": {
+          "type": "ON_EVERY_MESSAGE"
+        },
+        "useServerTs": false
+      },
+      "configurationVersion": 1,
+      "createdTime": 1777287069687,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "0007e070-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "save TS (per-id device)",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 760,
+        "layoutY": 200
+      },
+      "configuration": {
+        "jsScript": "var ev = {\"evt_unknown_id\": JSON.stringify({id: metadata.targetDeviceName, payload: msg})};\nreturn {msg: ev, metadata: metadata, msgType: \"POST_TELEMETRY_REQUEST\"};",
+        "scriptLang": "JS",
+        "tbelScript": "var ev = {evt_unknown_id: JSON.stringify({id: metadata.targetDeviceName, payload: msg})};return {msg: ev, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069688,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "00080780-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "wrap evt_unknown_id",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 1000,
+        "layoutY": 200
+      },
+      "configuration": {
+        "defaultTTL": 0,
+        "processingSettings": {
+          "type": "ON_EVERY_MESSAGE"
+        },
+        "useServerTs": false
+      },
+      "configurationVersion": 1,
+      "createdTime": 1777287069691,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "00087cb0-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "save evt_unknown_id (gateway)",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 1240,
+        "layoutY": 200
+      },
+      "configuration": {
+        "alarmDetailsBuildJs": "var details = {id: metadata.targetDeviceName, ts: Date.now()}; return details;",
+        "alarmType": "UnknownInstallation",
+        "dynamicSeverity": false,
+        "overwriteAlarmDetails": true,
+        "propagate": false,
+        "relationTypes": [],
+        "scriptLang": "JS",
+        "severity": "MAJOR",
+        "useMessageAlarmData": false
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069706,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "000ac6a0-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "alarm UnknownInstallation",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 300,
+        "layoutY": 350
+      },
+      "configuration": {
+        "jsScript": "var ev = {\"evt_no_id\": JSON.stringify(msg)};\nreturn {msg: ev, metadata: metadata, msgType: \"POST_TELEMETRY_REQUEST\"};",
+        "scriptLang": "JS",
+        "tbelScript": "var ev = {evt_no_id: JSON.stringify(msg)};return {msg: ev, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069707,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "000aedb0-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "wrap evt_no_id",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 540,
+        "layoutY": 350
+      },
+      "configuration": {
+        "defaultTTL": 0,
+        "processingSettings": {
+          "type": "ON_EVERY_MESSAGE"
+        },
+        "useServerTs": false
+      },
+      "configurationVersion": 1,
+      "createdTime": 1777287069707,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "000aedb1-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "save evt_no_id (gateway)",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "",
+        "layoutX": 780,
+        "layoutY": 350
+      },
+      "configuration": {
+        "alarmDetailsBuildJs": "var details = {ts: Date.now(), reason: 'no id field'}; return details;",
+        "alarmType": "MalformedPayload",
+        "dynamicSeverity": false,
+        "overwriteAlarmDetails": true,
+        "propagate": false,
+        "relationTypes": [],
+        "scriptLang": "JS",
+        "severity": "MAJOR",
+        "useMessageAlarmData": false
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777287069708,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "000b14c0-4227-11f1-bbfe-e1395562cba0"
+      },
+      "name": "alarm MalformedPayload",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "trigger profile-level alarm rules",
+        "layoutX": 1000,
+        "layoutY": 50
+      },
+      "configuration": {
+        "fetchAlarmRulesStateOnStart": false,
+        "persistAlarmRulesState": false
+      },
+      "configurationVersion": 1,
+      "createdTime": 1777288360477,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "0166ccd0-422a-11f1-bbfe-e1395562cba0"
+      },
+      "name": "DeviceProfile (alarms)",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.profile.TbDeviceProfileNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "build active+lastActivityTime payload",
+        "layoutX": 1000,
+        "layoutY": -50
+      },
+      "configuration": {
+        "jsScript": "var now = Date.now();return {msg: {\"active\": true, \"lastActivityTime\": now}, metadata: metadata, msgType: \"POST_ATTRIBUTES_REQUEST\"};",
+        "scriptLang": "JS",
+        "tbelScript": ""
+      },
+      "configurationVersion": 0,
+      "createdTime": 1777292562050,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "c9bbf620-4233-11f1-bbfe-e1395562cba0"
+      },
+      "name": "mark active",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "write SERVER_SCOPE attrs",
+        "layoutX": 1240,
+        "layoutY": -50
+      },
+      "configuration": {
+        "notifyDevice": false,
+        "processingSettings": {
+          "type": "ON_EVERY_MESSAGE"
+        },
+        "scope": "SERVER_SCOPE",
+        "sendAttributesUpdatedNotification": false,
+        "updateAttributesOnlyOnValueChange": false
+      },
+      "configurationVersion": 3,
+      "createdTime": 1777292562052,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "c9bc4440-4233-11f1-bbfe-e1395562cba0"
+      },
+      "name": "save active attrs",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Gate: only nested v2 payloads (with HPs[]) enter the TBEL split branch",
+        "layoutX": 1200,
+        "layoutY": 100
+      },
+      "configuration": {
+        "jsScript": "return msg.HPs != null;",
+        "scriptLang": "JS"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1780068334098,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "a2cd9f20-5b72-11f1-9c0b-e3bd4548fecf"
+      },
+      "name": "Filter HPs present v2",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Split 37 SERVER_SCOPE attrs from telemetry payload, return 2 msgs",
+        "layoutX": 1400,
+        "layoutY": 100
+      },
+      "configuration": {
+        "scriptLang": "TBEL",
+        "tbelScript": "// scripts/tb/rule-chain-pac-hybride-router/split-attributes.tbel\n//\n// TBEL TbTransformMsgNode (TB 4.3) — POST_TELEMETRY uniquement, wrap msg dans pac_v2.\n//\n// NOTE : la version split-attributes (extraire 37 SERVER_SCOPE attrs depuis le\n// payload) a ete tentee mais echoue silencieusement a l'execution TBEL malgre\n// un script syntaxiquement correct (init OK, runtime \"Failed to process\" sans\n// stack trace). Hypothese : retour de 2 messages avec metadata partage ou\n// emission multi-msg + MsgType Switch causent un edge case du runtime TBEL.\n//\n// Solution pragmatique retenue : on emet UN seul message POST_TELEMETRY_REQUEST\n// avec pac_v2 = msg complet. L'optimisation attrs viendra plus tard (voir\n// docs/superpowers/specs/2026-05-28-payload-v2-pac-hybride-design.md section 4.3).\n\nreturn [\n  { msg: { pac_v2: msg },\n    metadata: metadata,\n    msgType: \"POST_TELEMETRY_REQUEST\" }\n];\n"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1780068702798,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "7e90c6e0-5b73-11f1-9c0b-e3bd4548fecf"
+      },
+      "name": "TBEL split-attributes v2",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Route by msgType : POST_ATTRIBUTES_REQUEST -> Save Attrs ; POST_TELEMETRY_REQUEST -> Save TS",
+        "layoutX": 1600,
+        "layoutY": 100
+      },
+      "configuration": {
+        "version": 0
+      },
+      "configurationVersion": 0,
+      "createdTime": 1780068702802,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "7e916320-5b73-11f1-9c0b-e3bd4548fecf"
+      },
+      "name": "MsgType Switch v2",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Persist 37 SERVER_SCOPE attrs from TBEL split",
+        "layoutX": 1800,
+        "layoutY": 50
+      },
+      "configuration": {
+        "notifyDevice": false,
+        "processingSettings": {
+          "type": "ON_EVERY_MESSAGE"
+        },
+        "scope": "SERVER_SCOPE",
+        "sendAttributesUpdatedNotification": true,
+        "updateAttributesOnlyOnValueChange": true
+      },
+      "configurationVersion": 3,
+      "createdTime": 1780068702808,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "7e924d80-5b73-11f1-9c0b-e3bd4548fecf"
+      },
+      "name": "Save Attrs SERVER_SCOPE v2",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Persist pac_v2 json_v at metadata.ts",
+        "layoutX": 1800,
+        "layoutY": 150
+      },
+      "configuration": {
+        "defaultTTL": 0,
+        "processingSettings": {
+          "type": "ON_EVERY_MESSAGE"
+        },
+        "useServerTs": false
+      },
+      "configurationVersion": 1,
+      "createdTime": 1780068702809,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "7e927490-5b73-11f1-9c0b-e3bd4548fecf"
+      },
+      "name": "Save TS pac_v2",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Assigne le device au customer yahtec apres creation. Idempotent.",
+        "layoutX": 400,
+        "layoutY": 50
+      },
+      "configuration": {
+        "createCustomerIfNotExists": false,
+        "customerNamePattern": "yahtec"
+      },
+      "configurationVersion": 1,
+      "createdTime": 1780319203741,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "bcc344d0-5dba-11f1-9c0b-e3bd4548fecf"
+      },
+      "name": "Assign to Yahtec",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.action.TbAssignToCustomerNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Extract 40 SERVER_SCOPE attrs from pac_v2 nested payload",
+        "layoutX": 1400,
+        "layoutY": 300
+      },
+      "configuration": {
+        "scriptLang": "TBEL",
+        "tbelScript": "// scripts/tb/rule-chain-pac-hybride-router/extract-attrs.tbel\n//\n// TBEL TbTransformMsgNode (TB 4.3) — extraction des 40 attrs SERVER_SCOPE\n// du payload pac_v2 nested. Émet UN SEUL message POST_ATTRIBUTES_REQUEST\n// (pas de multi-msg, évite le bug TB 4.3 — cf. memory feedback-tbel-quirks).\n//\n// Conforme Section 3.6 du spec 2026-05-28-payload-v2-pac-hybride-design.md.\n// Le node \"Save Attrs SERVER_SCOPE v2\" a updateAttributesOnlyOnValueChange=true\n// → dédup natif, no-op si valeur identique.\n\nvar attrs = {};\n\n// --- Top-level (6) ---\nif (msg.id      != null) attrs.id = msg.id;\nif (msg.rel     != null) attrs.rel = msg.rel;\nif (msg.type    != null) attrs.type = msg.type;\nif (msg.nHp     != null) attrs.nHp = msg.nHp;\nif (msg.relCm2  != null) attrs.relCm2 = msg.relCm2;\nif (msg.nbPumpM != null) attrs.nbPumpM = msg.nbPumpM;  // nb pompes module (firmware 2026-06-12)\n\n// --- dhw : tSet + compteurs pompes echangeur (3) ---\nif (msg.dhw != null) {\n  if (msg.dhw.tSet       != null) attrs.dhw_tSet = msg.dhw.tSet;\n  if (msg.dhw.nbPumpPrim != null) attrs.dhw_nbPumpPrim = msg.dhw.nbPumpPrim;\n  if (msg.dhw.nbPumpSec  != null) attrs.dhw_nbPumpSec = msg.dhw.nbPumpSec;\n}\n\n// --- heat consignes + dates été (9) ---\nif (msg.heat != null) {\n  if (msg.heat.slope       != null) attrs.heat_slope = msg.heat.slope;\n  if (msg.heat.foot        != null) attrs.heat_foot = msg.heat.foot;\n  if (msg.heat.tMax        != null) attrs.heat_tMax = msg.heat.tMax;\n  if (msg.heat.tCut        != null) attrs.heat_tCut = msg.heat.tCut;\n  if (msg.heat.tRes        != null) attrs.heat_tRes = msg.heat.tRes;\n  if (msg.heat.dayBgEte    != null) attrs.heat_dayBgEte = msg.heat.dayBgEte;\n  if (msg.heat.monthBgEte  != null) attrs.heat_monthBgEte = msg.heat.monthBgEte;\n  if (msg.heat.dayEndEte   != null) attrs.heat_dayEndEte = msg.heat.dayEndEte;\n  if (msg.heat.monthEndEte != null) attrs.heat_monthEndEte = msg.heat.monthEndEte;\n\n  // --- heat.calo unités Modbus (5) ---\n  if (msg.heat.calo != null) {\n    if (msg.heat.calo.qeU    != null) attrs.heat_calo_qeU    = msg.heat.calo.qeU;\n    if (msg.heat.calo.qeTotU != null) attrs.heat_calo_qeTotU = msg.heat.calo.qeTotU;\n    if (msg.heat.calo.pwrU   != null) attrs.heat_calo_pwrU   = msg.heat.calo.pwrU;\n    if (msg.heat.calo.hKwhU  != null) attrs.heat_calo_hKwhU  = msg.heat.calo.hKwhU;\n    if (msg.heat.calo.cKwhU  != null) attrs.heat_calo_cKwhU  = msg.heat.calo.cKwhU;\n  }\n}\n\n// --- caloM unités Modbus (5) ---\nif (msg.caloM != null) {\n  if (msg.caloM.qeU    != null) attrs.caloM_qeU    = msg.caloM.qeU;\n  if (msg.caloM.qeTotU != null) attrs.caloM_qeTotU = msg.caloM.qeTotU;\n  if (msg.caloM.pwrU   != null) attrs.caloM_pwrU   = msg.caloM.pwrU;\n  if (msg.caloM.hKwhU  != null) attrs.caloM_hKwhU  = msg.caloM.hKwhU;\n  if (msg.caloM.cKwhU  != null) attrs.caloM_cKwhU  = msg.caloM.cKwhU;\n}\n\n// --- HPs[0..3] versions firmware sous-cartes (12 attrs max, skip empty strings) ---\nif (msg.HPs != null) {\n  // TBEL = MVEL-based : pas de for...in, utiliser boucle classique\n  var i = 0;\n  for (i = 0; i < msg.HPs.length; i++) {\n    var hp = msg.HPs[i];\n    if (hp != null) {\n      var prefix = \"HP\" + (i + 1) + \"_\";\n      if (hp.relStm != null && hp.relStm != \"\") attrs[prefix + \"relStm\"] = hp.relStm;\n      if (hp.relEsp != null && hp.relEsp != \"\") attrs[prefix + \"relEsp\"] = hp.relEsp;\n      if (hp.relScr != null && hp.relScr != \"\") attrs[prefix + \"relScr\"] = hp.relScr;\n    }\n  }\n}\n\nreturn {\n  msg: attrs,\n  metadata: metadata,\n  msgType: \"POST_ATTRIBUTES_REQUEST\"\n};\n"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1780925399106,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "255b7930-633e-11f1-a222-71d08a7b62d3"
+      },
+      "name": "TBEL extract attrs v2",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Anti-collision ts_kv : decale metadata.ts de (evt_fault*8 + evt_device) ms pour que deux defauts de la meme seconde n'ecrasent pas leurs cles partagees. Idempotent par retransmission.",
+        "layoutX": 560,
+        "layoutY": 210
+      },
+      "configuration": {
+        "jsScript": "var f = msg.evt_fault;\nif (f !== null && f !== undefined && metadata.ts) {\n    var base = Math.floor(Number(metadata.ts) / 1000) * 1000;\n    var dev = Number(msg.evt_device);\n    if (isNaN(dev)) { dev = 0; }\n    var off = ((Number(f) * 8 + dev) % 1000 + 1000) % 1000;\n    metadata.ts = \"\" + (base + off);\n}\nreturn {msg: msg, metadata: metadata, msgType: msgType};",
+        "scriptLang": "JS",
+        "tbelScript": ""
+      },
+      "configurationVersion": 0,
+      "createdTime": 1782464706552,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "20178780-713e-11f1-bc9b-15db43cd1c13"
+      },
+      "name": "evt ts offset",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "Charge l'attribut serveur site_assigned -> metadata ss_site_assigned. Tolere l'absence.",
+        "layoutX": 520,
+        "layoutY": 260
+      },
+      "configuration": {
+        "clientAttributeNames": [],
+        "fetchTo": "METADATA",
+        "getLatestValueWithTs": false,
+        "latestTsKeyNames": [],
+        "serverAttributeNames": [
+          "site_assigned"
+        ],
+        "sharedAttributeNames": [],
+        "tellFailureIfAbsent": false
+      },
+      "configurationVersion": 1,
+      "createdTime": 1783085426075,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "59c25dc0-76e3-11f1-8f51-a73b6488f4ac"
+      },
+      "name": "load site_assigned",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.metadata.TbGetAttributesNode"
+    },
+    {
+      "additionalInfo": {
+        "description": "True=provisionnee (skip assign). False/absent=zone d'attente yahtec.",
+        "layoutX": 720,
+        "layoutY": 260
+      },
+      "configuration": {
+        "jsScript": "return metadata.ss_site_assigned === 'true';",
+        "scriptLang": "JS",
+        "tbelScript": "return metadata.ss_site_assigned == 'true';"
+      },
+      "configurationVersion": 0,
+      "createdTime": 1783085426077,
+      "debugSettings": null,
+      "externalId": null,
+      "id": {
+        "entityType": "RULE_NODE",
+        "id": "59c284d0-76e3-11f1-8f51-a73b6488f4ac"
+      },
+      "name": "Provisionnee ?",
+      "queueName": null,
+      "ruleChainId": {
+        "entityType": "RULE_CHAIN",
+        "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+      },
+      "singletonMode": false,
+      "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode"
+    }
+  ],
+  "ruleChainConnections": null,
+  "ruleChainId": {
+    "entityType": "RULE_CHAIN",
+    "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
+  },
+  "version": 33
+}
