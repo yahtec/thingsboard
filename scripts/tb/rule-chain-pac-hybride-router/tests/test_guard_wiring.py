@@ -99,3 +99,13 @@ def test_guard_status_active_on_conforme():
 
 def test_guard_status_applied_on_corrupted():
     assert mod.guard_status(base_meta()) == 'applied'
+
+
+def test_guard_status_does_not_mutate_corrupted_meta():
+    m = base_meta()  # non gardé -> apply_guard AJOUTERAIT des nodes + réécrirait les connexions
+    n_nodes = len(m['nodes'])
+    conns_before = [dict(c) for c in m['connections']]
+    st = mod.guard_status(m)
+    assert st == 'applied'                    # chemin mutant (dérive)
+    assert len(m['nodes']) == n_nodes          # deepcopy protège : aucun node ajouté au meta appelant
+    assert m['connections'] == conns_before     # connexions inchangées
