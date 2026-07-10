@@ -20,17 +20,22 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.thingsboard.server.common.data.Customer;
 import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.TenantId;
 import org.thingsboard.server.common.data.id.UserId;
+import org.thingsboard.server.common.data.page.PageData;
+import org.thingsboard.server.common.data.page.PageLink;
 import org.thingsboard.server.common.data.query.AlarmCountQuery;
 import org.thingsboard.server.common.data.query.EntityFilter;
 import org.thingsboard.server.common.data.security.Authority;
 import org.thingsboard.server.dao.alarm.AlarmService;
+import org.thingsboard.server.dao.customer.CustomerService;
 import org.thingsboard.server.service.security.model.SecurityUser;
 import org.thingsboard.server.service.security.scope.AccessScope;
 import org.thingsboard.server.service.security.scope.AccessScopeService;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -55,6 +60,9 @@ class DefaultEntityQueryServiceAlarmCountTest {
     @Mock
     AlarmService alarmService;
 
+    @Mock
+    CustomerService customerService;
+
     @InjectMocks
     DefaultEntityQueryService service;
 
@@ -70,6 +78,14 @@ class DefaultEntityQueryServiceAlarmCountTest {
 
     private AlarmCountQuery filterlessQuery() {
         return new AlarmCountQuery((EntityFilter) null);
+    }
+
+    private static Customer customer(CustomerId id) {
+        return new Customer(id);
+    }
+
+    private static PageData<Customer> singlePage(Customer... customers) {
+        return new PageData<>(List.of(customers), 1, customers.length, false);
     }
 
     @Test
@@ -89,6 +105,8 @@ class DefaultEntityQueryServiceAlarmCountTest {
         assertThat(result).isEqualTo(7L);
         // NE DOIT PAS compter sur le customer propre du party (=> 0 alarmes, bug d'origine).
         verify(alarmService, never()).countAlarmsByQuery(eq(tenantId), eq(party), any(AlarmCountQuery.class));
+        // INCLUDE ne doit PAS enumerer les customers du tenant.
+        verifyNoInteractions(customerService);
     }
 
     @Test
@@ -103,22 +121,33 @@ class DefaultEntityQueryServiceAlarmCountTest {
 
         assertThat(result).isZero();
         verifyNoInteractions(alarmService);
+        verifyNoInteractions(customerService);
     }
 
     @Test
-    void filterlessStaffCountIsTenantTotalMinusExcluded() {
+    void filterlessStaffCountIsSumOfVisibleCustomersNotTenantTotal() {
+        // STAFF EXCLUDE {excluded}. Tenant = {siteA, siteB, excluded}. On compte siteA + siteB = 5.
+        // On NE compte NI l'exclu, NI le total tenant-wide (qui inclurait la sentinelle tenant-owned).
         CustomerId staff = new CustomerId(UUID.randomUUID());
+        CustomerId siteA = new CustomerId(UUID.randomUUID());
+        CustomerId siteB = new CustomerId(UUID.randomUUID());
         CustomerId excluded = new CustomerId(UUID.randomUUID());
         SecurityUser u = user(Authority.CUSTOMER_USER, staff);
         AlarmCountQuery query = filterlessQuery();
 
         when(accessScopeService.resolve(u)).thenReturn(AccessScope.exclude(Set.of(excluded)));
-        when(alarmService.countAlarmsByQuery(eq(tenantId), eq((CustomerId) null), eq(query))).thenReturn(30L);
-        when(alarmService.countAlarmsByQuery(tenantId, excluded, query)).thenReturn(11L);
+        when(customerService.findCustomersByTenantId(eq(tenantId), any(PageLink.class)))
+                .thenReturn(singlePage(customer(siteA), customer(siteB), customer(excluded)));
+        when(alarmService.countAlarmsByQuery(tenantId, siteA, query)).thenReturn(2L);
+        when(alarmService.countAlarmsByQuery(tenantId, siteB, query)).thenReturn(3L);
 
         long result = service.countAlarmsByQuery(u, query);
 
-        assertThat(result).isEqualTo(19L);
+        assertThat(result).isEqualTo(5L);
+        // Jamais le total tenant-wide (customerId=null) : ce chemin comptait la sentinelle.
+        verify(alarmService, never()).countAlarmsByQuery(eq(tenantId), eq((CustomerId) null), any(AlarmCountQuery.class));
+        // Jamais l'exclu.
+        verify(alarmService, never()).countAlarmsByQuery(eq(tenantId), eq(excluded), any(AlarmCountQuery.class));
     }
 
     @Test
@@ -135,5 +164,7 @@ class DefaultEntityQueryServiceAlarmCountTest {
         assertThat(result).isEqualTo(5L);
         // Chemin upstream a l'identique : appel unique (tenant, customer propre, query).
         verify(alarmService).countAlarmsByQuery(tenantId, own, query);
+        // UNRESTRICTED ne route jamais vers l'enumeration des customers.
+        verifyNoInteractions(customerService);
     }
 }
