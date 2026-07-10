@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.thingsboard.server.common.data.Customer;
 import org.thingsboard.server.common.data.User;
 import org.thingsboard.server.common.data.audit.ActionType;
 import org.thingsboard.server.common.data.id.CustomerId;
@@ -121,9 +122,20 @@ class ScopeCacheInvalidationListenerTest {
 
     @Test
     void userSaveWithNullEntityDoesNothing() {
-        // entity field is null — null-guard should prevent any invalidation
+        // entity field is null — instanceof guard should prevent any invalidation
         SaveEntityEvent<User> event = SaveEntityEvent.<User>builder()
                 .tenantId(tenantId).entity(null).entityId(new UserId(UUID.randomUUID())).build();
+        listener.handleUserSaveEvent(event);
+        verify(accessScopeService, never()).invalidate(any());
+    }
+
+    @Test
+    void saveEventWithNonUserEntityDoesNothing() {
+        // Le handler est désormais typé SaveEntityEvent<?> (fix generics I1) :
+        // un évènement portant une entité non-User doit être ignoré.
+        Customer customer = new Customer(customerA);
+        SaveEntityEvent<Customer> event = SaveEntityEvent.<Customer>builder()
+                .tenantId(tenantId).entity(customer).entityId(customer.getId()).build();
         listener.handleUserSaveEvent(event);
         verify(accessScopeService, never()).invalidate(any());
     }
