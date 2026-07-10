@@ -57,3 +57,52 @@ def test_yahtec_customer_user_has_no_sites():
     c = make_client([user("u1", "ops@ex.com", customer_id=common.YAHTEC_CID)],
                     {"u1": {}}, {DEVICE: SITE}, {common.YAHTEC_CID: [SITE]})
     assert c.get_recipients_for_device(DEVICE) == []
+
+
+def test_attrs_fetch_failure_skips_user_fail_closed():
+    # I6 : un echec de fetch d'attrs (reseau, 5xx...) ne doit JAMAIS faire
+    # comme si l'utilisateur etait {} (fail-open) -> il doit etre exclu de
+    # ce run entier (fail-closed), pas traite comme non-admin/non-desactive.
+    c = make_client([user("u1", "broken@ex.com"), user("u2", "ok@ex.com")],
+                    {}, {DEVICE: SITE}, {PARTY_CID: [SITE]})
+
+    def flaky_attrs(etype, eid, keys=None):
+        if eid == "u1":
+            raise RuntimeError("network down")
+        return {}
+
+    c.get_server_attrs = flaky_attrs
+    result = c._collect_user_attrs()
+    emails = [u["email"] for u in result]
+    assert "broken@ex.com" not in emails
+    assert "ok@ex.com" in emails
+
+
+def test_attrs_fetch_failure_admin_not_spammed_per_device():
+    # Meme scenario, mais côté effet observable : si le fetch d'attrs de
+    # l'admin echoue, il ne doit PAS se retrouver traite comme non-admin
+    # dans le routage per-device (fail-open historique).
+    c = make_client([user("admin1", "admin@ex.com")], {}, {DEVICE: SITE}, {PARTY_CID: [SITE]})
+
+    def boom(etype, eid, keys=None):
+        raise RuntimeError("network down")
+
+    c.get_server_attrs = boom
+    assert c.get_recipients_for_device(DEVICE) == []
+
+
+def test_admin_emails_excludes_service_account():
+    # M14 : svc-tbnotify@ (self.user) est TENANT_ADMIN mais ne doit pas se
+    # spammer lui-meme via get_admin_emails.
+    c = make_client([
+        user("u1", "je@yahtec.com", authority="TENANT_ADMIN"),
+        user("svc", "svc-tbnotify@yahtec.com", authority="TENANT_ADMIN"),
+    ], {}, {}, {})
+    c.user = "svc-tbnotify@yahtec.com"
+    assert c.get_admin_emails() == ["je@yahtec.com"]
+
+
+def test_admin_emails_excludes_service_account_case_insensitive():
+    c = make_client([user("svc", "Svc-TBNotify@Yahtec.com", authority="TENANT_ADMIN")], {}, {}, {})
+    c.user = "svc-tbnotify@yahtec.com"
+    assert c.get_admin_emails() == []

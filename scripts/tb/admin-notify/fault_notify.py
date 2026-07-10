@@ -13,12 +13,17 @@ Behavior:
 from __future__ import annotations
 
 import datetime as dt
-import fcntl
 import json
 import os
 import sys
 import time
 from html import escape
+
+try:
+    import fcntl  # POSIX only (prod = Linux) ; absent sur les postes dev Windows,
+    # ou seul process_device() est teste unitairement (main() n'y est jamais appele).
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from common import (
     EVT_KEYS, TBClient, collect_records, label_device, label_fault, open_faults,
@@ -122,14 +127,6 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
     cursor = max(cursor, now_ms - LOOKBACK_MAX_S * 1000)
     cooldown = _load_cooldown(attrs.get("recent_fault_notifs"))
 
-    # Destinataires = users TB ayant accès à cette chaufferie (admins + ceux
-    # qui ont ce deviceId dans leur attribut `chaufferies`). Les comptes
-    # désactivés (userCredentialsEnabled=false) sont exclus en amont.
-    emails = tb.get_recipients_for_device(dev_id, users)
-    if not emails:
-        log.info("device=%s skip: no recipients (aucun user TB n'a accès)", dev_name)
-        return
-
     if cursor >= cutoff_ms:
         return  # nothing to scan yet
 
@@ -157,15 +154,28 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
     if skipped:
         log.info("device=%s skipped %d apparitions within 6h cooldown", dev_name, skipped)
 
+    # M18 : le check destinataires vient APRES le calcul du curseur/records,
+    # et ne fait plus un `return` anticipe. Sinon un device sans destinataire
+    # (aucun CanView encore accorde) n'avancait JAMAIS son curseur -> le jour
+    # ou un CanView est enfin accorde, jusqu'a 24h de vieux defauts (le cap
+    # LOOKBACK_MAX_S) partaient en rafale dans un seul mail.
+    # Destinataires = users TB ayant accès à cette chaufferie (admins + ceux
+    # qui ont ce deviceId dans leur attribut `chaufferies`). Les comptes
+    # désactivés (userCredentialsEnabled=false) sont exclus en amont.
     if to_notify:
-        display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
-        addr = attrs.get("adresse") or ""
-        html, text = render_mail(display, addr, to_notify)
-        subject = (f"[TDUO] {display} — défaut: {label_fault(to_notify[0].fault)}"
-                   if len(to_notify) == 1
-                   else f"[TDUO] {display} — {len(to_notify)} nouveaux défauts")
-        send_mail(emails, subject, html, text)
-        log.info("device=%s sent %d faults to %s", dev_name, len(to_notify), ", ".join(emails))
+        emails = tb.get_recipients_for_device(dev_id, users)
+        if emails:
+            display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
+            addr = attrs.get("adresse") or ""
+            html, text = render_mail(display, addr, to_notify)
+            subject = (f"[TDUO] {display} — défaut: {label_fault(to_notify[0].fault)}"
+                       if len(to_notify) == 1
+                       else f"[TDUO] {display} — {len(to_notify)} nouveaux défauts")
+            send_mail(emails, subject, html, text)
+            log.info("device=%s sent %d faults to %s", dev_name, len(to_notify), ", ".join(emails))
+        else:
+            log.info("device=%s %d new faults but no recipients — not sent, curseur avance quand même",
+                     dev_name, len(to_notify))
 
     cooldown = _gc_cooldown(cooldown, now_ms)
     advance = max((r["ts"] for r in records), default=cutoff_ms)

@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
 
+logger = logging.getLogger("tb_notify.common")
+
 LOG_DIR = Path(os.environ.get("TBN_LOG_DIR", "/var/log"))
 JWT_CACHE = Path("/tmp/tb-notify-jwt.json")
 
@@ -79,10 +81,17 @@ class TBClient:
         self._token: str | None = None
         self._token_exp: float = 0
 
-    def _auth(self):
-        if self._token and time.time() < self._token_exp - 60:
+    def _auth(self, force: bool = False):
+        """force=True : re-authentifie inconditionnellement (saute le cache
+        memoire ET le cache disque). Utilise par le retry 401 (I5) : sans ca,
+        _auth() reposait sur le cache disque `/tmp/tb-notify-jwt.json` qui
+        contient le MEME token invalide (son exp locale, inventee a
+        l'ecriture = now+3600, n'a pas expire cote client bien qu'il soit
+        deja mort cote serveur) -> tous les crons echouaient jusqu'a 1h apres
+        une rotation de mdp / restart TB / logout-all."""
+        if not force and self._token and time.time() < self._token_exp - 60:
             return
-        if JWT_CACHE.exists():
+        if not force and JWT_CACHE.exists():
             try:
                 d = json.loads(JWT_CACHE.read_text())
                 if d.get("user") == self.user and d.get("exp", 0) > time.time() + 60:
@@ -104,12 +113,21 @@ class TBClient:
         except Exception:
             pass
 
+    def _invalidate_cached_token(self) -> None:
+        """401 recu : le token en memoire ET le cache disque sont morts.
+        Invalider les deux avant de re-authentifier (voir _auth(force=True))."""
+        self._token = None
+        try:
+            JWT_CACHE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def _req(self, method: str, path: str, **kw) -> requests.Response:
         self._auth()
         r = self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
         if r.status_code == 401:
-            self._token = None
-            self._auth()
+            self._invalidate_cached_token()
+            self._auth(force=True)
             r = self.s.request(method, f"{self.url}{path}", timeout=30, **kw)
         r.raise_for_status()
         return r
@@ -126,13 +144,8 @@ class TBClient:
         return None
 
     def delete(self, path: str) -> None:
-        self._auth()
-        r = self.s.request("DELETE", f"{self.url}{path}", timeout=30)
-        if r.status_code == 401:
-            self._token = None
-            self._auth()
-            r = self.s.request("DELETE", f"{self.url}{path}", timeout=30)
-        r.raise_for_status()
+        # Reutilise _req -> beneficie du meme fix 401 (I5) sans dupliquer la logique.
+        self._req("DELETE", path)
 
     def list_devices_by_profile(self, profile_name: str) -> list[dict]:
         out, page = [], 0
@@ -303,7 +316,13 @@ class TBClient:
             try:
                 attrs = self.get_server_attrs("USER", uid, ["is_admin", "deactivated"])
             except Exception:
-                attrs = {}
+                # I6 : fail-closed, pas fail-open. `attrs = {}` traiterait un
+                # `deactivated` comme actif (re-routage) et un `is_admin` comme
+                # non-admin (spam per-device) juste parce que le fetch a echoue.
+                # On saute cet utilisateur pour CE run (au pire il manque un
+                # destinataire une fois ; au prochain run le fetch reussira).
+                logger.warning("skip user %s (%s): attrs fetch failed", uid, email, exc_info=True)
+                continue
             if attrs.get("deactivated"):
                 continue  # compte desactive (tb-notify) -> pas de mail de defaut
             # chaufferies = device-ids visibles via CanView du party-customer dedie.
@@ -347,10 +366,15 @@ class TBClient:
         return [e for e in out if not (e in seen or seen.add(e))]
 
     def get_admin_emails(self, users: list[dict] | None = None) -> list[str]:
-        """Emails des TENANT_ADMIN + CUSTOMER_USER avec is_admin=true."""
+        """Emails des TENANT_ADMIN + CUSTOMER_USER avec is_admin=true.
+        Exclut le compte de service lui-meme (M14) : svc-tbnotify@ est
+        TENANT_ADMIN mais ne doit pas se spammer / apparaitre dans le digest."""
         if users is None:
             users = self._collect_user_attrs()
-        out = [u["email"] for u in users if u["authority"] == "TENANT_ADMIN" or u["is_admin"]]
+        self_email = (self.user or "").strip().lower()
+        out = [u["email"] for u in users
+               if (u["authority"] == "TENANT_ADMIN" or u["is_admin"])
+               and u["email"].strip().lower() != self_email]
         seen = set()
         return [e for e in out if not (e in seen or seen.add(e))]
 
