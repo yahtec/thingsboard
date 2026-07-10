@@ -33,6 +33,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.thingsboard.common.util.ThingsBoardExecutors;
 import org.thingsboard.common.util.ThingsBoardThreadFactory;
+import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.EntityId;
 import org.thingsboard.server.dao.nosql.ResultSetSizeLimitExceededException;
 import org.thingsboard.server.common.data.kv.BaseReadTsKvQuery;
@@ -52,7 +53,10 @@ import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
 import org.thingsboard.server.dao.customer.CustomerService;
 import org.thingsboard.server.dao.entity.EntityService;
+import org.thingsboard.server.service.security.model.SecurityUser;
+import org.thingsboard.server.service.security.scope.AccessScope;
 import org.thingsboard.server.service.security.scope.AccessScopeService;
+import org.thingsboard.server.service.security.scope.ScopedAlarmStatus;
 import org.thingsboard.server.dao.timeseries.TimeseriesService;
 import org.thingsboard.server.queue.discovery.TbServiceInfoProvider;
 import org.thingsboard.server.queue.util.TbCoreComponent;
@@ -67,6 +71,7 @@ import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmCountUpdate;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmDataCmd;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmDataUpdate;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmStatusCmd;
+import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmStatusUpdate;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.EntityCountCmd;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.EntityDataCmd;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.EntityDataUpdate;
@@ -82,6 +87,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -482,6 +488,9 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
         log.debug("[{}] Handling alarm status subscription cmd (cmdId: {})", session.getSessionId(), cmd.getCmdId());
         TbAlarmStatusSubCtx ctx = getSubCtx(session.getSessionId(), cmd.getCmdId());
         if (ctx == null) {
+            if (!checkAlarmStatusScope(session, cmd)) {
+                return;
+            }
             ctx = createSubCtx(session, cmd);
             long start = System.currentTimeMillis();
             ctx.fetchActiveAlarms();
@@ -492,6 +501,37 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
         } else {
             log.debug("[{}][{}] Received duplicate command: {}", session.getSessionId(), cmd.getCmdId(), cmd);
         }
+    }
+
+    /**
+     * Verifie que l'utilisateur a le droit de voir l'originator AVANT d'ouvrir une souscription au
+     * statut d'alarme (finding I4). Contrairement aux chemins data/count, la souscription au statut
+     * d'alarme s'abonne directement a {@code cmd.getOriginatorId()} sans requete scopee : sans ce
+     * controle, un PARTY recevait le statut d'alarme live de n'importe quel device du tenant.
+     *
+     * <p>UNRESTRICTED (TENANT_ADMIN...) : inchange, on ne resout meme pas l'owner. Pour un user scope
+     * (INCLUDE/EXCLUDE) on resout le customer proprietaire de l'originator et on delegue a
+     * {@link ScopedAlarmStatus#canSubscribe}. Refus (ou owner introuvable = fail-closed) =&gt; on
+     * repond un {@link AlarmStatusUpdate} vide (aucune alarme active) — meme forme « resultat vide »
+     * que les handlers alarm data/count out-of-scope — et on ne cree AUCUNE souscription.
+     *
+     * @return {@code true} si la souscription peut etre creee
+     */
+    private boolean checkAlarmStatusScope(WebSocketSessionRef session, AlarmStatusCmd cmd) {
+        SecurityUser securityCtx = session.getSecurityCtx();
+        AccessScope scope = accessScopeService.resolve(securityCtx);
+        if (scope.getMode() == AccessScope.Mode.UNRESTRICTED) {
+            return true;
+        }
+        Optional<CustomerId> ownerCustomerId =
+                entityService.fetchEntityCustomerId(securityCtx.getTenantId(), cmd.getOriginatorId());
+        if (ScopedAlarmStatus.canSubscribe(scope, ownerCustomerId)) {
+            return true;
+        }
+        log.debug("[{}][{}] Alarm status subscription refused for out-of-scope originator [{}]",
+                session.getSessionId(), cmd.getCmdId(), cmd.getOriginatorId());
+        wsService.sendUpdate(session.getSessionId(), new AlarmStatusUpdate(cmd.getCmdId(), false));
+        return false;
     }
 
     private boolean validate(TbAbstractSubCtx finalCtx) {
