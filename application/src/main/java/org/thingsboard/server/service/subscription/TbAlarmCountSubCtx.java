@@ -36,6 +36,7 @@ import org.thingsboard.server.dao.model.ModelConstants;
 import org.thingsboard.server.service.security.model.SecurityUser;
 import org.thingsboard.server.service.security.scope.AccessScope;
 import org.thingsboard.server.service.security.scope.AccessScopeService;
+import org.thingsboard.server.service.security.scope.ScopedAlarmCount;
 import org.thingsboard.server.service.ws.WebSocketService;
 import org.thingsboard.server.service.ws.WebSocketSessionRef;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmCountUpdate;
@@ -120,7 +121,7 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
         alarmCountInvocationAttempts++;
         log.trace("[{}] Fetching alarms: {}", cmdId, alarmCountInvocationAttempts);
         if (alarmCountInvocationAttempts <= maxAlarmQueriesPerRefreshInterval) {
-            int newCount = (int) alarmService.countAlarmsByQuery(getTenantId(), getCustomerId(), query, entitiesIds);
+            int newCount = (int) countAlarms();
             if (newCount != result) {
                 result = newCount;
                 sendWsMsg(new AlarmCountUpdate(cmdId, result));
@@ -131,8 +132,29 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
     }
 
     public void doFetchAlarmCount() {
-        result = (int) alarmService.countAlarmsByQuery(getTenantId(), getCustomerId(), query, entitiesIds);
+        result = (int) countAlarms();
         sendWsMsg(new AlarmCountUpdate(cmdId, result));
+    }
+
+    /**
+     * Compte les alarmes en respectant le scope portefeuille.
+     * <ul>
+     *   <li>Filtre present : {@code entitiesIds} a deja ete resolu de maniere scopee dans
+     *       {@link #fetchData()} (chemin data), on compte par liste d'entites.</li>
+     *   <li>Sans filtre ({@code entitiesIds == null}) : le comptage upstream retomberait sur
+     *       {@code a.customer_id = <customer propre>} et renverrait 0 pour un PARTY. On route donc
+     *       INCLUDE/EXCLUDE vers la meme population que le chemin data ; UNRESTRICTED reste upstream.</li>
+     * </ul>
+     */
+    private long countAlarms() {
+        if (entitiesIds == null) {
+            AccessScope scope = accessScopeService.resolve(sessionRef.getSecurityCtx());
+            if (scope.getMode() != AccessScope.Mode.UNRESTRICTED) {
+                return ScopedAlarmCount.countFilterless(scope,
+                        customerId -> alarmService.countAlarmsByQuery(getTenantId(), customerId, query));
+            }
+        }
+        return alarmService.countAlarmsByQuery(getTenantId(), getCustomerId(), query, entitiesIds);
     }
 
     private EntityDataQuery buildEntityDataQuery() {

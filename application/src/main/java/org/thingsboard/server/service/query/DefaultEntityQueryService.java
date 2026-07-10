@@ -67,6 +67,7 @@ import org.thingsboard.server.service.executors.DbCallbackExecutorService;
 import org.thingsboard.server.service.security.model.SecurityUser;
 import org.thingsboard.server.service.security.scope.AccessScope;
 import org.thingsboard.server.service.security.scope.AccessScopeService;
+import org.thingsboard.server.service.security.scope.ScopedAlarmCount;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -243,6 +244,14 @@ public class DefaultEntityQueryService implements EntityQueryService {
             } else {
                 return 0;
             }
+        }
+        // Sans entityFilter, le comptage upstream retombe sur `a.customer_id = <customer propre>`,
+        // ce qui renvoie 0 pour un PARTY (portefeuille) et diverge de la table d'alarmes filtree.
+        // Pour INCLUDE/EXCLUDE (PARTY/STAFF) on route vers la meme population que le chemin data.
+        AccessScope scope = accessScopeService.resolve(securityUser);
+        if (scope.getMode() != AccessScope.Mode.UNRESTRICTED) {
+            return ScopedAlarmCount.countFilterless(scope,
+                    customerId -> alarmService.countAlarmsByQuery(securityUser.getTenantId(), customerId, query));
         }
         return alarmService.countAlarmsByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
     }
