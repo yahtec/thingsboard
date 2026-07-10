@@ -47,7 +47,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.then;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -182,6 +181,10 @@ class DefaultTbEntityDataSubscriptionServiceAlarmStatusScopeTest {
         then(localSubscriptionService).should().addSubscription(any(TbSubscription.class), eq(session));
         // ...et on ne resout JAMAIS l'owner de l'originator (byte-identique, pas de lecture DB en plus).
         verifyNoInteractions(entityService);
-        then(accessScopeService).should(never()).canView(any(), any());
+        // Le scope est resolu exactement une fois (court-circuit UNRESTRICTED), pas plus : on ne
+        // re-consulte pas accessScopeService une seconde fois derriere (par ex. pour un check canView
+        // redondant, qui de toute facon n'existe pas dans le handler — canView() est appele sur
+        // l'AccessScope resolu, pas sur accessScopeService lui-meme).
+        then(accessScopeService).should().resolve(u);
     }
 }
