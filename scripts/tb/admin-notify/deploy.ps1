@@ -2,14 +2,16 @@
 #
 # Source  : fichiers SUIVIS PAR GIT sous scripts/tb/admin-notify/ (git = source de verite)
 # Cible   : root@10.77.0.74:/home/dump/tb-notify
-# Cle     : ~/.ssh/yahtec-ota  (meme convention que le deploy.ps1 racine)
+# Cle     : ~/.ssh/yahtec-ota
 #
 # Usage :
 #   ./deploy.ps1               -> DRY-RUN : liste ce qui serait pousse, n'ecrit rien
-#   ./deploy.ps1 -Apply        -> backup distant + scp + restart tb-notify-web
+#   ./deploy.ps1 -Apply        -> backup distant + transfert (1 tarball) + restart tb-notify-web
 #   ./deploy.ps1 -Apply -NoRestart -> pousse sans redemarrer
 #
 # Ne pousse JAMAIS .env (secrets serveur-only), .venv, tests, requirements-dev.txt, __pycache__.
+# Transfert = 1 seul tarball (tar local -> 1 scp -> extract distant) : robuste (pas de hang
+# multi-connexions), et la liste explicite rend impossible d'embarquer un fichier exclu.
 
 param(
     [switch]$Apply,
@@ -59,25 +61,28 @@ Write-Host "==> Backup distant : $Remote-deploy-backup-$ts.tgz" -ForegroundColor
 $backupFile = "$Remote-deploy-backup-$ts.tgz"
 $backupOutput = & ssh @SshOpts "${SshUser}@${SshHost}" "cd $Remote && tar czf $backupFile --exclude=.venv --exclude=__pycache__ . && test -s $backupFile && echo BACKUP_OK"
 if ($LASTEXITCODE -ne 0 -or ($backupOutput -notmatch 'BACKUP_OK')) {
-    throw "backup distant echoue - abort avant tout scp"
+    throw "backup distant echoue - abort avant tout transfert"
 }
 
-# Cree les sous-dossiers distants necessaires.
-$dirs = @($tracked | ForEach-Object { Split-Path $_ -Parent } | Where-Object { $_ } | Sort-Object -Unique)
-foreach ($d in $dirs) {
-    $rd = ($d -replace '\\','/')
-    & ssh @SshOpts "${SshUser}@${SshHost}" "mkdir -p $Remote/$rd"
-}
+# Transfert en UN seul tarball (evite la fragilite/hang de N connexions scp).
+$localTar  = Join-Path $env:TEMP "tb-notify-deploy-$ts.tgz"
+$remoteTar = "/tmp/tb-notify-deploy-$ts.tgz"
+try {
+    Write-Host "==> Archive locale ($($tracked.Count) fichiers) : $localTar" -ForegroundColor Cyan
+    & tar czf $localTar -C $AppDir @tracked
+    if ($LASTEXITCODE -ne 0) { throw "tar (create) echoue" }
 
-Write-Host "==> Upload (scp)" -ForegroundColor Cyan
-foreach ($f in $tracked) {
-    $local  = Join-Path $AppDir ($f -replace '/','\')
-    # NB: pas $remote — PowerShell est insensible a la casse, $remote ecraserait $Remote
-    # (base) et le chemin distant s'accumulerait a chaque iteration (.env.example/README.md/...).
-    $dest = "$Remote/$($f -replace '\\','/')"
-    & scp @SshOpts $local "${SshUser}@${SshHost}:$dest"
-    if ($LASTEXITCODE -ne 0) { throw "scp echoue pour $f" }
-    Write-Host "    -> $f"
+    Write-Host "==> Upload (scp, 1 archive)" -ForegroundColor Cyan
+    & scp @SshOpts $localTar "${SshUser}@${SshHost}:$remoteTar"
+    if ($LASTEXITCODE -ne 0) { throw "scp de l'archive echoue" }
+
+    Write-Host "==> Extraction distante" -ForegroundColor Cyan
+    & ssh @SshOpts "${SshUser}@${SshHost}" "mkdir -p $Remote && tar xzf $remoteTar -C $Remote && rm -f $remoteTar && echo EXTRACT_OK"
+    if ($LASTEXITCODE -ne 0) { throw "extraction distante echouee" }
+    $tracked | ForEach-Object { Write-Host "    -> $_" }
+}
+finally {
+    if (Test-Path $localTar) { Remove-Item $localTar -Force }
 }
 
 if ($NoRestart) {
