@@ -36,6 +36,12 @@ def main():
         uid = u['id']['id']; party_cid = u['customerId']['id']
         attrs = tb.http_get(f'/api/plugins/telemetry/USER/{uid}/values/attributes/SERVER_SCOPE?keys=chaufferies', t) or []
         raw = next((a['value'] for a in attrs if a['key'] == 'chaufferies'), None)
+        if raw is None:
+            # I14 : la migration (chantier #4) supprime volontairement cet attribut
+            # (bascule CanView-only). Attribut absent = migre, PAS un desaccord.
+            # Ne compte ni ne diverge : seul un attribut EXISTANT et divergent est un vrai defaut.
+            print(f'  {u["email"]:32} attribut chaufferies absent (migre CanView-only) -> skip')
+            continue
         attr_ids = set(json.loads(raw) if isinstance(raw, str) else (raw or []))
         cv_sites = canview_site_ids(t, party_cid)
         cv_ids = {did for did, sc in site_of_dev.items() if sc in cv_sites}

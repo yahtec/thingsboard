@@ -35,6 +35,9 @@ def _users_under(t, customer_id):
 
 
 def _migrate_user(t, u, apply):
+    """Migre un CUSTOMER_USER LEGACY -> PARTY. Retourne None en fonctionnement normal
+    (migre ou skip-sans-chaufferies), ou l'email du user si hard-fail droit=admin
+    (a remonter par l'appelant pour le rapport final + l'exit non-zero)."""
     email = u['email']
     uid = u['id']['id']
     attrs = tb.get_server_attrs(t, 'USER', uid, USER_ATTR_KEYS)
@@ -43,9 +46,18 @@ def _migrate_user(t, u, apply):
         chauff = json.loads(chauff)
     if not chauff:
         print(f'  SKIP (pas de chaufferies) : {email}')
-        return
+        return None
     droit = attrs.get('droit_acces') or 'lecture'
-    role = 'ADMIN_OPS' if droit == 'admin' else 'PARTY'
+    if droit == 'admin':
+        # I13 : un droit_acces=admin ne doit JAMAIS etre recree en CUSTOMER_USER+ADMIN_OPS
+        # (hybride invalide : TB scope le compte a son party-customer pendant que la couche
+        # RBAC le croit unrestricted). Hard-fail AVANT toute mutation (pas de customer,
+        # pas de CanView, pas de delete/create) ; migration manuelle en TENANT_ADMIN requise.
+        print(f'  !!! HARD-FAIL {email} : droit_acces=admin -> migrer manuellement en '
+              f'TENANT_ADMIN (comme ac@), PAS recree en CUSTOMER_USER+ADMIN_OPS.')
+        print('      Aucune mutation effectuee sur ce compte (ni customer, ni CanView, ni delete/create).')
+        return email
+    role = 'PARTY'
     print(f'  MIGRE {email} : droit={droit} -> {role}, {len(chauff)} chaufferie(s)')
     party_cid = tb.ensure_customer(t, f'Party — {email}', apply)
     if party_cid is not None:
@@ -127,8 +139,11 @@ def main():
         tb.set_server_attribute(t, did, 'site_assigned', True, apply)
 
     print('\n[B] Migration users LEGACY scopes -> PARTY')
+    skipped_admins = []
     for u in _users_under(t, YAHTEC_CID):
-        _migrate_user(t, u, apply)
+        skipped = _migrate_user(t, u, apply)
+        if skipped:
+            skipped_admins.append(skipped)
 
     print('\n[C] Suppression comptes nus')
     for email in DELETE_BARE:
@@ -155,6 +170,13 @@ def main():
         print('  [DRY] ac@ -> portfolioRole=ADMIN_OPS')
 
     print('\n== Termine ==' + ('' if apply else ' (dry-run — aucune ecriture)'))
+
+    if skipped_admins:
+        print(f'\n!!! {len(skipped_admins)} compte(s) droit_acces=admin NON migre(s) '
+              f'(a traiter manuellement en TENANT_ADMIN, comme ac@) :')
+        for e in skipped_admins:
+            print(f'  - {e}')
+        sys.exit(1)
 
 
 if __name__ == '__main__':
