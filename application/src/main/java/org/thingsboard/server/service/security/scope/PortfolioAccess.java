@@ -16,8 +16,8 @@
 package org.thingsboard.server.service.security.scope;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.thingsboard.server.common.data.User;
 import org.thingsboard.server.common.data.relation.RelationTypeGroup;
-import org.thingsboard.server.service.security.model.SecurityUser;
 
 public final class PortfolioAccess {
 
@@ -33,7 +33,7 @@ public final class PortfolioAccess {
         PARTY, STAFF, ADMIN_OPS, LEGACY
     }
 
-    public static Role roleOf(SecurityUser user) {
+    public static Role roleOf(User user) {
         JsonNode info = user.getAdditionalInfo();
         if (info != null && info.hasNonNull(ROLE_FIELD)) {
             String raw = info.get(ROLE_FIELD).asText();

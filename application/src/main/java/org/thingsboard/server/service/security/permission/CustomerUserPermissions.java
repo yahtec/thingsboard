@@ -64,7 +64,7 @@ public class CustomerUserPermissions extends AbstractPermissions {
 
         put(Resource.ASSET, customerEntityPermissionChecker());
         put(Resource.DEVICE, customerEntityPermissionChecker());
-        put(Resource.CUSTOMER, customerPermissionChecker);
+        put(Resource.CUSTOMER, customerPermissionChecker());
         put(Resource.DASHBOARD, customerDashboardPermissionChecker);
         put(Resource.ENTITY_VIEW, customerEntityPermissionChecker());
         put(Resource.USER, userPermissionChecker);
@@ -105,19 +105,33 @@ public class CustomerUserPermissions extends AbstractPermissions {
         };
     }
 
-    private static final PermissionChecker customerPermissionChecker =
-            new PermissionChecker.GenericPermissionChecker(Operation.READ, Operation.READ_ATTRIBUTES, Operation.READ_TELEMETRY) {
+    /**
+     * Checker de la ressource CUSTOMER. En lecture seule (READ/READ_ATTRIBUTES/READ_TELEMETRY),
+     * autorise :
+     *  - son PROPRE customer (comportement legacy, toujours vrai indépendamment du scope) ;
+     *  - tout customer de site que l'utilisateur peut voir via le scope portefeuille
+     *    ({@code accessScopeService.canView}) — un PARTY a besoin de lire l'entité customer de ses
+     *    sites (titre, adresse) pour les widgets.
+     * Aucune opération d'écriture n'est enregistrée → l'écriture reste refusée (own-customer only via
+     * les autres chemins). {@code canView} sur son propre customer reste vrai pour les rôles legacy.
+     */
+    private PermissionChecker customerPermissionChecker() {
+        return new PermissionChecker.GenericPermissionChecker(Operation.READ, Operation.READ_ATTRIBUTES, Operation.READ_TELEMETRY) {
 
-                @Override
-                @SuppressWarnings("unchecked")
-                public boolean hasPermission(SecurityUser user, Operation operation, EntityId entityId, HasTenantId entity) {
-                    if (!super.hasPermission(user, operation, entityId, entity)) {
-                        return false;
-                    }
-                    return user.getCustomerId().equals(entityId);
+            @Override
+            @SuppressWarnings("unchecked")
+            public boolean hasPermission(SecurityUser user, Operation operation, EntityId entityId, HasTenantId entity) {
+                if (!super.hasPermission(user, operation, entityId, entity)) {
+                    return false;
                 }
+                if (user.getCustomerId().equals(entityId)) {
+                    return true;
+                }
+                return accessScopeService.canView(user, new CustomerId(entityId.getId()));
+            }
 
-            };
+        };
+    }
 
     private static final PermissionChecker customerResourcePermissionChecker =
             new PermissionChecker<TbResourceId, TbResourceInfo>() {

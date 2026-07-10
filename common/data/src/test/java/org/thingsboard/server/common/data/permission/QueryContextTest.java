@@ -24,9 +24,19 @@ class QueryContextTest {
     @Test
     void scopedCtorCarriesIncludeSet() {
         UUID a = UUID.randomUUID();
-        QueryContext ctx = new QueryContext(tenantId, EntityType.DEVICE, List.of(a), CustomerScopeMode.INCLUDE);
+        QueryContext ctx = new QueryContext(tenantId, null, EntityType.DEVICE, List.of(a), CustomerScopeMode.INCLUDE);
         assertThat(ctx.getScopeMode()).isEqualTo(CustomerScopeMode.INCLUDE);
         assertThat(ctx.getCustomerIds()).containsExactly(a);
         assertThat(ctx.getCustomerId()).isNull();
+    }
+
+    @Test
+    void scopedCtorCarriesOwnCustomerId() {
+        UUID a = UUID.randomUUID();
+        CustomerId own = new CustomerId(UUID.randomUUID());
+        QueryContext ctx = new QueryContext(tenantId, own, EntityType.DEVICE, List.of(a), CustomerScopeMode.EXCLUDE);
+        assertThat(ctx.getScopeMode()).isEqualTo(CustomerScopeMode.EXCLUDE);
+        assertThat(ctx.getCustomerIds()).containsExactly(a);
+        assertThat(ctx.getCustomerId()).isEqualTo(own);
     }
 }

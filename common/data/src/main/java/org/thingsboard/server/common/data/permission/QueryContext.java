@@ -56,10 +56,6 @@ public class QueryContext {
         this.scopeMode = CustomerScopeMode.UNRESTRICTED;
     }
 
-    public QueryContext(TenantId tenantId, EntityType entityType, List<UUID> customerIds, CustomerScopeMode scopeMode) {
-        this(tenantId, null, entityType, customerIds, scopeMode);
-    }
-
     /**
      * Scoped constructor that ALSO carries the querying user's own customerId.
      *
