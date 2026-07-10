@@ -339,7 +339,17 @@ def profile_logout(request: Request):
 
 # ─── Comptes ────────────────────────────────────────────────────────────────
 
-def _user_row(tb: TBClient, u: dict) -> dict:
+def _user_row(tb: TBClient, u: dict, chaufferies: list[dict] | None = None,
+              site_of_dev: dict | None = None) -> dict:
+    """`chaufferies` (sortie de `_list_chaufferies`) et `site_of_dev` (map
+    device_id -> site_customer_id, cf `TBClient.site_of_devices`) peuvent etre
+    precalcules par l'appelant et reutilises pour TOUTES les lignes d'une
+    meme page (I11) : sans ca, chaque appel refaisait un `_list_chaufferies`
+    (list_devices_by_profile + 1 GET/attrs par device) PLUS un GET
+    site_customer_id par device, PAR user -> O(users x devices) round-trips
+    REST sequentiels (~220+ pour 20 users x 5 devices). Si omis (autres
+    appelants a faible cardinalite, ex. account_edit sur un seul user), on
+    retombe sur le calcul paresseux d'origine -> sortie identique."""
     uid = u["id"]["id"]
     attrs = tb.get_server_attrs("USER", uid, USER_ATTRS)
     last_login = None
@@ -358,8 +368,10 @@ def _user_row(tb: TBClient, u: dict) -> dict:
     chaufferies_ids: list[str] = []
     if u.get("authority") == "CUSTOMER_USER" and party_cid and party_cid != YAHTEC_CID:
         site_ids = tb.canview_site_ids(party_cid)
-        for dev in _list_chaufferies(tb):
-            sc = tb.get_server_attrs("DEVICE", dev["id"], ["site_customer_id"]).get("site_customer_id")
+        fleet = chaufferies if chaufferies is not None else _list_chaufferies(tb)
+        dev_site = site_of_dev if site_of_dev is not None else tb.site_of_devices(PROFILE)
+        for dev in fleet:
+            sc = dev_site.get(dev["id"])
             if sc in site_ids:
                 chaufferies_ids.append(dev["id"])
     return {
@@ -421,7 +433,12 @@ def accounts_index(request: Request, saved: int = 0, invited: int = 0,
         return templates.TemplateResponse("auto_login.html", {"request": request, "root": ROOT_PATH})
     tb = TBClient()
     users = tb.list_all_users(CUSTOMER_ID)
-    rows = [_user_row(tb, u) for u in users]
+    # I11 : calculer les donnees fleet-wide (chaufferies + device->site) UNE
+    # SEULE FOIS pour toute la page, au lieu d'un recalcul complet par ligne
+    # (cf revue 2026-07-10, #11 : O(users x devices) round-trips REST).
+    chaufferies = _list_chaufferies(tb)
+    site_of_dev = tb.site_of_devices(PROFILE)
+    rows = [_user_row(tb, u, chaufferies=chaufferies, site_of_dev=site_of_dev) for u in users]
     rows.sort(key=lambda r: (not r["is_admin"], (r["last_name"] or "").lower(), (r["first_name"] or "").lower()))
     return templates.TemplateResponse("accounts.html", {
         "request": request, "user": sess, "rows": rows, "root": ROOT_PATH,
@@ -438,10 +455,15 @@ def account_edit(uid: str, request: Request, saved: int = 0, error: str | None =
         u = tb.get_user(uid)
     except requests.HTTPError:
         return RedirectResponse(f"{ROOT_PATH}/?error=not_found", status_code=303)
-    row = _user_row(tb, u)
+    # Meme donnees fleet-wide que accounts_index (I11), calculees ici une
+    # seule fois et reutilisees pour la ligne ET le dropdown chaufferies du
+    # template (evite de refaire _list_chaufferies deux fois pour ce user).
+    chaufferies = _list_chaufferies(tb)
+    site_of_dev = tb.site_of_devices(PROFILE)
+    row = _user_row(tb, u, chaufferies=chaufferies, site_of_dev=site_of_dev)
     return templates.TemplateResponse("account_edit.html", {
         "request": request, "user": user, "root": ROOT_PATH,
-        "row": row, "chaufferies": _list_chaufferies(tb),
+        "row": row, "chaufferies": chaufferies,
         "roles": ROLES, "saved": bool(saved), "error": error,
     })
 

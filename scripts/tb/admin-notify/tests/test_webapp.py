@@ -411,3 +411,117 @@ def test_invite_temp_valid_date_proceeds(monkeypatch):
     resp = asyncio.run(webapp.invite_temp_post(FakeRequest(form), user={"u": "ops@yahtec.com"}))
     assert loc(resp) == f"{R}/?invited=1"
     assert captured["attrs"].get("expiration_ts")
+
+
+# ── I11 : page comptes hoiste les fetchs fleet-wide (pas O(users x devices)) ─
+#
+# Avant fix : _user_row appelait _list_chaufferies(tb) (list_devices_by_profile
+# + 1 GET attrs par device) PLUS un GET site_customer_id par device, POUR
+# CHAQUE user CUSTOMER_USER non-yahtec de la page -> ~220+ round-trips
+# sequentiels pour 20 users x 5 devices, croissance O(users x devices).
+# Fix : accounts_index calcule chaufferies + site_of_dev UNE FOIS et les passe
+# a _user_row.
+
+class FleetFakeTB(FakeTB):
+    """FakeTB + comptage des appels fleet-wide (list_devices_by_profile,
+    get_server_attrs sur DEVICE, canview_site_ids) pour prouver le hoisting."""
+
+    def __init__(self, devices, site_of_dev=None, canview=None):
+        super().__init__()
+        self._devices = devices
+        self._site_of_dev = dict(site_of_dev or {})
+        self._canview = set(canview or [])
+        self.list_devices_calls = 0
+        self.device_attr_calls = 0
+        self.canview_calls = 0
+
+    def list_devices_by_profile(self, profile):
+        self.list_devices_calls += 1
+        return list(self._devices)
+
+    def get_server_attrs(self, etype, eid, keys=None):
+        if etype == "DEVICE":
+            self.device_attr_calls += 1
+            if keys and "site_customer_id" in keys:
+                return {"site_customer_id": self._site_of_dev.get(eid)}
+            return {}
+        return {}
+
+    def site_of_devices(self, profile):
+        # Mirroir de common.TBClient.site_of_devices : list_devices_by_profile
+        # + 1 GET par device, via CE fake (donc comptabilise dans les compteurs).
+        out = {}
+        for d in self.list_devices_by_profile(profile):
+            did = d["id"]["id"]
+            scid = self.get_server_attrs("DEVICE", did, ["site_customer_id"]).get("site_customer_id")
+            if scid:
+                out[did] = scid
+        return out
+
+    def canview_site_ids(self, cid):
+        self.canview_calls += 1
+        return set(self._canview)
+
+
+def _devices(*ids):
+    return [{"id": {"id": i}, "name": i} for i in ids]
+
+
+def test_user_row_precomputed_avoids_per_device_calls(monkeypatch):
+    fake = FleetFakeTB(_devices("d1", "d2"), site_of_dev={"d1": "siteA", "d2": "siteB"},
+                       canview={"siteA"})
+    u = user_obj("u1", "party@ex.com", "CUSTOMER_USER")
+    u["customerId"] = {"id": "party-cid"}
+    chaufferies = webapp._list_chaufferies(fake)
+    site_of_dev = fake.site_of_devices(webapp.PROFILE)
+    fake.list_devices_calls = 0
+    fake.device_attr_calls = 0
+    row = webapp._user_row(fake, u, chaufferies=chaufferies, site_of_dev=site_of_dev)
+    assert fake.list_devices_calls == 0
+    assert fake.device_attr_calls == 0
+    assert fake.canview_calls == 1
+    assert row["chaufferies"] == ["d1"]
+
+
+def test_user_row_output_identical_hoisted_vs_lazy(monkeypatch):
+    fake = FleetFakeTB(_devices("d1", "d2"), site_of_dev={"d1": "siteA", "d2": "siteB"},
+                       canview={"siteA"})
+    u = user_obj("u1", "party@ex.com", "CUSTOMER_USER")
+    u["customerId"] = {"id": "party-cid"}
+    row_lazy = webapp._user_row(fake, u)
+    chaufferies = webapp._list_chaufferies(fake)
+    site_of_dev = fake.site_of_devices(webapp.PROFILE)
+    row_hoisted = webapp._user_row(fake, u, chaufferies=chaufferies, site_of_dev=site_of_dev)
+    assert row_lazy == row_hoisted
+
+
+def test_accounts_index_computes_fleet_data_once(monkeypatch):
+    fake = FleetFakeTB(_devices("d1"), site_of_dev={"d1": "siteA"}, canview={"siteA"})
+    users = []
+    for i in range(6):
+        uid = f"u{i}"
+        uu = user_obj(uid, f"p{i}@ex.com", "CUSTOMER_USER")
+        uu["customerId"] = {"id": f"party-{i}"}
+        users.append(uu)
+    fake.list_all_users = lambda customer_id=None: users
+    install_tb(monkeypatch, fake)
+
+    calls = {"n": 0}
+    orig_list_chaufferies = webapp._list_chaufferies
+
+    def counting(tb):
+        calls["n"] += 1
+        return orig_list_chaufferies(tb)
+
+    monkeypatch.setattr(webapp, "_list_chaufferies", counting)
+
+    sess = webapp._make_session({"u": "ops@yahtec.com"})
+    webapp.accounts_index(types.SimpleNamespace(), session=sess)
+
+    assert calls["n"] == 1
+    # Hoisted : list_devices_by_profile appele au plus une fois par source
+    # (_list_chaufferies + site_of_devices), PAS une fois par user (6 users).
+    assert fake.list_devices_calls <= 2
+    assert fake.device_attr_calls <= 3
+    # canview_site_ids reste per-user (attendu : CanView differe par party).
+    assert fake.canview_calls == 6
