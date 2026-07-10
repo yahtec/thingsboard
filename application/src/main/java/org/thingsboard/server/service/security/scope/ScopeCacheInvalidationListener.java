@@ -72,11 +72,18 @@ public class ScopeCacheInvalidationListener {
     /**
      * Invalide le scope du customer propriétaire d'un utilisateur dont le
      * profil vient d'être modifié (changement de rôle portfolioRole possible).
+     *
+     * <p>La signature doit être {@code SaveEntityEvent<?>} et non
+     * {@code SaveEntityEvent<User>} : {@link SaveEntityEvent} n'implémente pas
+     * {@code ResolvableTypeProvider} et {@code UserServiceImpl} le publie en
+     * type brut, donc Spring ne peut pas résoudre le générique au moment du
+     * publish — un listener typé {@code <User>} n'est JAMAIS invoqué (cf.
+     * {@code EdgeEventSourcingListener} qui déclare tous ses handlers en
+     * {@code <?>}). Le filtrage se fait via {@code instanceof User}.</p>
      */
     @TransactionalEventListener(fallbackExecution = true)
-    public void handleUserSaveEvent(SaveEntityEvent<User> event) {
-        User user = event.getEntity();
-        if (user == null) {
+    public void handleUserSaveEvent(SaveEntityEvent<?> event) {
+        if (!(event.getEntity() instanceof User user)) {
             return;
         }
         CustomerId customerId = user.getCustomerId();
