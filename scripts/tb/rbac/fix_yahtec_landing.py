@@ -22,13 +22,10 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import _lib_rbac as tb  # noqa: E402
 
-DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'  # Mes Installations
-FIELDS = {
-    'homeDashboardId': DASH,
-    'homeDashboardHideToolbar': True,
-    'defaultDashboardId': DASH,
-    'defaultDashboardFullscreen': False,  # cle : false => /dashboards/ => yahtec-nav
-}
+# M-dedup : constantes landing partagees avec _lib_rbac (KIOSK_DASH/KIOSK_INFO) au lieu
+# d'une 3e copie locale (cf commentaire KIOSK_INFO dans _lib_rbac.py pour le detail du
+# fullscreen=FALSE => /dashboards/ => yahtec-nav).
+FIELDS = tb.KIOSK_INFO
 
 
 def is_dev(u):

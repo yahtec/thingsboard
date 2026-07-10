@@ -58,6 +58,7 @@ def main():
             tb.set_server_attribute(t, did, 'site_assigned', True, apply)
 
     config_site_ids = {v for v in site_ids.values() if v}
+    mismatches = []  # I18 : emails ensure_user a detecte sous un customerId different
 
     # 2) Parties (PARTY) : customer + user + relations CanView
     print('\n[PARTIES]')
@@ -65,8 +66,10 @@ def main():
         cid = tb.ensure_customer(t, p['title'], apply)
         if cid is not None:
             tb.assign_dashboard_to_customer(t, cid, tb.KIOSK_DASH, apply)
-        tb.ensure_user(t, p['userEmail'], 'CUSTOMER_USER', cid, p.get('role', 'PARTY'),
-                       args.new_user_pwd, apply)
+        uid = tb.ensure_user(t, p['userEmail'], 'CUSTOMER_USER', cid, p.get('role', 'PARTY'),
+                              args.new_user_pwd, apply)
+        if uid == tb.CUSTOMER_MISMATCH:
+            mismatches.append(p['userEmail'])
         desired = {site_ids[s] for s in p.get('canView', []) if site_ids.get(s)}
         for site_title in p.get('canView', []):
             sid = site_ids.get(site_title)
@@ -86,8 +89,10 @@ def main():
         cid = tb.ensure_customer(t, st['title'], apply)
         if cid is not None:
             tb.assign_dashboard_to_customer(t, cid, tb.KIOSK_DASH, apply)
-        tb.ensure_user(t, st['userEmail'], 'CUSTOMER_USER', cid, st.get('role', 'STAFF'),
-                       args.new_user_pwd, apply)
+        uid = tb.ensure_user(t, st['userEmail'], 'CUSTOMER_USER', cid, st.get('role', 'STAFF'),
+                              args.new_user_pwd, apply)
+        if uid == tb.CUSTOMER_MISMATCH:
+            mismatches.append(st['userEmail'])
         desired = {site_ids[s] for s in st.get('excluded', []) if site_ids.get(s)}
         for site_title in st.get('excluded', []):
             sid = site_ids.get(site_title)
@@ -103,6 +108,15 @@ def main():
     print('\n== Termine ==' + ('' if apply else ' (aucune ecriture — dry-run)'))
     if apply and not args.new_user_pwd:
         print('NB: --new-user-pwd absent -> les users crees n\'ont pas de mot de passe (activation manuelle).', file=sys.stderr)
+
+    if mismatches:
+        # I18 : customerId immuable cote TB -> pas de correction automatique possible ici,
+        # juste un signal fort pour que l'operateur traite (suppression+recreation manuelle).
+        print(f'\n!!! {len(mismatches)} user(s) avec customerId en conflit (email deja '
+              f'utilise sous un autre customer ; customerId immuable cote TB) :')
+        for e in mismatches:
+            print(f'  - {e}')
+        sys.exit(1)
 
 
 if __name__ == '__main__':

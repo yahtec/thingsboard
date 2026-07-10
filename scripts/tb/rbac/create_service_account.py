@@ -42,7 +42,28 @@ def main():
     t = tb.token_or_login(args.user, args.pwd)
     existing = tb.find_user_by_email(t, args.email)
     if existing:
-        print(f'compte deja existant : {args.email} (uid {existing["id"]["id"]}) -> rien a faire')
+        uid = existing['id']['id']
+        info = tb.get_activation_link_info(t, uid)
+        if info is None:
+            print(f'compte deja existant et actif : {args.email} (uid {uid}) -> rien a faire')
+            return
+        # I15 : le POST /api/user initial avait reussi mais l'activation avait echoue
+        # (reseau, mdp hors policy...) -> se contenter de "rien a faire" ici laissait le
+        # compte inactif sans mot de passe pour toujours.
+        print(f'compte existant MAIS PAS ACTIVE : {args.email} (uid {uid})')
+        if not args.apply:
+            print('  [DRY-RUN] relancerait l\'activation avec --apply (--new-pwd ou mdp genere).')
+            return
+        pwd = args.new_pwd or gen_password()
+        tok = urllib.parse.parse_qs(urllib.parse.urlparse(info['value'].strip()).query).get(
+            'activateToken', [None])[0]
+        if not tok:
+            sys.exit(f'ECHEC activation (lien inattendu) : {info["value"]}')
+        tb.http_post('/api/noauth/activate', {'activateToken': tok, 'password': pwd}, t)
+        print(f'REACTIVE : {args.email} (uid {uid})')
+        print('  -> poser dans le .env serveur :')
+        print(f'     TB_USER={args.email}')
+        print(f'     TB_PASS={pwd}')
         return
     if not args.apply:
         print(f'[DRY-RUN] creerait TENANT_ADMIN {args.email} (mdp genere, non affiche en dry-run).')

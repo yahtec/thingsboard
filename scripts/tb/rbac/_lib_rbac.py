@@ -17,6 +17,7 @@ BASE_URL = os.environ.get('TB_BASE_URL', 'https://thingsboard.tsmart.fr')
 CANVIEW = 'CanView'
 EXCLUDED = 'Excluded'
 COMMON = 'COMMON'
+CUSTOMER_MISMATCH = 'CUSTOMER_MISMATCH'  # sentinel de retour ensure_user (I18, cf plus bas)
 KIOSK_DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'  # dashboard "Mes Installations"
 KIOSK_INFO = {'homeDashboardId': KIOSK_DASH, 'homeDashboardHideToolbar': True,
               # defaultDashboardFullscreen=False : JAMAIS True pour un non-dev (PARTY/STAFF/ADMIN_OPS).
@@ -62,8 +63,28 @@ def http_get(p, t, allow_404=False):
 
 def http_get_text(p, t):
     """GET renvoyant du TEXTE brut (ex. /activationLink renvoie l'URL, pas du JSON)."""
-    with urllib.request.urlopen(_req('GET', p, t), timeout=60) as o:
-        return o.read().decode('utf-8')
+    try:
+        with urllib.request.urlopen(_req('GET', p, t), timeout=60) as o:
+            return o.read().decode('utf-8')
+    except urllib.error.HTTPError as e:
+        sys.exit(f'GET {p} -> HTTP {e.code}: {e.read().decode("utf-8", errors="replace")[:400]}')
+
+
+def get_activation_link_info(t, uid):
+    """GET /api/user/{uid}/activationLinkInfo (JSON {'value': url, 'ttlMs': ...}) —
+    contrairement a /activationLink qui renvoie du texte brut. Renvoie None si le compte
+    est DEJA ACTIVE : TB repond alors HTTP 400 « User is already activated! »
+    (DefaultUserService.getActivationLink), qu'on traite comme un etat normal et non une
+    erreur (I15 : detecter un compte cree-mais-jamais-active sur le chemin « existe deja »)."""
+    try:
+        with urllib.request.urlopen(_req('GET', f'/api/user/{uid}/activationLinkInfo', t),
+                                     timeout=60) as o:
+            return json.loads(o.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            return None
+        sys.exit(f'GET /api/user/{uid}/activationLinkInfo -> HTTP {e.code}: '
+                 f'{e.read().decode("utf-8", errors="replace")[:400]}')
 
 
 def http_post(p, b, t):
@@ -148,38 +169,81 @@ def assign_dashboard_to_customer(t, customer_id, dashboard_id, apply):
 # ---------- Users ----------
 
 def find_user_by_email(t, email):
+    """Recherche exact-match par email, insensible a la casse (TB fait un ILIKE en
+    textSearch ; une comparaison exacte cote script produirait un doublon a la creation
+    ou un abort au premier email dont la casse differe)."""
     page = http_get(f'/api/users?{_q(pageSize=500, page=0, textSearch=email)}', t)
+    target = (email or '').lower()
     for u in (page or {}).get('data', []):
-        if u.get('email') == email:
+        if (u.get('email') or '').lower() == target:
             return u
     return None
 
 
-def _set_role(user_obj, role):
-    info = dict(user_obj.get('additionalInfo') or {})
-    info['portfolioRole'] = role
-    user_obj['additionalInfo'] = info
-    return user_obj
+def _reactivate_if_needed(t, uid, email, password, apply):
+    """I15 : un re-run peut retomber sur un user dont le POST /api/user initial avait
+    reussi mais dont l'activation avait echoue (reseau, mdp hors policy...). Sans ce
+    controle, le chemin « existe deja » se contentait de dire « user OK » pour toujours,
+    laissant le compte inactif sans mot de passe. Ne verifie rien si aucun mot de passe
+    n'est fourni (pas d'intention d'activation portee par ce run)."""
+    if not password:
+        return
+    info = get_activation_link_info(t, uid)
+    if info is None:
+        return  # deja active (TB repond 400 "User is already activated!") -> rien a faire
+    if not apply:
+        print(f'  [DRY] compte {email} existe mais N\'EST PAS ACTIVE -> relancerait '
+              f'l\'activation avec --apply')
+        return
+    tok = urllib.parse.parse_qs(urllib.parse.urlparse(info['value'].strip()).query).get(
+        'activateToken', [None])[0]
+    if tok:
+        http_post('/api/noauth/activate', {'activateToken': tok, 'password': password}, t)
+        print(f'  user REACTIVE     : {email}')
+    else:
+        print(f'  user existant mais activation manuelle requise (lien: {info.get("value")}) : {email}')
 
 
 def ensure_user(t, email, authority, customer_id, role, password, apply):
     """Cree (si absent) un user avec additionalInfo.portfolioRole ; sinon met a jour le role.
     authority = 'CUSTOMER_USER' (customer_id requis) ou 'TENANT_ADMIN' (customer_id=None).
     Un user cree avec role PARTY ou STAFF recoit en plus les champs de landing kiosk
-    (issus de KIOSK_INFO) pour atterrir direct sur le dashboard "Mes Installations".
+    (issus de KIOSK_INFO) pour atterrir direct sur le dashboard "Mes Installations" —
+    egalement applique sur le chemin MISE A JOUR (un compte pre-existant bascule vers
+    PARTY/STAFF doit recevoir le landing, pas seulement le role).
+
+    I18 : si le user existe deja mais sous un AUTRE customerId que celui demande (email
+    duplique entre deux parties, ou deja rattache a un customer different), c'est une
+    incoherence non reparable par ce script (customerId immuable cote TB) -> on le
+    signale bruyamment et on renvoie CUSTOMER_MISMATCH ; l'appelant doit sortir non-zero.
+
+    Retourne l'UUID (str) du user, CUSTOMER_MISMATCH (cf ci-dessus), ou None si rien n'a
+    ete cree (dry-run sur un user absent).
     """
     u = find_user_by_email(t, email)
     if u:
+        uid = u['id']['id']
+        existing_cid = (u.get('customerId') or {}).get('id')
+        if customer_id is not None and existing_cid != customer_id:
+            print(f'  !! MISMATCH customerId : {email} existe deja sous customer '
+                  f'{existing_cid!r}, demande {customer_id!r} (customerId immuable cote '
+                  f'TB -> suppression+recreation manuelle requise ; aucune ecriture faite)')
+            return CUSTOMER_MISMATCH
         current = (u.get('additionalInfo') or {}).get('portfolioRole')
         if current == role:
             print(f'  user OK           : {email} (role={role})')
-            return u['id']['id']
-        if not apply:
+        elif not apply:
             print(f'  [DRY] MAJ role user : {email} {current!r} -> {role!r}')
-            return u['id']['id']
-        http_post('/api/user', _set_role(u, role), t)
-        print(f'  user role MAJ     : {email} -> {role}')
-        return u['id']['id']
+        else:
+            ai = dict(u.get('additionalInfo') or {})
+            ai['portfolioRole'] = role
+            if role in ('PARTY', 'STAFF'):
+                ai.update(KIOSK_INFO)  # M : kiosk aussi sur MAJ, pas seulement creation
+            u['additionalInfo'] = ai
+            http_post('/api/user', u, t)
+            print(f'  user role MAJ     : {email} -> {role}')
+        _reactivate_if_needed(t, uid, email, password, apply)
+        return uid
     if not apply:
         ta = ' (tenant admin)' if authority == 'TENANT_ADMIN' else ''
         print(f'  [DRY] creerait user : {email} authority={authority} role={role}{ta}')

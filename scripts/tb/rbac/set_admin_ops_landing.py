@@ -19,18 +19,11 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import _lib_rbac as tb  # noqa: E402
 
-DASH = '0964da30-3e56-11f1-bbfe-e1395562cba0'  # Mes Installations
 TARGETS = ['je+user@yahtec.com', 'af+user@yahtec.com', 'ac@yahtec.com']
-FIELDS = {
-    'homeDashboardId': DASH,
-    'homeDashboardHideToolbar': True,
-    'defaultDashboardId': DASH,
-    # IMPORTANT : fullscreen=FALSE. auth.service userForceFullscreen route
-    # fullscreen=true -> /dashboard/{id} (SINGULIER, standalone, PAS de yahtec-nav) ;
-    # false -> /dashboards/{id} (PLURIEL, dans home.component AVEC le yahtec-nav).
-    # ADMIN_OPS + PARTY ont besoin du yahtec-nav -> DONC false.
-    'defaultDashboardFullscreen': False,
-}
+# M-dedup : constantes landing partagees avec _lib_rbac (KIOSK_DASH/KIOSK_INFO) au lieu
+# d'une 3e copie locale. Meme detail (fullscreen=FALSE obligatoire pour le yahtec-nav)
+# documente sur KIOSK_INFO dans _lib_rbac.py.
+FIELDS = tb.KIOSK_INFO
 
 
 def main():
