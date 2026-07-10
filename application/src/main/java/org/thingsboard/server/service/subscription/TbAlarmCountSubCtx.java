@@ -19,8 +19,10 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
+import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.EntityId;
 import org.thingsboard.server.common.data.page.PageData;
+import org.thingsboard.server.common.data.page.PageDataIterable;
 import org.thingsboard.server.common.data.permission.CustomerScopeMode;
 import org.thingsboard.server.common.data.query.AlarmCountQuery;
 import org.thingsboard.server.common.data.query.EntityData;
@@ -31,6 +33,7 @@ import org.thingsboard.server.common.data.query.EntityKey;
 import org.thingsboard.server.common.data.query.EntityKeyType;
 import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
+import org.thingsboard.server.dao.customer.CustomerService;
 import org.thingsboard.server.dao.entity.EntityService;
 import org.thingsboard.server.dao.model.ModelConstants;
 import org.thingsboard.server.service.security.model.SecurityUser;
@@ -41,7 +44,10 @@ import org.thingsboard.server.service.ws.WebSocketService;
 import org.thingsboard.server.service.ws.WebSocketSessionRef;
 import org.thingsboard.server.service.ws.telemetry.cmd.v2.AlarmCountUpdate;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -52,6 +58,8 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
     private final AlarmService alarmService;
 
     private final AccessScopeService accessScopeService;
+
+    private final CustomerService customerService;
 
     protected final Map<Integer, EntityId> subToEntityIdMap;
 
@@ -76,10 +84,11 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
                               EntityService entityService, TbLocalSubscriptionService localSubscriptionService,
                               AttributesService attributesService, SubscriptionServiceStatistics stats, AlarmService alarmService,
                               WebSocketSessionRef sessionRef, int cmdId, int maxEntitiesPerAlarmSubscription, int maxAlarmQueriesPerRefreshInterval,
-                              AccessScopeService accessScopeService) {
+                              AccessScopeService accessScopeService, CustomerService customerService) {
         super(serviceId, wsService, entityService, localSubscriptionService, attributesService, stats, sessionRef, cmdId);
         this.alarmService = alarmService;
         this.accessScopeService = accessScopeService;
+        this.customerService = customerService;
         this.subToEntityIdMap = new ConcurrentHashMap<>();
         this.maxEntitiesPerAlarmSubscription = maxEntitiesPerAlarmSubscription;
         this.maxAlarmQueriesPerRefreshInterval = maxAlarmQueriesPerRefreshInterval;
@@ -151,10 +160,24 @@ public class TbAlarmCountSubCtx extends TbAbstractEntityQuerySubCtx<AlarmCountQu
             AccessScope scope = accessScopeService.resolve(sessionRef.getSecurityCtx());
             if (scope.getMode() != AccessScope.Mode.UNRESTRICTED) {
                 return ScopedAlarmCount.countFilterless(scope,
-                        customerId -> alarmService.countAlarmsByQuery(getTenantId(), customerId, query));
+                        customerId -> alarmService.countAlarmsByQuery(getTenantId(), customerId, query),
+                        this::listTenantCustomers);
             }
         }
         return alarmService.countAlarmsByQuery(getTenantId(), getCustomerId(), query, entitiesIds);
+    }
+
+    /**
+     * Enumere (pagine) tous les customers du tenant. Utilise par le comptage d'alarmes EXCLUDE pour
+     * compter par customers visibles (= tous - exclus), miroir du {@code customer_id NOT IN (:ids)}
+     * du chemin data ; les alarmes tenant-owned (sentinelle NULL_CUSTOMER_ID) sont exclues par
+     * construction. Cout : une enumeration paginee + N comptages, negligeable a l'echelle d'un tenant.
+     */
+    private Collection<CustomerId> listTenantCustomers() {
+        List<CustomerId> ids = new ArrayList<>();
+        new PageDataIterable<>(pageLink -> customerService.findCustomersByTenantId(getTenantId(), pageLink), 1000)
+                .forEach(customer -> ids.add(customer.getId()));
+        return ids;
     }
 
     private EntityDataQuery buildEntityDataQuery() {

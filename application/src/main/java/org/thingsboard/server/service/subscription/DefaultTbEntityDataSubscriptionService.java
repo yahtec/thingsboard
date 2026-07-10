@@ -50,6 +50,7 @@ import org.thingsboard.server.common.data.query.TsValue;
 import org.thingsboard.server.common.msg.tools.TbRateLimitsException;
 import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
+import org.thingsboard.server.dao.customer.CustomerService;
 import org.thingsboard.server.dao.entity.EntityService;
 import org.thingsboard.server.service.security.scope.AccessScopeService;
 import org.thingsboard.server.dao.timeseries.TimeseriesService;
@@ -113,6 +114,9 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
 
     @Autowired
     private AlarmService alarmService;
+
+    @Autowired
+    private CustomerService customerService;
 
     @Autowired
     private AttributesService attributesService;
@@ -587,7 +591,7 @@ public class DefaultTbEntityDataSubscriptionService implements TbEntityDataSubsc
         Map<Integer, TbAbstractSubCtx> sessionSubs = subscriptionsBySessionId.computeIfAbsent(sessionRef.getSessionId(), k -> new ConcurrentHashMap<>());
         TbAlarmCountSubCtx ctx = new TbAlarmCountSubCtx(serviceId, wsService, entityService, localSubscriptionService,
                 attributesService, stats, alarmService, sessionRef, cmd.getCmdId(), maxEntitiesPerAlarmSubscription, maxAlarmQueriesPerRefreshInterval,
-                accessScopeService);
+                accessScopeService, customerService);
         if (cmd.getQuery() != null) {
             ctx.setAndResolveQuery(cmd.getQuery());
         }

@@ -57,8 +57,11 @@ import org.thingsboard.server.common.data.query.KeyFilter;
 import org.thingsboard.server.common.data.query.KeyFilterPredicate;
 import org.thingsboard.server.common.data.query.SimpleKeyFilterPredicate;
 import org.thingsboard.server.common.data.permission.CustomerScopeMode;
+import org.thingsboard.server.common.data.id.CustomerId;
+import org.thingsboard.server.common.data.page.PageDataIterable;
 import org.thingsboard.server.dao.alarm.AlarmService;
 import org.thingsboard.server.dao.attributes.AttributesService;
+import org.thingsboard.server.dao.customer.CustomerService;
 import org.thingsboard.server.dao.entity.EntityService;
 import org.thingsboard.server.dao.sql.query.EntityKeyMapping;
 import org.thingsboard.server.dao.timeseries.TimeseriesService;
@@ -70,6 +73,7 @@ import org.thingsboard.server.service.security.scope.AccessScopeService;
 import org.thingsboard.server.service.security.scope.ScopedAlarmCount;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -96,6 +100,9 @@ public class DefaultEntityQueryService implements EntityQueryService {
 
     @Autowired
     private AlarmService alarmService;
+
+    @Autowired
+    private CustomerService customerService;
 
     @Value("${server.ws.max_entities_per_alarm_subscription:1000}")
     private int maxEntitiesPerAlarmSubscription;
@@ -251,9 +258,24 @@ public class DefaultEntityQueryService implements EntityQueryService {
         AccessScope scope = accessScopeService.resolve(securityUser);
         if (scope.getMode() != AccessScope.Mode.UNRESTRICTED) {
             return ScopedAlarmCount.countFilterless(scope,
-                    customerId -> alarmService.countAlarmsByQuery(securityUser.getTenantId(), customerId, query));
+                    customerId -> alarmService.countAlarmsByQuery(securityUser.getTenantId(), customerId, query),
+                    () -> listTenantCustomers(securityUser.getTenantId()));
         }
         return alarmService.countAlarmsByQuery(securityUser.getTenantId(), securityUser.getCustomerId(), query);
+    }
+
+    /**
+     * Enumere (pagine) tous les customers du tenant. Utilise par le comptage d'alarmes EXCLUDE pour
+     * compter par customers visibles (= tous - exclus), miroir du {@code customer_id NOT IN (:ids)}
+     * du chemin data ; les alarmes tenant-owned (sentinelle NULL_CUSTOMER_ID) sont ainsi exclues par
+     * construction. Cout : une seule enumeration paginee + N comptages (N = nb de customers),
+     * negligeable pour des tenants de taille raisonnable.
+     */
+    private Collection<CustomerId> listTenantCustomers(TenantId tenantId) {
+        List<CustomerId> ids = new ArrayList<>();
+        new PageDataIterable<>(pageLink -> customerService.findCustomersByTenantId(tenantId, pageLink), 1000)
+                .forEach(customer -> ids.add(customer.getId()));
+        return ids;
     }
 
     private EntityDataQuery buildEntityDataQuery(AlarmCountQuery query) {
