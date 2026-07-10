@@ -71,7 +71,7 @@ public class DefaultAccessScopeService implements AccessScopeService {
         // JWT tokens do not carry additionalInfo — load the full user from cache/DB.
         UserAuthDetails details = userAuthDetailsCache.getUserAuthDetails(user.getTenantId(), user.getId());
         if (details != null) {
-            return PortfolioAccess.roleOf(new SecurityUser(details.user(), true, null));
+            return PortfolioAccess.roleOf(details.user());
         }
         return PortfolioAccess.Role.LEGACY;
     }

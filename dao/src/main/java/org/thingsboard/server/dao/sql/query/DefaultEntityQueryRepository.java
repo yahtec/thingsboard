@@ -606,7 +606,7 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
             case ASSET_SEARCH_QUERY:
             case ENTITY_VIEW_SEARCH_QUERY:
             case EDGE_SEARCH_QUERY:
-                return this.defaultPermissionQuery(ctx);
+                return this.defaultPermissionQuery(ctx, entityFilter.getType() == EntityFilterType.RELATIONS_QUERY);
             case API_USAGE_STATE:
                 CustomerId filterCustomerId = ((ApiUsageStateFilter) entityFilter).getCustomerId();
                 if (ctx.getCustomerId() != null && !ctx.getCustomerId().isNullUid()) {
@@ -628,12 +628,13 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
                     ctx.addUuidParameter("permissions_tenant_id", ctx.getTenantId().getId());
                     return "e.id=:permissions_tenant_id";
                 } else {
-                    return this.defaultPermissionQuery(ctx);
+                    return this.defaultPermissionQuery(ctx, false);
                 }
         }
     }
 
-    private String defaultPermissionQuery(SqlQueryContext ctx) {
+    // Package-private pour permettre le test unitaire de la clause SQL generee (pas de @DaoSqlTest).
+    String defaultPermissionQuery(SqlQueryContext ctx, boolean relationsQuery) {
         ctx.addUuidParameter("permissions_tenant_id", ctx.getTenantId().getId());
 
         // Couche Yahtec : scope multi-customer (portefeuilles). UNRESTRICTED = comportement historique.
@@ -643,8 +644,24 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
         // API_USAGE_STATE, ...) on retombe sur la branche historique ci-dessous, qui filtre sur le
         // customerId PROPRE de l'utilisateur (getCustomerId()) — equivalent a un customer user non
         // scope, donc sur.
+        //
+        // I2a (HORS SCOPE, documente pour la revue) : le type teste ici est le type RACINE de la
+        // requete (resolveEntityType, cf. le case RELATIONS_QUERY). Quand une requete relations est
+        // enracinee sur un type NON allowliste (CUSTOMER/USER), isCustomerScopedEntityType(root) est
+        // faux et l'on tombe sur la branche historique own-customer : les devices du portefeuille sont
+        // alors INVISIBLES via les alias « current customer → … » pour un PARTY. Comportement identique
+        // a l'upstream — laisse tel quel ; a verifier cote alias reels de « Mes Installations ».
         if (ctx.getScopeMode() != null && ctx.getScopeMode() != CustomerScopeMode.UNRESTRICTED
                 && isCustomerScopedEntityType(ctx.getEntityType())) {
+            // I2b : une requete relations retourne des lignes de TYPES HETEROGENES (le filtre de
+            // permission est resolu sur le type RACINE). Appliquer le filtre portefeuille a TOUTES les
+            // lignes ferait fuiter les USER/CUSTOMER d'autres customers sous EXCLUDE. On filtre donc
+            // par type de ligne (CASE sur e.entity_type). Pour les requetes non-relations (recherches
+            // DEVICE/ASSET/ENTITY_VIEW/EDGE), toutes les lignes sont du type allowliste resolu → filtre
+            // plat inchange (octet-identique a l'upstream de ce fork).
+            if (relationsQuery) {
+                return scopedRelationsPermissionQuery(ctx);
+            }
             List<UUID> ids = ctx.getCustomerIds();
             if (ctx.getScopeMode() == CustomerScopeMode.INCLUDE) {
                 if (ids == null || ids.isEmpty()) {
@@ -688,6 +705,62 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
                 || entityType == EntityType.ASSET
                 || entityType == EntityType.ENTITY_VIEW
                 || entityType == EntityType.EDGE;
+    }
+
+    /**
+     * Liste SQL (littéraux) des types allowlistes, à garder alignée sur {@link #isCustomerScopedEntityType}.
+     * Utilisée par le CASE par-ligne des requêtes relations scopées ({@link #scopedRelationsPermissionQuery}).
+     */
+    private static final String CUSTOMER_SCOPED_ENTITY_TYPES_SQL = "'DEVICE','ASSET','ENTITY_VIEW','EDGE'";
+
+    /**
+     * Clause de permission pour une requête RELATIONS scopée (INCLUDE/EXCLUDE) enracinée sur un type
+     * allowliste. Le résultat d'une requête relations contient des lignes de types HÉTÉROGÈNES ; on
+     * applique :
+     *  - le filtre portefeuille (customer_id in / not in) UNIQUEMENT aux lignes de type allowliste
+     *    (DEVICE/ASSET/ENTITY_VIEW/EDGE, seule colonne customer_id significative) ;
+     *  - le fallback own-customer historique (e.customer_id = customer propre) à TOUTES les autres
+     *    lignes (USER/CUSTOMER/DASHBOARD/TENANT…).
+     * Effets : (I2b) EXCLUDE ne fuit plus les USER d'autres customers ; (M1) la visibilité DASHBOARD
+     * devient cohérente — SELECT_CUSTOMER_ID vaut NULL pour un dashboard, donc {@code NULL = own} est
+     * toujours faux → jamais retourné, que la liste d'exclusion soit vide ou non (fin du piège
+     * NOT IN + NULL). Deny-by-default préservé : INCLUDE vide → aucune ligne allowlistée.
+     * {@code ownCustomerId} (customer propre du user) est toujours présent en mode scope ; par sûreté,
+     * son absence ⇒ fail-closed (aucune ligne non allowlistée).
+     */
+    private String scopedRelationsPermissionQuery(SqlQueryContext ctx) {
+        List<UUID> ids = ctx.getCustomerIds();
+
+        String ownCustomerFallback;
+        CustomerId own = ctx.getCustomerId();
+        if (own != null && !own.isNullUid()) {
+            ctx.addUuidParameter("permissions_own_customer_id", own.getId());
+            ownCustomerFallback = "e.customer_id = :permissions_own_customer_id";
+        } else {
+            ownCustomerFallback = "1=0"; // pas de customer propre → aucune ligne non allowlistée (fail-closed)
+        }
+
+        String allowlistPredicate;
+        if (ctx.getScopeMode() == CustomerScopeMode.INCLUDE) {
+            if (ids == null || ids.isEmpty()) {
+                allowlistPredicate = "1=0"; // deny-by-default (types allowlistés)
+            } else {
+                ctx.addUuidListParameter("permissions_customer_ids", ids);
+                allowlistPredicate = "e.customer_id in (:permissions_customer_ids)";
+            }
+        } else { // EXCLUDE
+            if (ids == null || ids.isEmpty()) {
+                allowlistPredicate = "1=1"; // rien d'exclu → toutes les lignes allowlistées passent
+            } else {
+                ctx.addUuidListParameter("permissions_customer_ids", ids);
+                allowlistPredicate = "e.customer_id not in (:permissions_customer_ids)";
+            }
+        }
+
+        return "e.tenant_id=:permissions_tenant_id and ("
+                + "(e.entity_type in (" + CUSTOMER_SCOPED_ENTITY_TYPES_SQL + ") and (" + allowlistPredicate + "))"
+                + " or (e.entity_type not in (" + CUSTOMER_SCOPED_ENTITY_TYPES_SQL + ") and (" + ownCustomerFallback + "))"
+                + ")";
     }
 
     private String buildEntityFilterQuery(SqlQueryContext ctx, EntityFilter entityFilter) {
@@ -1038,6 +1111,10 @@ public class DefaultEntityQueryRepository implements EntityQueryRepository {
             case EDGE_SEARCH_QUERY:
                 return EntityType.EDGE;
             case RELATIONS_QUERY:
+                // NB : le type RACINE renvoyé ici pilote la clause de permission
+                // (cf. defaultPermissionQuery). Enraciné sur un type NON allowliste (CUSTOMER/USER),
+                // le scope portefeuille ne s'applique pas → fallback historique own-customer (I2a,
+                // hors scope). Enraciné sur un type allowliste, le filtrage par-ligne s'applique (I2b).
                 RelationsQueryFilter rgf = (RelationsQueryFilter) entityFilter;
                 return rgf.isMultiRoot() ? rgf.getMultiRootEntitiesType() : rgf.getRootEntity().getEntityType();
             case API_USAGE_STATE:

@@ -18,6 +18,7 @@ package org.thingsboard.server.service.security.scope;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.thingsboard.common.util.JacksonUtil;
+import org.thingsboard.server.common.data.User;
 import org.thingsboard.server.common.data.id.UserId;
 import org.thingsboard.server.service.security.model.SecurityUser;
 
@@ -55,5 +56,15 @@ class PortfolioAccessTest {
     @Test
     void unknownRoleIsLegacy() {
         assertThat(PortfolioAccess.roleOf(userWithRole("bogus"))).isEqualTo(PortfolioAccess.Role.LEGACY);
+    }
+
+    // M3 : roleOf accepte un User simple (plus besoin d'un SecurityUser jetable côté service).
+    @Test
+    void roleOfAcceptsPlainUser() {
+        User user = new User(new UserId(UUID.randomUUID()));
+        ObjectNode info = JacksonUtil.newObjectNode();
+        info.put(PortfolioAccess.ROLE_FIELD, "STAFF");
+        user.setAdditionalInfo(info);
+        assertThat(PortfolioAccess.roleOf(user)).isEqualTo(PortfolioAccess.Role.STAFF);
     }
 }

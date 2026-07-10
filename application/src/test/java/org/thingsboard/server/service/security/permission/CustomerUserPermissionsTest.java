@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.thingsboard.server.common.data.Customer;
 import org.thingsboard.server.common.data.Device;
 import org.thingsboard.server.common.data.id.CustomerId;
 import org.thingsboard.server.common.data.id.DeviceId;
@@ -72,6 +73,18 @@ class CustomerUserPermissionsTest {
         return c.get();
     }
 
+    private PermissionChecker customerChecker() {
+        Optional<PermissionChecker> c = permissions.getPermissionChecker(Resource.CUSTOMER);
+        assertThat(c).isPresent();
+        return c.get();
+    }
+
+    private Customer customer(CustomerId id) {
+        Customer c = new Customer(id);
+        c.setTenantId(tenantId);
+        return c;
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void scopedReadAllowedWhenInScope() {
@@ -120,5 +133,56 @@ class CustomerUserPermissionsTest {
 
         // legacy garde l'écriture sur ses propres entités
         assertThat(deviceChecker().hasPermission(user, Operation.WRITE, mine.getId(), mine)).isTrue();
+    }
+
+    // ── I3 : accès à l'entité CUSTOMER d'un site visible ─────────────────────────────────
+    //
+    // Un PARTY doit pouvoir LIRE l'entité customer d'un site qu'il peut voir (titre/adresse pour
+    // les widgets), même si ce n'est pas son propre customer. L'écriture reste own-customer only.
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void partyCanReadInScopeSiteCustomer() {
+        SecurityUser user = customerUser(new CustomerId(UUID.randomUUID()));
+        CustomerId site = new CustomerId(UUID.randomUUID());
+        Customer siteEntity = customer(site);
+        when(accessScopeService.canView(user, site)).thenReturn(true);
+
+        assertThat(customerChecker().hasPermission(user, Operation.READ, site, siteEntity)).isTrue();
+        assertThat(customerChecker().hasPermission(user, Operation.READ_ATTRIBUTES, site, siteEntity)).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void partyCannotReadOutOfScopeCustomer() {
+        SecurityUser user = customerUser(new CustomerId(UUID.randomUUID()));
+        CustomerId site = new CustomerId(UUID.randomUUID());
+        Customer siteEntity = customer(site);
+        when(accessScopeService.canView(user, site)).thenReturn(false);
+
+        assertThat(customerChecker().hasPermission(user, Operation.READ, site, siteEntity)).isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void readOwnCustomerAlwaysAllowed() {
+        CustomerId own = new CustomerId(UUID.randomUUID());
+        SecurityUser user = customerUser(own);
+        Customer ownEntity = customer(own);
+        // own-customer court-circuite : canView n'a pas besoin d'être stubbé (chemin legacy).
+
+        assertThat(customerChecker().hasPermission(user, Operation.READ, own, ownEntity)).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void writeOnCustomerAlwaysDenied() {
+        SecurityUser user = customerUser(new CustomerId(UUID.randomUUID()));
+        CustomerId site = new CustomerId(UUID.randomUUID());
+        Customer siteEntity = customer(site);
+        lenient().when(accessScopeService.canView(user, site)).thenReturn(true);
+
+        // Aucune opération d'écriture n'est enregistrée sur le checker CUSTOMER → refus.
+        assertThat(customerChecker().hasPermission(user, Operation.WRITE, site, siteEntity)).isFalse();
     }
 }
