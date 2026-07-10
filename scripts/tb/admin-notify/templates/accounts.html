@@ -70,7 +70,7 @@ tr.paged-out{display:none}
     <table class="users" id="acc-table">
       <thead><tr>
         <th>Nom</th><th>Prénom</th><th>Email</th><th>Société</th>
-        <th>Admin</th><th>Dernière connexion</th><th>Date de création</th>
+        <th>Admin</th><th>Date de création</th>
         <th>Expiration</th><th>Actions</th>
       </tr></thead>
       <tbody>
@@ -85,7 +85,6 @@ tr.paged-out{display:none}
           {% elif r.is_admin %}<span class="badge yes">Oui</span>
           {% else %}<span class="badge no">Non</span>{% endif %}
         </td>
-        <td>{{ r.last_login_ts | ts_to_date if r.last_login_ts else '—' }}</td>
         <td>{{ r.created_ts | ts_to_date if r.created_ts else '—' }}</td>
         <td>{{ r.expiration_ts | ts_to_date_only if r.expiration_ts else '—' }}</td>
         <td>

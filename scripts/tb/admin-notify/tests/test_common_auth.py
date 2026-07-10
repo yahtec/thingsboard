@@ -65,6 +65,66 @@ def test_401_retry_forces_fresh_login_ignores_dead_cache(tmp_path, monkeypatch):
     assert json.loads(cache.read_text())["token"] == "fresh-token"
 
 
+def test_activation_link_retries_once_on_401(tmp_path, monkeypatch):
+    """B : activation_link doit s'aligner sur _req — sur 401, invalider le
+    token cache (memoire + disque), forcer une re-auth et rejouer une fois."""
+    c, cache = make_client(tmp_path, monkeypatch)
+    cache.write_text(json.dumps({
+        "user": "svc", "token": "dead-token", "exp": time.time() + 3600,
+    }))
+
+    login_calls = []
+
+    def fake_post(url, json=None, timeout=None):
+        login_calls.append(json)
+        return FakeResp(200, {"token": "fresh-token"})
+
+    monkeypatch.setattr(c.s, "post", fake_post)
+
+    get_tokens = []
+
+    def fake_get(url, timeout=None, **kw):
+        tok = c.s.headers.get("X-Authorization")
+        get_tokens.append(tok)
+        if tok == "Bearer fresh-token":
+            return FakeResp(200, text='"http://tb/activate?token=abc"')
+        return FakeResp(401)
+
+    monkeypatch.setattr(c.s, "get", fake_get)
+
+    link = c.activation_link("uid-1")
+
+    assert link == "http://tb/activate?token=abc"
+    assert len(login_calls) == 1
+    assert get_tokens == ["Bearer dead-token", "Bearer fresh-token"]
+    assert json.loads(cache.read_text())["token"] == "fresh-token"
+
+
+def test_activation_link_no_retry_when_ok(tmp_path, monkeypatch):
+    """Non-regression : un token valide ne declenche ni login ni retry."""
+    c, cache = make_client(tmp_path, monkeypatch)
+    cache.write_text(json.dumps({
+        "user": "svc", "token": "good-token", "exp": time.time() + 3600,
+    }))
+
+    def fake_post(url, json=None, timeout=None):
+        raise AssertionError("no login should happen when cache is valid")
+
+    monkeypatch.setattr(c.s, "post", fake_post)
+
+    get_tokens = []
+
+    def fake_get(url, timeout=None, **kw):
+        get_tokens.append(c.s.headers.get("X-Authorization"))
+        return FakeResp(200, text='"http://tb/activate?token=xyz"')
+
+    monkeypatch.setattr(c.s, "get", fake_get)
+
+    link = c.activation_link("uid-1")
+    assert link == "http://tb/activate?token=xyz"
+    assert get_tokens == ["Bearer good-token"]
+
+
 def test_valid_cache_skips_login_roundtrip(tmp_path, monkeypatch):
     """Non-regression : un cache valide ne doit PAS declencher de login."""
     c, cache = make_client(tmp_path, monkeypatch)

@@ -21,6 +21,10 @@
   </div>
 
   {% if saved %}<div class="flash ok">Modifications enregistrées.</div>{% endif %}
+  {% if error %}<div class="flash err">
+    {% if error == 'email_invalid' %}Cette adresse email est déjà utilisée ou invalide.
+    {% else %}Enregistrement impossible ({{ error }}).{% endif %}
+  </div>{% endif %}
 
   <form method="post" action="{{ root }}/accounts/{{ row.id }}/edit">
 

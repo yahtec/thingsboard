@@ -20,6 +20,12 @@
     <a href="{{ root }}/invite">← Invitation standard</a>
   </div>
 
+  {% if error %}<div class="flash err">
+    {% if error == 'bad_expiration' %}Date d'expiration manquante ou invalide — aucun compte n'a été créé.
+    {% elif error == 'no_email' %}Adresse mail requise.
+    {% else %}{{ error }}{% endif %}
+  </div>{% endif %}
+
   <form method="post" action="{{ root }}/invite-temp">
 
     <div class="card">
@@ -33,9 +39,13 @@
           <div class="field"><label>Adresse mail *</label><input type="email" name="email" required></div>
           <div class="field"><label>Société</label><input type="text" name="societe"></div>
         </div>
-        <div class="field" style="max-width:280px">
+        <div class="field" style="max-width:320px">
           <label>Date d'expiration du compte *</label>
           <input type="date" name="expiration" required>
+          <small style="display:block;color:#666;margin-top:4px">
+            Le compte est désactivé à partir de 00:00 le jour choisi
+            (appliqué par la tâche nocturne).
+          </small>
         </div>
       </div>
     </div>

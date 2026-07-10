@@ -431,7 +431,8 @@ def accounts_index(request: Request, saved: int = 0, invited: int = 0,
 
 
 @app.get("/accounts/{uid}/edit", response_class=HTMLResponse)
-def account_edit(uid: str, request: Request, saved: int = 0, user: dict = Depends(require_user)):
+def account_edit(uid: str, request: Request, saved: int = 0, error: str | None = None,
+                 user: dict = Depends(require_user)):
     tb = TBClient()
     try:
         u = tb.get_user(uid)
@@ -441,7 +442,7 @@ def account_edit(uid: str, request: Request, saved: int = 0, user: dict = Depend
     return templates.TemplateResponse("account_edit.html", {
         "request": request, "user": user, "root": ROOT_PATH,
         "row": row, "chaufferies": _list_chaufferies(tb),
-        "roles": ROLES, "saved": bool(saved),
+        "roles": ROLES, "saved": bool(saved), "error": error,
     })
 
 
@@ -459,7 +460,13 @@ async def account_edit_save(uid: str, request: Request, user: dict = Depends(req
     new_email = (form.get("email") or "").strip()
     if new_email:
         u["email"] = new_email
-    tb.update_user(u)
+    try:
+        tb.update_user(u)
+    except requests.HTTPError as e:
+        # M15 : email dupliqué / invalide -> pas de 500 brut dans l'iframe.
+        # Meme traitement que profile_save.
+        msg = "email_invalid" if e.response.status_code == 400 else f"tb_{e.response.status_code}"
+        return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?error={msg}", status_code=303)
 
     droit = (form.get("droit_acces") or "lecture").strip()
     if droit not in {r[0] for r in ROLES}:
@@ -503,6 +510,25 @@ async def account_edit_save(uid: str, request: Request, user: dict = Depends(req
 @app.post("/accounts/{uid}/delete")
 def account_delete(uid: str, user: dict = Depends(require_user)):
     tb = TBClient()
+    # Gardes miroir de _set_account_active (I10) : la suppression est
+    # definitive, elle doit refuser AU MOINS ce que la desactivation refuse.
+    # Fail-closed : si on ne peut pas etablir que la cible est un CUSTOMER_USER
+    # (introuvable ou authority indeterminee), on ne supprime pas.
+    try:
+        u = tb.get_user(uid)
+    except requests.HTTPError:
+        return RedirectResponse(f"{ROOT_PATH}/?error=not_found", status_code=303)
+    authority = u.get("authority")
+    if authority == "TENANT_ADMIN":
+        # Jamais supprimer un tenant-admin (je@/af@, ADMIN_OPS ou svc-tbnotify,
+        # le compte sous lequel l'app tourne).
+        return RedirectResponse(f"{ROOT_PATH}/?error=admin_no_delete", status_code=303)
+    if authority != "CUSTOMER_USER":
+        # Fail-closed : autorite inconnue -> on refuse la suppression.
+        return RedirectResponse(f"{ROOT_PATH}/?error=delete_forbidden", status_code=303)
+    current_email = user.get("u")
+    if current_email and (u.get("email") or "").lower() == current_email.lower():
+        return RedirectResponse(f"{ROOT_PATH}/?error=cannot_delete_self", status_code=303)
     try:
         tb.delete_user(uid)
     except requests.HTTPError as e:
@@ -523,7 +549,15 @@ def _set_account_active(uid: str, active: bool, current_email: str | None = None
     if not active and current_email and (u.get("email") or "").lower() == current_email.lower():
         return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?error=cannot_deactivate_self", status_code=303)
     tb.set_credentials_enabled(uid, active)
-    tb.save_server_attrs("USER", uid, {"deactivated": not active})
+    attrs = {"deactivated": not active}
+    if active:
+        # Reactivation : purger aussi expiration_ts. Sans ca, le cron nocturne
+        # (cleanup_expired) re-desactive le compte la nuit suivante car
+        # expiration_ts reste echu. 0 = "aucune expiration" (meme convention
+        # que account_edit_save quand le champ date est vide, et que
+        # cleanup_expired qui ignore exp in (None, "", 0)).
+        attrs["expiration_ts"] = 0
+    tb.save_server_attrs("USER", uid, attrs)
     return RedirectResponse(f"{ROOT_PATH}/accounts/{uid}/edit?saved=1", status_code=303)
 
 
@@ -560,11 +594,12 @@ def invite_get(request: Request, user: dict = Depends(require_user)):
 
 
 @app.get("/invite-temp", response_class=HTMLResponse)
-def invite_temp_get(request: Request, user: dict = Depends(require_user)):
+def invite_temp_get(request: Request, error: str | None = None,
+                    user: dict = Depends(require_user)):
     tb = TBClient()
     return templates.TemplateResponse("invite_temp.html", {
         "request": request, "user": user, "root": ROOT_PATH,
-        "chaufferies": _list_chaufferies(tb), "roles": ROLES,
+        "chaufferies": _list_chaufferies(tb), "roles": ROLES, "error": error,
     })
 
 
@@ -622,14 +657,19 @@ def _send_invitation(tb: TBClient, invitee: dict, attrs: dict) -> tuple[bool, st
     full_attrs = {k: v for k, v in attrs.items() if k != "chaufferies"}
     if invitee.get("societe"):
         full_attrs["societe"] = invitee["societe"]
+    # I9 : ne PAS avaler ces echecs. Un compte cree sans attributs ni CanView
+    # ne voit rien / ne recoit rien ; pire, sur un customer "Party — email"
+    # orphelin reutilise, un CanView non reconcilie laisse le scope du
+    # precedent titulaire. On remonte l'echec AVANT d'envoyer un mail qui
+    # annoncerait (a tort) un acces fonctionnel.
     try:
         tb.save_server_attrs("USER", uid, full_attrs)
-    except requests.HTTPError:
-        pass
+    except requests.HTTPError as e:
+        return False, f"attributs non enregistrés ({e.response.status_code})"
     try:
         _sync_canview(tb, party_cid, attrs.get("droit_acces", "lecture"), attrs.get("chaufferies", []))
-    except requests.HTTPError:
-        pass
+    except requests.HTTPError as e:
+        return False, f"CanView non synchronisé ({e.response.status_code})"
     try:
         link = tb.activation_link(uid)
     except requests.HTTPError as e:
@@ -730,9 +770,12 @@ async def invite_temp_post(request: Request, user: dict = Depends(require_user))
         "societe": (form.get("societe") or "").strip(),
     }
     attrs = _common_invite_attrs(form)
+    # M16 : une date d'expiration absente ou impossible à parser ne doit JAMAIS
+    # créer un compte permanent en silence — c'est une invitation *temporaire*.
     exp_ts = _parse_date_to_ms((form.get("expiration") or "").strip())
-    if exp_ts:
-        attrs["expiration_ts"] = exp_ts
+    if not exp_ts:
+        return RedirectResponse(f"{ROOT_PATH}/invite-temp?error=bad_expiration", status_code=303)
+    attrs["expiration_ts"] = exp_ts
     tb = TBClient()
     ok, msg = _send_invitation(tb, invitee, attrs)
     if ok:

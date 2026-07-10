@@ -265,8 +265,18 @@ class TBClient:
         self.post_json(f"/api/user/{user_id}/userCredentialsEnabled?userCredentialsEnabled={val}", None)
 
     def activation_link(self, user_id: str) -> str:
+        # B : meme robustesse 401 que _req (I5). GET direct (pas via _req car on
+        # veut le texte brut), donc on duplique le retry : sur 401, invalider le
+        # token cache (memoire + disque) et re-authentifier de force avant de
+        # rejouer une fois — sinon une invitation echoue apres rotation mdp /
+        # restart TB tant que le JWT mort du cache disque n'a pas "expire".
+        url = f"{self.url}/api/user/{user_id}/activationLink"
         self._auth()
-        r = self.s.get(f"{self.url}/api/user/{user_id}/activationLink", timeout=30)
+        r = self.s.get(url, timeout=30)
+        if r.status_code == 401:
+            self._invalidate_cached_token()
+            self._auth(force=True)
+            r = self.s.get(url, timeout=30)
         r.raise_for_status()
         body = r.text.strip()
         if body.startswith("{") or body.startswith('"'):
