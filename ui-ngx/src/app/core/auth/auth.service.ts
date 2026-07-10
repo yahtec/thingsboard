@@ -189,6 +189,11 @@ export class AuthService {
   public loginAsUser(userId: string) {
     return this.http.get<LoginResponse>(`/api/user/${userId}/token`, defaultHttpOptions()).pipe(
       tap((loginResponse: LoginResponse) => {
+          // Yahtec : ceinture-bretelles (I21). La clé is_admin est désormais scoppée
+          // par userId (yahtec-role.service#cacheKey), donc l'impersonation ne peut
+          // plus faire fuiter le cache d'un autre utilisateur ; on vide quand même
+          // l'entrée du contexte courant avant de basculer le store, par prudence.
+          this.yahtecRole.clearCache();
           this.setUserFromJwtToken(loginResponse.token, loginResponse.refreshToken, true);
         }
       ));

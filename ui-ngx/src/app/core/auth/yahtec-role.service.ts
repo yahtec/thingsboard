@@ -18,7 +18,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Store } from '@ngrx/store';
 import { Observable, of } from 'rxjs';
-import { catchError, map, tap } from 'rxjs/operators';
+import { catchError, map, retry, tap } from 'rxjs/operators';
 import { AppState } from '@core/core.state';
 import { getCurrentAuthState } from '@core/auth/auth.selectors';
 import { Authority } from '@shared/models/authority.enum';
@@ -27,7 +27,13 @@ export enum YahtecUiRole { DEV, ADMIN_OPS, CUSTOMER }
 
 const PORTFOLIO_ROLE_KEY = 'portfolioRole';
 const ADMIN_OPS_VALUE = 'ADMIN_OPS';
-const IS_ADMIN_CACHE_KEY = 'yahtec.user.isAdmin';
+// Yahtec (I21) : préfixe de clé sessionStorage — la clé effective est scoppée
+// par userId (voir cacheKeyFor/cacheKey ci-dessous). Sans ce scoping, une
+// session PARTY qui suit (même onglet) une session admin expirée hérite du
+// statut admin de l'utilisateur précédent : clearCache() n'était appelé QUE
+// dans logout(), jamais sur expiration de session (refresh-token en échec,
+// validateJwtToken sans refresh) ni sur login()/loginAsUser().
+const IS_ADMIN_CACHE_KEY_PREFIX = 'yahtec.user.isAdmin';
 
 @Injectable({ providedIn: 'root' })
 export class YahtecRoleService {
@@ -44,7 +50,11 @@ export class YahtecRoleService {
     isAdminOps(): boolean {
         if (!this.isTenantAdmin()) { return false; }
         const info = this.authState()?.userDetails?.additionalInfo as Record<string, any> | undefined;
-        return !!info && info[PORTFOLIO_ROLE_KEY] === ADMIN_OPS_VALUE;
+        const role = info?.[PORTFOLIO_ROLE_KEY];
+        // M-comparaisons : comparaison insensible à la casse (ex. 'admin_ops' posé
+        // par un script) — reste null-safe, donc une valeur absente/inattendue
+        // échoue toujours vers false (chrome DEV, moindre que ADMIN_OPS).
+        return role != null && String(role).toUpperCase() === ADMIN_OPS_VALUE;
     }
 
     isDevTenant(): boolean {
@@ -58,23 +68,60 @@ export class YahtecRoleService {
         return YahtecUiRole.CUSTOMER;
     }
 
+    private cacheKeyFor(userId: string | undefined): string | undefined {
+        return userId ? `${IS_ADMIN_CACHE_KEY_PREFIX}.${userId}` : undefined;
+    }
+
+    private cacheKey(): string | undefined {
+        return this.cacheKeyFor(this.authState()?.authUser?.userId);
+    }
+
     /** Gate Supervision flotte / Comptes-Paramétrage : tenant admin (dev+ops) OU customer legacy is_admin=true (transition). */
     canAccessAdminFeatures$(): Observable<boolean> {
         if (this.isTenantAdmin()) { return of(true); }
         const authUser = this.authState()?.authUser;
         if (!authUser || authUser.authority !== Authority.CUSTOMER_USER) { return of(false); }
-        const cached = sessionStorage.getItem(IS_ADMIN_CACHE_KEY);
-        if (cached !== null) { return of(cached === '1'); }
+        const key = this.cacheKeyFor(authUser.userId);
+        if (key) {
+            const cached = sessionStorage.getItem(key);
+            if (cached !== null) { return of(cached === '1'); }
+        }
         return this.http.get<Array<{ key: string; value: any }>>(
             `/api/plugins/telemetry/USER/${authUser.userId}/values/attributes/SERVER_SCOPE?keys=is_admin`
         ).pipe(
-            map(attrs => (attrs || []).some(a => a.key === 'is_admin' && a.value === true)),
-            tap(isAdmin => { try { sessionStorage.setItem(IS_ADMIN_CACHE_KEY, isAdmin ? '1' : '0'); } catch {} }),
+            // I22 : un aléa réseau transitoire ne doit pas retirer les boutons admin
+            // pour toute la session SPA — on retente une fois avant d'abandonner.
+            retry(1),
+            // M-comparaisons : is_admin peut être stocké en string ("true") selon la
+            // voie d'écriture (script legacy) — normaliser sans élargir le true-y.
+            map(attrs => (attrs || []).some(a => a.key === 'is_admin' && (a.value === true || a.value === 'true'))),
+            tap(isAdmin => {
+                // Ne mémoriser QUE les réponses HTTP effectivement reçues (succès,
+                // même après retry). catchError ci-dessous gère l'échec définitif et
+                // ne passe jamais par ce tap : un échec transitoire n'est donc jamais
+                // caché comme "false" figé pour le reste de la session (I22).
+                if (!key) { return; }
+                try { sessionStorage.setItem(key, isAdmin ? '1' : '0'); } catch {}
+            }),
             catchError(() => of(false))
         );
     }
 
+    /**
+     * Invalide le cache is_admin de l'utilisateur courant puis relance
+     * l'évaluation. Permet à l'appelant (Task 14 : re-check sur NavigationEnd)
+     * de ne pas faire confiance à un cache potentiellement périmé après un
+     * échec HTTP transitoire ou un changement d'attribut serveur en session.
+     * Pas d'effet observable pour TENANT_ADMIN/SYS_ADMIN (jamais caché).
+     */
+    recheck(): Observable<boolean> {
+        this.clearCache();
+        return this.canAccessAdminFeatures$();
+    }
+
     clearCache(): void {
-        try { sessionStorage.removeItem(IS_ADMIN_CACHE_KEY); } catch {}
+        const key = this.cacheKey();
+        if (!key) { return; }
+        try { sessionStorage.removeItem(key); } catch {}
     }
 }
