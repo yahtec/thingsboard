@@ -105,6 +105,34 @@ def test_admin_user_apply_no_delete_no_create(patched, capsys):
     assert result == u['email']
 
 
+def test_admin_user_with_empty_chaufferies_still_hard_fails_not_generic_skip(monkeypatch, capsys):
+    """Carry-over revue Task 6 : le check droit_acces=='admin' etait place SOUS le
+    early-return 'pas de chaufferies', si bien qu'un admin sans chaufferies (ou
+    l'attribut absent) etait skippe generiquement et disparaissait du rapport final
+    skipped_admins. Le hard-fail admin doit se declencher AVANT ce check, meme si
+    chaufferies est vide/absent."""
+    def fake_get_server_attrs(t, entity_type, entity_id, keys=None):
+        return {'droit_acces': 'admin'}  # pas de cle 'chaufferies' du tout
+
+    monkeypatch.setattr(tb, 'get_server_attrs', fake_get_server_attrs)
+
+    def boom(*a, **k):
+        raise AssertionError('aucune mutation attendue : hard-fail admin AVANT tout')
+
+    monkeypatch.setattr(tb, 'ensure_customer', boom)
+    monkeypatch.setattr(tb, 'ensure_relation', boom)
+    monkeypatch.setattr(tb, 'http_delete', boom)
+    monkeypatch.setattr(tb, 'http_post', boom)
+
+    u = make_user(email='admin-empty@yahtec.com', uid='uid-admin-empty')
+    result = mod._migrate_user(t=object(), u=u, apply=False)
+
+    out = capsys.readouterr().out
+    assert result == u['email']  # remonte pour le rapport skipped_admins, pas un SKIP generique
+    assert 'TENANT_ADMIN' in out
+    assert 'pas de chaufferies' not in out  # ne doit pas passer par le SKIP generique
+
+
 def test_non_admin_user_still_migrates_normally(monkeypatch, capsys):
     """Non-regression : un droit=lecture avec chaufferies doit toujours suivre le chemin normal."""
     def fake_get_server_attrs(t, entity_type, entity_id, keys=None):
@@ -119,6 +147,37 @@ def test_non_admin_user_still_migrates_normally(monkeypatch, capsys):
     result = mod._migrate_user(t=object(), u=u, apply=False)
     assert result is None
     assert calls  # le chemin normal a bien tourne (ensure_customer appele)
+
+
+def test_section_a_sets_site_assigned_before_assigning_device_marker_first(monkeypatch, capsys):
+    """M-ordre : miroir de deprovision_site.py — poser site_assigned=true AVANT
+    d'assigner le device, pas apres. Un echec entre les deux (ou de la telemetrie live
+    dans la fenetre) laisserait sinon le device visible 'assigned' par le garde
+    rule-chain alors qu'il n'a pas encore ete deplace vers son site-customer."""
+    monkeypatch.setenv('TB_TOKEN', 'fake-token')
+    monkeypatch.setattr(sys, 'argv', ['migrate_legacy_to_rbac.py'])
+
+    device = {'id': {'id': 'dev-1'}, 'name': 'PAC1', 'customerId': {'id': 'yahtec-cid'}}
+    monkeypatch.setattr(tb, 'list_devices_by_profile', lambda t, profile: [device])
+    monkeypatch.setattr(mod, '_users_under', lambda t, cid: [])
+    monkeypatch.setattr(tb, 'find_user_by_email', lambda t, email: None)
+
+    def fake_get_server_attrs(t, entity_type, entity_id, keys=None):
+        if entity_type == 'DEVICE':
+            return {'site_customer_id': 'site-cid-1'}
+        return {}
+
+    monkeypatch.setattr(tb, 'get_server_attrs', fake_get_server_attrs)
+
+    calls = []
+    monkeypatch.setattr(tb, 'assign_device_to_customer',
+                         lambda t, did, cid, apply: calls.append(('assign', did, cid)))
+    monkeypatch.setattr(tb, 'set_server_attribute',
+                         lambda t, did, key, value, apply: calls.append(('attr', key, value)))
+
+    mod.main()
+
+    assert calls == [('attr', 'site_assigned', True), ('assign', 'dev-1', 'site-cid-1')]
 
 
 def test_main_skips_admin_reports_and_exits_nonzero(monkeypatch, capsys):

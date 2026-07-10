@@ -96,3 +96,37 @@ def test_user_with_attribute_matching_canview_is_ok(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert 'DESACCORD' not in out
     assert exc.value.code == 0
+
+
+# ---------- I19 : overflow de pagination -> le garde-fou ne doit JAMAIS faux-passer ----------
+
+def test_devices_page_overflow_hard_exits_instead_of_false_pass(monkeypatch, capsys):
+    """>1000 devices (hasNext=True sur la page devices) : un garde-fou qui continuerait
+    sur des donnees tronquees pourrait conclure OK a tort. Doit exit non-zero avant tout
+    verdict, sans jamais imprimer de faux 'OK'."""
+    responses = make_responses(user_chaufferies_attr=None, canview_sites=['site-1'])
+    responses[DEVICES_PATH] = dict(responses[DEVICES_PATH], hasNext=True)
+    install(monkeypatch, responses)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+
+    out = capsys.readouterr().out
+    assert exc.value.code != 0
+    assert exc.value.code != 2  # signal distinct du vrai DESACCORD fonctionnel
+    assert 'OK' not in out  # aucun verdict rendu sur des donnees potentiellement tronquees
+
+
+def test_users_page_overflow_hard_exits_instead_of_false_pass(monkeypatch, capsys):
+    """>1000 users (hasNext=True sur la page users) : idem, doit exit avant verdict."""
+    responses = make_responses(user_chaufferies_attr=None, canview_sites=['site-1'])
+    responses[USERS_PATH] = dict(responses[USERS_PATH], hasNext=True)
+    install(monkeypatch, responses)
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+
+    out = capsys.readouterr().out
+    assert exc.value.code != 0
+    assert exc.value.code != 2
+    assert 'OK' not in out

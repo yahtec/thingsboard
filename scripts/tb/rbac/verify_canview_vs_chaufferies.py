@@ -19,7 +19,14 @@ def canview_site_ids(t, party_cid):
 def main():
     t = tb.token_or_login(os.environ.get('TB_USER', 'je@yahtec.com'), os.environ.get('TB_PWD'))
     # map site_customer_id -> device pour resoudre les noms
-    devs = tb.http_get('/api/tenant/devices?pageSize=1000&page=0&type=pac%20hybride', t)['data']
+    devs_page = tb.http_get('/api/tenant/devices?pageSize=1000&page=0&type=pac%20hybride', t)
+    if devs_page.get('hasNext'):
+        # I19 : ce script est un GARDE-FOU (exit 2 sur vrai desaccord) ; une page tronquee
+        # ferait manquer des devices/users et pourrait produire un FAUX PASS. On abort au
+        # lieu de rendre un verdict sur des donnees partielles.
+        sys.exit('!!! overflow pagination /api/tenant/devices (>1000 devices) : '
+                  'resultat tronque, garde-fou non fiable. Augmenter pageSize ou paginer.')
+    devs = devs_page['data']
     dev_by_id = {d['id']['id']: d['name'] for d in devs}
     site_of_dev = {}
     for d in devs:
@@ -27,7 +34,11 @@ def main():
         sc = next((a['value'] for a in attrs if a['key'] == 'site_customer_id'), None)
         if sc:
             site_of_dev[d['id']['id']] = sc
-    users = tb.http_get('/api/users?pageSize=1000&page=0', t)['data']
+    users_page = tb.http_get('/api/users?pageSize=1000&page=0', t)
+    if users_page.get('hasNext'):
+        sys.exit('!!! overflow pagination /api/users (>1000 users) : resultat tronque, '
+                  'garde-fou non fiable. Augmenter pageSize ou paginer.')
+    users = users_page['data']
     ok = True
     for u in users:
         ai = u.get('additionalInfo') or {}

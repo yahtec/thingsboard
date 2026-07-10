@@ -19,6 +19,19 @@ import _lib_rbac as tb
 ATTR = 'site_customer_id'
 
 
+def _is_foreign_customer(t, customer):
+    """M-collision : un customer trouve par TITRE (pas par site_customer_id) peut
+    appartenir a un autre sous-systeme RBAC — typiquement un party-customer cree par
+    migrate_legacy_to_rbac.py (prefixe 'Party — {email}'), ou tout customer qui porte
+    deja des users (donc pas un simple site-customer d'onboarding vide). Le reutiliser
+    silencieusement collerait un device sur le customer d'un intervenant."""
+    if (customer.get('title') or '').startswith('Party — '):
+        return True
+    cid = customer['id']['id']
+    page = tb.http_get(f'/api/customer/{cid}/users?{tb._q(pageSize=1, page=0)}', t)
+    return bool((page or {}).get('data'))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--profile', default='pac hybride')
@@ -52,14 +65,36 @@ def main():
         if freq[title] > 1:
             title = f'{title} ({d["name"]})'
         existing = tb.get_server_attrs(t, 'DEVICE', did, [ATTR]).get(ATTR)
-        if existing and tb.http_get(f'/api/customer/{existing}', t, allow_404=True):
-            print(f'  {d["name"]:<14} REUSE  site-customer {existing}  ("{title}")')
-            reused += 1
-            continue
+        if existing:
+            found_by_attr = tb.http_get(f'/api/customer/{existing}', t, allow_404=True, allow_400=True)
+            if found_by_attr:
+                print(f'  {d["name"]:<14} REUSE  site-customer {existing}  ("{title}")')
+                reused += 1
+                continue
+            # M-UUID : existing est absent (404) ou malforme/non-UUID (400 cote TB) ->
+            # traiter comme absent plutot que d'aborter tout le run (comportement
+            # precedent de http_get sans allow_400).
+            print(f'  !! {d["name"]:<14} {ATTR}={existing!r} invalide/introuvable -> traite comme absent')
+
+        # M-collision : un customer trouve par TITRE peut appartenir a un autre
+        # sous-systeme RBAC (party-customer d'intervenant) -> ne pas le reutiliser
+        # silencieusement, suffixer le titre a la place.
+        found_by_title = tb.find_customer_by_title(t, title)
+        if found_by_title and _is_foreign_customer(t, found_by_title):
+            old_title = title
+            title = f'{title} [site {d["name"]}]'
+            print(f'  !! {d["name"]:<14} collision : customer "{old_title}" existant semble '
+                  f'etranger (users attaches ou prefixe "Party — ") -> nouveau titre "{title}"')
+            found_by_title = None
+
         cid = tb.ensure_customer(t, title, apply)  # cree si absent (apply) ; [DRY] sinon
         if cid:
             tb.set_server_attribute(t, did, ATTR, cid, apply)
-            created += 1
+            if found_by_title:
+                # deja trouve par titre (non-etranger) -> reutilisation, pas une creation.
+                reused += 1
+            else:
+                created += 1
         else:
             print(f'  {d["name"]:<14} [DRY]  creerait site + poserait {ATTR}  ("{title}")')
 

@@ -44,6 +44,11 @@ def main():
     t = tb.token_or_login(args.user, args.pwd)
 
     page = tb.http_get('/api/users?pageSize=1000&page=0', t)
+    if (page or {}).get('hasNext'):
+        # I19 : fetch monopage — au-dela de 1000 users, un traitement partiel silencieux
+        # laisserait des comptes sans landing yahtec sans jamais le signaler.
+        sys.exit('!!! overflow pagination /api/users (>1000 users) : traitement partiel '
+                  'garanti faux. Augmenter pageSize ou paginer.')
     users = (page or {}).get('data', [])
     print(f'{len(users)} users au total.\n')
 

@@ -9,6 +9,11 @@ C) Supprime les comptes nus at@test.com + ac+user@yahtec.com.
 D) ac@yahtec.com -> additionalInfo.portfolioRole=ADMIN_OPS (update en place).
 
 DRY-RUN par defaut ; --apply envoie un mail d'activation aux users recrees (ils choisissent leur mot de passe).
+
+ATTENTION (M-gitignore) : en cas d'echec APRES le delete d'un user (B), une donnee de
+recuperation est ecrite dans migration-backup/ (gitignore, hors versioning) AVANT le
+delete. Ne JAMAIS lancer `git clean -fd` (ou equivalent) dans ce repertoire tant qu'un
+backup de recuperation y est encore present — il serait perdu definitivement.
 """
 import argparse, json, os, sys, urllib.parse
 import _lib_rbac as tb
@@ -41,12 +46,10 @@ def _migrate_user(t, u, apply):
     email = u['email']
     uid = u['id']['id']
     attrs = tb.get_server_attrs(t, 'USER', uid, USER_ATTR_KEYS)
-    chauff = attrs.get('chaufferies') or []
-    if isinstance(chauff, str):
-        chauff = json.loads(chauff)
-    if not chauff:
-        print(f'  SKIP (pas de chaufferies) : {email}')
-        return None
+    # Carry-over revue Task 6 : le hard-fail droit_acces=='admin' doit se declencher
+    # AVANT le early-return "pas de chaufferies" — sinon un admin dont l'attribut
+    # chaufferies est vide/absent est skippe generiquement (message SKIP muet) et
+    # disparait du rapport final skipped_admins, alors qu'il doit etre migre a la main.
     droit = attrs.get('droit_acces') or 'lecture'
     if droit == 'admin':
         # I13 : un droit_acces=admin ne doit JAMAIS etre recree en CUSTOMER_USER+ADMIN_OPS
@@ -57,6 +60,12 @@ def _migrate_user(t, u, apply):
               f'TENANT_ADMIN (comme ac@), PAS recree en CUSTOMER_USER+ADMIN_OPS.')
         print('      Aucune mutation effectuee sur ce compte (ni customer, ni CanView, ni delete/create).')
         return email
+    chauff = attrs.get('chaufferies') or []
+    if isinstance(chauff, str):
+        chauff = json.loads(chauff)
+    if not chauff:
+        print(f'  SKIP (pas de chaufferies) : {email}')
+        return None
     role = 'PARTY'
     print(f'  MIGRE {email} : droit={droit} -> {role}, {len(chauff)} chaufferie(s)')
     party_cid = tb.ensure_customer(t, f'Party — {email}', apply)
@@ -132,11 +141,19 @@ def main():
         if not site_cid:
             print(f'  !! {d["name"]} sans site_customer_id -> skip (lancer onboard_sites.py #1)')
             continue
+        # M-ordre : marqueur AVANT assignation (miroir de deprovision_site.py, qui pose
+        # site_assigned=false avant de reassigner a yahtec). Le garde rule-chain rebascule
+        # vers yahtec tout device qui envoie de la telemetrie avec site_assigned=false.
+        # Si on assignait D'ABORD le device puis posait le marqueur, une telemetrie recue
+        # dans la fenetre (ou un crash entre les deux ecritures) trouverait encore
+        # site_assigned=false -> le garde annulerait aussitot l'assignation qu'on vient de
+        # faire. Poser le marqueur en premier rend la fenetre sure (True ne declenche
+        # jamais le rebasculement).
+        tb.set_server_attribute(t, did, 'site_assigned', True, apply)
         if (d.get('customerId') or {}).get('id') == site_cid:
             print(f'  {d["name"]:<14} deja sous son site-customer')
         else:
             tb.assign_device_to_customer(t, did, site_cid, apply)
-        tb.set_server_attribute(t, did, 'site_assigned', True, apply)
 
     print('\n[B] Migration users LEGACY scopes -> PARTY')
     skipped_admins = []

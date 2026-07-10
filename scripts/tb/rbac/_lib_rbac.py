@@ -51,12 +51,18 @@ def _req(method, p, t, body=None):
     return urllib.request.Request(f'{BASE_URL}{p}', data=data, headers=headers, method=method)
 
 
-def http_get(p, t, allow_404=False):
+def http_get(p, t, allow_404=False, allow_400=False):
+    """allow_400 (M-UUID) : un site_customer_id malforme (non-UUID) declenche un HTTP 400
+    cote TB sur un GET /api/customer/{id} ; sans ce flag, http_get abortait tout le run
+    (sys.exit) pour une simple valeur d'attribut corrompue. Les appelants qui ne le
+    passent pas gardent le comportement d'origine (abort dur sur tout code inattendu)."""
     try:
         with urllib.request.urlopen(_req('GET', p, t), timeout=60) as o:
             return json.loads(o.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
         if allow_404 and e.code == 404:
+            return None
+        if allow_400 and e.code == 400:
             return None
         sys.exit(f'GET {p} -> HTTP {e.code}: {e.read().decode("utf-8", errors="replace")[:400]}')
 
@@ -111,12 +117,19 @@ def _q(**kw):
 # ---------- Customers ----------
 
 def find_customer_by_title(t, title):
-    """Cherche un customer par titre exact (via la liste tenant, filtre client-side)."""
-    page = http_get(f'/api/customers?{_q(pageSize=500, page=0, textSearch=title)}', t)
-    for c in (page or {}).get('data', []):
-        if c.get('title') == title:
-            return c
-    return None
+    """Cherche un customer par titre exact (via la liste tenant, filtre client-side).
+    I19 : pagine reellement (au lieu d'une page unique pageSize=500) — un overflow
+    silencieux ferait manquer un customer existant situe au-dela de la 1ere page et
+    provoquerait un doublon a la creation."""
+    page_num = 0
+    while True:
+        page = http_get(f'/api/customers?{_q(pageSize=500, page=page_num, textSearch=title)}', t)
+        for c in (page or {}).get('data', []):
+            if c.get('title') == title:
+                return c
+        if not (page or {}).get('hasNext'):
+            return None
+        page_num += 1
 
 
 def ensure_customer(t, title, apply):
@@ -171,13 +184,19 @@ def assign_dashboard_to_customer(t, customer_id, dashboard_id, apply):
 def find_user_by_email(t, email):
     """Recherche exact-match par email, insensible a la casse (TB fait un ILIKE en
     textSearch ; une comparaison exacte cote script produirait un doublon a la creation
-    ou un abort au premier email dont la casse differe)."""
-    page = http_get(f'/api/users?{_q(pageSize=500, page=0, textSearch=email)}', t)
+    ou un abort au premier email dont la casse differe).
+    I19 : pagine reellement (idem find_customer_by_title) — un overflow silencieux sur
+    une page unique risquerait de manquer un user existant et de creer un doublon."""
     target = (email or '').lower()
-    for u in (page or {}).get('data', []):
-        if (u.get('email') or '').lower() == target:
-            return u
-    return None
+    page_num = 0
+    while True:
+        page = http_get(f'/api/users?{_q(pageSize=500, page=page_num, textSearch=email)}', t)
+        for u in (page or {}).get('data', []):
+            if (u.get('email') or '').lower() == target:
+                return u
+        if not (page or {}).get('hasNext'):
+            return None
+        page_num += 1
 
 
 def _reactivate_if_needed(t, uid, email, password, apply):
