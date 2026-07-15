@@ -1142,4 +1142,10 @@ export const yahtecFilterAdminOpsMenu = (
                 return { ...s, pages: filteredPages };
             }
             return s;
-        });
+        })
+        // M-menu : après filtrage, une section 'toggle' dont TOUS les enfants ont
+        // été retirés survivait avec pages: [] — un parent déroulant vide et
+        // non cliquable dans le menu. On la supprime, en miroir du pruning déjà
+        // fait par filterMenuReference (~L1093 : return false si toutes les pages
+        // sont filtrées). Les sections 'link' (sans pages) ne sont jamais touchées.
+        .filter(s => !(s.type === 'toggle' && (!s.pages || s.pages.length === 0)));

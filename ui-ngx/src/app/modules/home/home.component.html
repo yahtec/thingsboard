@@ -40,6 +40,14 @@
                 class="gt-sm:!hidden" (click)="sidenav.toggle()">
           <mat-icon class="material-icons">menu</mat-icon>
         </button>
+        <!-- Yahtec (M-back-button) : bouton back natif TB volontairement INERTE.
+             Le binding [class.!hidden]="!forceFullscreen || displaySearchMode"
+             référence displaySearchMode SANS parenthèses (référence de méthode,
+             donc toujours truthy) : hérité tel quel d'upstream, il masque en
+             permanence ce bouton. NE PAS « corriger » les parenthèses : la
+             navigation retour custom TSmart est fournie par le bouton « Retour »
+             de la barre yahtec ci-dessous ; réparer ce binding afficherait aux
+             clients un second bouton back en double. Inertie volontaire. -->
         <button mat-icon-button
                 [class.!hidden]="!forceFullscreen || displaySearchMode"
                 (click)="goBack()">
@@ -72,8 +80,11 @@
         <!-- Yahtec : boutons Supervision flotte + Mes Installations retires.
              L'acces se fait via la liste des dashboards (filtree pour les non-admin). -->
         <!-- Yahtec : barre de navigation custom integree a la TB toolbar.
-             Visible uniquement sur le dashboard "Mes Installations". -->
-        <div *ngIf="yahtecOnDashboard" class="tb-yahtec-nav flex flex-row" [class.!hidden]="displaySearchMode()">
+             Visible uniquement sur le dashboard "Mes Installations", et JAMAIS
+             pour les admins TB « dev » (isAdmin) : la spec canonique leur réserve
+             la barre TB native seule, sans chrome yahtec (I23). Retirer « && !isAdmin »
+             rétablirait l'aide de nav yahtec pour je@/af@ (réversible en un token). -->
+        <div *ngIf="yahtecOnDashboard && !isAdmin" class="tb-yahtec-nav flex flex-row" [class.!hidden]="displaySearchMode()">
           <button *ngIf="yahtecShowRetour" type="button"
                   class="tb-yahtec-btn" (click)="yahtecGoBack()" [attr.aria-label]="'Retour'">
             <mat-icon class="material-icons">arrow_back</mat-icon>

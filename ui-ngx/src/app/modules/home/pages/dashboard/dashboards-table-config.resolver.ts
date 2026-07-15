@@ -239,7 +239,14 @@ export class DashboardsTableConfigResolver {
           map(isAdmin => {
             if (isAdmin) return page;
             const filtered = page.data.filter(d => !d.id || !YAHTEC_ADMIN_RESTRICTED_DASHBOARDS.has(d.id.id));
-            return { ...page, data: filtered, totalElements: filtered.length };
+            // M-totalElements : `totalElements: filtered.length` écrasait le total
+            // multi-pages (la table affichait « x sur filtered.length » et cassait
+            // la pagination). On ne retranche QUE les lignes réellement retirées de
+            // CETTE page ; hasNext est conservé tel quel (le spread ...page) puisque
+            // le filtrage client ne change pas l'existence d'une page suivante côté
+            // serveur.
+            const removed = page.data.length - filtered.length;
+            return { ...page, data: filtered, totalElements: page.totalElements - removed };
           })
         );
       })

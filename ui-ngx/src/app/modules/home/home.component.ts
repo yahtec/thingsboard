@@ -16,13 +16,13 @@
 
 import { AfterViewInit, Component, ElementRef, Inject, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { skip, startWith, Subject } from 'rxjs';
-import { Store } from '@ngrx/store';
-import { debounceTime, distinctUntilChanged, takeUntil } from 'rxjs/operators';
+import { select, Store } from '@ngrx/store';
+import { debounceTime, distinctUntilChanged, switchMap, takeUntil, tap } from 'rxjs/operators';
 
 import { BreakpointObserver, BreakpointState } from '@angular/cdk/layout';
 import { PageComponent } from '@shared/components/page.component';
 import { AppState } from '@core/core.state';
-import { getCurrentAuthState } from '@core/auth/auth.selectors';
+import { getCurrentAuthState, selectAuth } from '@core/auth/auth.selectors';
 import { MediaBreakpoints } from '@shared/models/constants';
 import screenfull from 'screenfull';
 import { MatSidenav } from '@angular/material/sidenav';
@@ -63,9 +63,10 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
   // TENANT_ADMIN ADMIN_OPS — simplifiée : barre custom, pas de sidebar).
   // Les ADMIN_OPS (portfolioRole=ADMIN_OPS) restent TENANT_ADMIN côté backend
   // (accès unrestricted) mais reçoivent le chrome customer TSmart.
-  isAdmin = (this.authState.authUser?.authority === Authority.SYS_ADMIN
-      || this.authState.authUser?.authority === Authority.TENANT_ADMIN)
-    && (this.authState.userDetails?.additionalInfo as Record<string, any>)?.['portfolioRole'] !== 'ADMIN_OPS';
+  // I20 : valeur initiale au constructor (rendu de premier affichage identique à
+  // l'existant) ; ré-évaluée ensuite à chaque changement d'utilisateur via une
+  // souscription live au store (voir ngOnInit + recomputeYahtecChrome).
+  isAdmin = this.computeIsAdmin(this.authState);
 
   // La sidebar latérale est masquée pour les non-admins et les ADMIN_OPS (= mode TSmart custom).
   forceFullscreen = !this.isAdmin;
@@ -141,11 +142,55 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
     ).subscribe(() => this.updateYahtecNavState());
     // popstate : Mes Installations change le state via history.pushState + popstate synth
     this.window.addEventListener('popstate', this.yahtecOnPopstate);
-    // Determine si l'user peut acceder aux Comptes (TENANT_ADMIN ou is_admin=true)
-    this.checkYahtecComptesAccess();
+
+    // I20 : le chrome (isAdmin / forceFullscreen / accès Comptes) est dérivé d'une
+    // souscription LIVE au store d'auth, et non plus d'un calcul one-shot au
+    // constructor/ngOnInit. Après « Login as user », l'impersonation remplace
+    // l'utilisateur dans le store mais réutilise le shell HomeComponent (pas de
+    // recréation) : sans cette souscription, un PARTY impersoné conservait le
+    // chrome natif TB complet + les boutons Comptes/Paramétrage jusqu'à un F5.
+    // On re-dérive isAdmin/forceFullscreen (synchrone) puis on relance recheck()
+    // (Task 13 : invalide le cache is_admin périmé de l'utilisateur précédent)
+    // à chaque changement effectif d'utilisateur. La souscription émet aussi
+    // immédiatement à l'abonnement, ce qui remplace l'ancien
+    // checkYahtecComptesAccess() une-fois.
+    this.store.pipe(
+      select(selectAuth),
+      filter(state => !!state?.authUser),
+      distinctUntilChanged((a, b) => this.yahtecAuthKey(a) === this.yahtecAuthKey(b)),
+      tap(state => this.recomputeYahtecChrome(state)),
+      switchMap(() => this.yahtecRole.recheck()),
+      takeUntil(this.destroy$)
+    ).subscribe(canAccess => this.yahtecCanAccessComptes = canAccess);
   }
 
   private yahtecOnPopstate = () => this.updateYahtecNavState();
+
+  // I20 : logique isAdmin factorisée (source unique partagée par l'initialiseur de
+  // champ et la re-dérivation réactive). isAdmin = admin TB « dev » (TENANT_ADMIN/
+  // SYS_ADMIN SANS portfolioRole=ADMIN_OPS) → chrome natif TB. Les ADMIN_OPS et
+  // CUSTOMER_USER reçoivent le chrome TSmart custom.
+  private computeIsAdmin(state: AuthState): boolean {
+    return (state?.authUser?.authority === Authority.SYS_ADMIN
+        || state?.authUser?.authority === Authority.TENANT_ADMIN)
+      && (state?.userDetails?.additionalInfo as Record<string, any>)?.['portfolioRole'] !== 'ADMIN_OPS';
+  }
+
+  // I20 : clé de dédup — ne relance la re-dérivation + recheck() que sur un
+  // changement effectif d'utilisateur ou de rôle (évite un fetch is_admin à
+  // chaque émission du store, ex. changement de userSettings).
+  private yahtecAuthKey(state: AuthState): string {
+    const u = state?.authUser;
+    const role = (state?.userDetails?.additionalInfo as Record<string, any>)?.['portfolioRole'];
+    return `${u?.authority}|${u?.userId}|${role}`;
+  }
+
+  // I20 : re-dérivation synchrone du chrome à partir d'un état d'auth donné.
+  private recomputeYahtecChrome(state: AuthState) {
+    this.authState = state;
+    this.isAdmin = this.computeIsAdmin(state);
+    this.forceFullscreen = !this.isAdmin;
+  }
 
   private updateYahtecNavState() {
     try {
@@ -160,12 +205,6 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
     } catch {
       this.yahtecStateId = 'menu';
     }
-  }
-
-  private checkYahtecComptesAccess() {
-    this.yahtecRole.canAccessAdminFeatures$().pipe(takeUntil(this.destroy$)).subscribe(
-      v => this.yahtecCanAccessComptes = v
-    );
   }
 
   // Yahtec : navigation vers un state du dashboard
