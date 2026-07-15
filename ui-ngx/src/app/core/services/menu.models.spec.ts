@@ -87,4 +87,52 @@ describe('yahtecFilterAdminOpsMenu', () => {
         const result = yahtecFilterAdminOpsMenu(sections, []);
         expect(result.length).toBe(2);
     });
+
+    // --- M-menu : pruning des sections 'toggle' devenues vides ---------------
+
+    const makeToggle = (id: MenuId, pages: Array<MenuSection>): MenuSection => ({
+        id,
+        name: id,
+        type: 'toggle',
+        path: '/' + id,
+        icon: 'folder',
+        pages
+    });
+
+    it('M-menu : supprime une section toggle dont tous les enfants sont filtrés', () => {
+        const sections: MenuSection[] = [
+            // resources n'est PAS dans hiddenIds, mais ses deux enfants le sont :
+            // après filtrage la section devient un parent déroulant vide.
+            makeToggle(MenuId.resources, [
+                makeSection(MenuId.widget_library),
+                makeSection(MenuId.widget_types)
+            ]),
+            makeSection(MenuId.dashboards)
+        ];
+        const result = yahtecFilterAdminOpsMenu(sections, YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS);
+        // La section toggle vidée doit disparaître (pas de pages: [] orphelin).
+        expect(result.map(s => s.id)).toEqual([MenuId.dashboards]);
+    });
+
+    it('M-menu : conserve une section toggle si au moins un enfant survit', () => {
+        const sections: MenuSection[] = [
+            makeToggle(MenuId.resources, [
+                makeSection(MenuId.widget_library), // caché
+                makeSection(MenuId.images)          // gardé
+            ])
+        ];
+        const result = yahtecFilterAdminOpsMenu(sections, YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS);
+        expect(result.length).toBe(1);
+        expect(result[0].id).toBe(MenuId.resources);
+        expect(result[0].pages.map(p => p.id)).toEqual([MenuId.images]);
+    });
+
+    it('M-menu : ne supprime jamais une section link sans pages', () => {
+        const sections: MenuSection[] = [
+            makeSection(MenuId.dashboards), // type 'link', pas de pages
+            makeSection(MenuId.home)
+        ];
+        const result = yahtecFilterAdminOpsMenu(sections, YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS);
+        expect(result.map(s => s.id)).toEqual([MenuId.dashboards, MenuId.home]);
+    });
 });

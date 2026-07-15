@@ -28,10 +28,10 @@ import {
     YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS,
     yahtecFilterAdminOpsMenu
 } from '@core/services/menu.models';
-import { Authority } from '@shared/models/authority.enum';
 import { Observable, ReplaySubject, Subject } from 'rxjs';
 import { AuthState } from '@core/auth/auth.models';
 import { NavigationEnd, Router } from '@angular/router';
+import { YahtecRoleService } from '@core/auth/yahtec-role.service';
 
 @Injectable({
   providedIn: 'root'
@@ -47,7 +47,8 @@ export class MenuService {
   );
 
   constructor(private store: Store<AppState>,
-              private router: Router) {
+              private router: Router,
+              private yahtecRole: YahtecRoleService) {
     this.store.pipe(select(selectIsAuthenticated)).subscribe(
       (authenticated: boolean) => {
         if (authenticated) {
@@ -67,9 +68,12 @@ export class MenuService {
       (authState: AuthState) => {
         if (authState.authUser) {
           let menuSections = buildUserMenu(authState);
-          // Yahtec : masquer les sections dev pour les TENANT_ADMIN avec portfolioRole=ADMIN_OPS
-          if (authState.authUser.authority === Authority.TENANT_ADMIN
-              && (authState.userDetails?.additionalInfo as Record<string, any>)?.['portfolioRole'] === 'ADMIN_OPS') {
+          // Yahtec (M-unify) : masquer les sections dev pour les ADMIN_OPS. On délègue
+          // à YahtecRoleService.isAdminOps() plutôt que de réimplémenter le test inline
+          // (l'ancien inline ne couvrait que TENANT_ADMIN, pas SYS_ADMIN, et comparait
+          // portfolioRole de façon sensible à la casse — asymétrie corrigée ici sans
+          // changement de comportement pour les rôles réels de prod).
+          if (this.yahtecRole.isAdminOps()) {
               menuSections = yahtecFilterAdminOpsMenu(menuSections, YAHTEC_ADMIN_OPS_HIDDEN_MENU_IDS);
           }
           this.currentMenuSections = menuSections;
