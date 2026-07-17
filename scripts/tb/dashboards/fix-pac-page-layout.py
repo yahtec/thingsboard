@@ -45,7 +45,7 @@ def main():
     if not donut:
         sys.exit('camembert (pac_usage_wip) introuvable')
     lay[donut]['col'] = 12
-    lay[donut]['sizeX'] = 6    # largeur reduite (demande JE) ; col12 garde l'alignement gauche
+    lay[donut]['sizeX'] = 5    # largeur reduite (demande JE) ; col12 garde l'alignement gauche
     lay[donut]['sizeY'] = 7   # revert taille camembert (demande JE)
     if GAS in lay:
         lay[GAS]['col'] = 0
