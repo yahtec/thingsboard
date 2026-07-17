@@ -123,3 +123,43 @@ def test_remove_unknown_ids_is_noop():
     assert out["widgets"].keys() == CFG["widgets"].keys()
     assert out["entityAliases"].keys() == CFG["entityAliases"].keys()
     assert out["states"].keys() == CFG["states"].keys()
+
+
+# ---------- assemblage ----------
+
+META = {"id": {"id": "dash-1"}, "title": "Mes Installations"}
+FULL = {"id": {"id": "dash-1"}, "title": "Mes Installations", "version": 372, "configuration": CFG}
+META_NP = {"id": {"id": "dash-2"}, "title": "unite_backup"}
+FULL_NP = {"id": {"id": "dash-2"}, "title": "unite_backup", "version": 2, "configuration": CFG}
+
+
+def test_audit_dashboard_shape():
+    a = lib.audit_dashboard(META, FULL)
+    assert a["id"] == "dash-1" and a["title"] == "Mes Installations" and a["version"] == 372
+    assert a["classification"] == "prod"
+    assert a["counts"] == {"widgets": 4, "states": 2, "aliases": 2}
+    assert a["orphan_widgets"] == ["w-orphan"]
+    assert a["dead_aliases"] == ["a-dead"]
+    assert [w["id"] for w in a["wip_widgets"]] == ["w-wip"]
+
+
+def test_build_decisions_prefills_clean_and_delete():
+    audits = [lib.audit_dashboard(META, FULL), lib.audit_dashboard(META_NP, FULL_NP)]
+    dec = lib.build_decisions(audits, "2026-07-17T10:00:00")
+    assert dec["reviewed"] is False
+    assert dec["dashboards"]["dash-2"]["action"] == "delete"
+    clean = dec["dashboards"]["dash-1"]
+    assert clean["action"] == "clean"
+    assert clean["expected_version"] == 372
+    assert clean["remove_widgets"] == ["w-orphan"]
+    assert clean["remove_aliases"] == ["a-dead"]
+    assert clean["remove_states"] == []
+
+
+def test_render_report_contains_key_facts():
+    audits = [lib.audit_dashboard(META, FULL), lib.audit_dashboard(META_NP, FULL_NP)]
+    md = lib.render_report(audits)
+    assert "Mes Installations" in md and "unite_backup" in md
+    assert "SUPPRESSION" in md          # marqueur delete
+    assert "w-orphan" in md             # orphelin liste
+    assert "old_key" in md              # inventaire datakeys

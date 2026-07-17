@@ -113,3 +113,79 @@ def remove_items(cfg, remove_widgets=(), remove_aliases=(), remove_states=()):
             for wid in rw:
                 lw.pop(wid, None)
     return out
+
+
+def audit_dashboard(meta, full):
+    """Verdict complet d'un dashboard (meta = entree /api/tenant/dashboards, full = /api/dashboard/{id})."""
+    cfg = get_config(full)
+    title = meta.get('title') or full.get('title') or '?'
+    did = (meta.get('id') or {}).get('id') or (full.get('id') or {}).get('id')
+    return {
+        'id': did,
+        'title': title,
+        'version': full.get('version'),
+        'classification': classify(title),
+        'counts': {'widgets': len(cfg.get('widgets') or {}),
+                   'states': len(cfg.get('states') or {}),
+                   'aliases': len(cfg.get('entityAliases') or {})},
+        'orphan_widgets': find_orphan_widgets(cfg),
+        'dead_aliases': find_dead_aliases(cfg),
+        'wip_widgets': find_wip_widgets(cfg),
+        'states': list_states(cfg),
+        'datakeys': list_datakeys(cfg),
+    }
+
+
+def build_decisions(audits, audited_at):
+    """Decisions pre-remplies (reviewed=False). nonprod->delete ; sinon clean + orphelins/alias morts."""
+    dboards = {}
+    for a in audits:
+        if a['classification'] == 'nonprod':
+            dboards[a['id']] = {'title': a['title'], 'action': 'delete'}
+        else:
+            dboards[a['id']] = {
+                'title': a['title'], 'action': 'clean',
+                'expected_version': a['version'],
+                'remove_widgets': list(a['orphan_widgets']),
+                'remove_aliases': list(a['dead_aliases']),
+                'remove_states': [],
+            }
+    return {'reviewed': False, 'audited_at': audited_at, 'dashboards': dboards}
+
+
+def render_report(audits):
+    """Rapport Markdown lisible, groupe par dashboard, avec cases a cocher."""
+    lines = ['# Audit dashboards — candidats de nettoyage', '',
+             '> Editez `audit-decisions-*.json`, puis posez `"reviewed": true`.',
+             '> Widgets `_wip` = signales seulement (jamais retires).', '']
+    for a in sorted(audits, key=lambda x: (x['classification'] != 'nonprod', x['title'])):
+        lines.append(f"## {a['title']}  `{(a['id'] or '')[:8]}`  v{a['version']}  [{a['classification']}]")
+        c = a['counts']
+        lines.append(f"widgets={c['widgets']} states={c['states']} aliases={c['aliases']}")
+        if a['classification'] == 'nonprod':
+            lines.append('')
+            lines.append('- [ ] **SUPPRESSION COMPLETE** (export JSON ecrit avant DELETE)')
+        else:
+            if a['orphan_widgets']:
+                lines.append(f"\n**Widgets orphelins ({len(a['orphan_widgets'])})** — retrait sur :")
+                for wid in a['orphan_widgets']:
+                    lines.append(f"- [ ] `{wid}`")
+            if a['dead_aliases']:
+                lines.append(f"\n**Alias morts ({len(a['dead_aliases'])})** :")
+                for aid in a['dead_aliases']:
+                    lines.append(f"- [ ] `{aid}`")
+        if a['wip_widgets']:
+            lines.append(f"\n**Widgets _wip ({len(a['wip_widgets'])}) — signales, NON retires** :")
+            for w in a['wip_widgets']:
+                lines.append(f"- {w['title']!r} `{w['id']}` ({w['fqn']})")
+        if a['states']:
+            lines.append('\n**States (inventaire — retrait manuel via remove_states)** :')
+            for s in a['states']:
+                tag = ' [root]' if s['root'] else ''
+                lines.append(f"- `{s['id']}` {s['name']!r}{tag} — {s['widget_count']} widget(s)")
+        if a['datakeys']:
+            lines.append(f"\n**DataKeys referencees ({len(a['datakeys'])}) — inventaire informatif** :")
+            seen = sorted({d['key_name'] for d in a['datakeys']})
+            lines.append('  ' + ', '.join(f'`{k}`' for k in seen))
+        lines.append('')
+    return '\n'.join(lines)
