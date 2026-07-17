@@ -55,3 +55,43 @@ def post_dashboard(dash, t):
     resp = http_post('/api/dashboard', dash, t)
     print(f'POST OK, version dashboard: {resp.get("version", "?")}')
     return resp
+
+# ---------- helpers generiques (nettoyage multi-dashboards, 2026-07-17) ----------
+
+def http_delete(p, t):
+    r = urllib.request.Request(f'{BASE_URL}{p}',
+        headers={'X-Authorization': f'Bearer {t}'}, method='DELETE')
+    try:
+        with urllib.request.urlopen(r, timeout=120) as o:
+            body = o.read().decode('utf-8')
+            return json.loads(body) if body.strip() else {}
+    except urllib.error.HTTPError as e:
+        sys.exit(f'DELETE {p} -> HTTP {e.code}: {e.read().decode("utf-8", errors="replace")[:500]}')
+
+def list_tenant_dashboards(t):
+    """Depagine /api/tenant/dashboards -> liste de DashboardInfo."""
+    out, page = [], 0
+    while True:
+        d = http_get(f'/api/tenant/dashboards?pageSize=100&page={page}', t)
+        out += d.get('data', [])
+        if not d.get('hasNext'):
+            return out
+        page += 1
+
+def get_dashboard_by_id(did, t):
+    return http_get(f'/api/dashboard/{did}', t)
+
+def delete_dashboard(did, t):
+    return http_delete(f'/api/dashboard/{did}', t)
+
+def export_json(obj, path):
+    """Ecrit obj en JSON UTF-8 (indent=1), cree les dossiers parents. Retourne path."""
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    with open(path, 'wb') as f:
+        f.write(json.dumps(obj, ensure_ascii=False, indent=1).encode('utf-8'))
+    return path
+
+def token_from_file(path):
+    with open(path, encoding='utf-8') as f:
+        return f.read().strip()
