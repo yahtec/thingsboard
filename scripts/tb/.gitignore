@@ -18,3 +18,9 @@ dashboards/preview-*.json
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Nettoyage dashboards (2026-07-17) : rapports d'audit + exports avant suppression.
+# Contiennent des donnees clients -> JAMAIS dans le repo public. Rollback local only.
+dashboards/audit-*.md
+dashboards/audit-*.json
+dashboards/deleted/
