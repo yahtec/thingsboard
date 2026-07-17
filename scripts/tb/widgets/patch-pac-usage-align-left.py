@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Aligne a GAUCHE le contenu du camembert (tenant.tsmart.pac_usage_wip) au lieu de le centrer,
-pour qu'il s'aligne sur le graphe au-dessus (meme colonne). Patche templateCss :
-.upie-body align-items: center -> flex-start. Idempotent (marqueur 'flex-start; gap: 18px').
+"""Aligne a GAUCHE le CADRE du camembert (tenant.tsmart.pac_usage_wip) sur le cadre du
+graphe au-dessus (meme colonne). Le donut RESTE centre a l'interieur de la carte.
+
+Cause : .usage-pie-host { max-width: 480px; margin: 0 auto; } -> la carte est centree
+dans sa cellule (bord gauche rentre). Fix : margin: 0 (cale a gauche) + max-width: none
+(la carte remplit la cellule comme le chart au-dessus).
+Idempotent (marqueur 'max-width: none; margin: 0;'). Patche templateCss.
 Spec: docs/superpowers/specs/2026-07-16-gaz-live-telemetrie-page-pac-design.md
 
 Usage: set TB_TOKEN=<jwt frais>  (ou --pwd <pwd>)
@@ -12,9 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _wt_patch as wt
 
 FQN = 'tenant.tsmart.pac_usage_wip'
-MARK = 'align-items: flex-start; gap: 18px'
-OLD = 'align-items: center; gap: 18px; min-height: 0;'
-NEW = 'align-items: flex-start; gap: 18px; min-height: 0;'
+MARK = 'max-width: none; margin: 0;'
+OLD = 'max-width: 480px; margin: 0 auto;'
+NEW = 'max-width: none; margin: 0;'
 
 
 def main():
@@ -30,11 +34,11 @@ def main():
     if MARK in css:
         print('  deja patche (skip)')
         return
-    new = wt.apply_replacements(css, [('upie-body-align', OLD, NEW)])
+    new = wt.apply_replacements(css, [('host-align-left', OLD, NEW)])
     if a.dry_run:
         print(f'DRY-RUN css {len(css)}->{len(new)}c, pas de POST')
         return
-    wt.backup(w, 'pac_usage_wip.before_align_left')
+    wt.backup(w, 'pac_usage_wip.before_frame_align')
     w['descriptor']['templateCss'] = new
     r = wt.post_widget(w, tok)
     print(f'POST OK v{r.get("version")}')
