@@ -89,3 +89,27 @@ def list_datakeys(cfg):
 def classify(title):
     """'nonprod' si titre matche test/backup/wip, sinon 'prod'. Advisory."""
     return 'nonprod' if _NONPROD_RE.search(title or '') else 'prod'
+
+
+def remove_items(cfg, remove_widgets=(), remove_aliases=(), remove_states=()):
+    """Retourne une COPIE de cfg avec les ids retires :
+      - remove_widgets : retires de widgets ET de chaque layout de state
+      - remove_aliases : retires de entityAliases
+      - remove_states  : retires de states (avec leur layout)
+    Ne mute pas l'original. Ids inconnus ignores (idempotent)."""
+    out = copy.deepcopy(cfg)
+    rw, ra, rs = set(remove_widgets), set(remove_aliases), set(remove_states)
+
+    for wid in rw:
+        (out.get('widgets') or {}).pop(wid, None)
+    for aid in ra:
+        (out.get('entityAliases') or {}).pop(aid, None)
+    for sid in rs:
+        (out.get('states') or {}).pop(sid, None)
+
+    for s in (out.get('states') or {}).values():
+        for lay in (s.get('layouts') or {}).values():
+            lw = lay.get('widgets') or {}
+            for wid in rw:
+                lw.pop(wid, None)
+    return out

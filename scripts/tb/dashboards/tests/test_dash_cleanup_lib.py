@@ -82,3 +82,44 @@ def test_detectors_do_not_mutate_input():
     before = copy.deepcopy(CFG)
     lib.find_orphan_widgets(CFG); lib.find_dead_aliases(CFG); lib.list_datakeys(CFG)
     assert CFG == before
+
+
+# ---------- remove_items ----------
+
+def test_remove_widget_purges_definition_and_layout():
+    out = lib.remove_items(CFG, remove_widgets=["w-wip"])
+    assert "w-wip" not in out["widgets"]
+    assert "w-wip" not in out["states"]["page"]["layouts"]["main"]["widgets"]
+    # les autres widgets restent
+    assert "w-datakeys" in out["states"]["page"]["layouts"]["main"]["widgets"]
+
+
+def test_remove_orphan_widget_only_touches_definition():
+    out = lib.remove_items(CFG, remove_widgets=["w-orphan"])
+    assert "w-orphan" not in out["widgets"]
+    assert set(out["states"]["menu"]["layouts"]["main"]["widgets"]) == {"w-placed"}
+
+
+def test_remove_alias():
+    out = lib.remove_items(CFG, remove_aliases=["a-dead"])
+    assert "a-dead" not in out["entityAliases"]
+    assert "a-used" in out["entityAliases"]
+
+
+def test_remove_state_drops_state_key():
+    out = lib.remove_items(CFG, remove_states=["page"])
+    assert "page" not in out["states"]
+    assert "menu" in out["states"]
+
+
+def test_remove_items_does_not_mutate_input():
+    before = copy.deepcopy(CFG)
+    lib.remove_items(CFG, remove_widgets=["w-wip"], remove_aliases=["a-dead"], remove_states=["page"])
+    assert CFG == before
+
+
+def test_remove_unknown_ids_is_noop():
+    out = lib.remove_items(CFG, remove_widgets=["ghost"], remove_aliases=["ghost"], remove_states=["ghost"])
+    assert out["widgets"].keys() == CFG["widgets"].keys()
+    assert out["entityAliases"].keys() == CFG["entityAliases"].keys()
+    assert out["states"].keys() == CFG["states"].keys()
