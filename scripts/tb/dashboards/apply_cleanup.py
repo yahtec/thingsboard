@@ -15,12 +15,21 @@ _ACTIONS = {'delete', 'clean', 'skip'}
 
 
 def validate_decisions(dec):
-    """Leve ValueError si le fichier n'est pas valide/valide-humain."""
+    """Leve ValueError si le fichier n'est pas valide/valide-humain. Rejet EN AMONT
+    de toute ecriture reseau (evite un crash mi-batch = application partielle)."""
     if dec.get('reviewed') is not True:
         raise ValueError('decisions non validees : poser "reviewed": true apres relecture')
-    for did, d in (dec.get('dashboards') or {}).items():
-        if d.get('action') not in _ACTIONS:
-            raise ValueError(f'action invalide pour {did}: {d.get("action")!r} (attendu {_ACTIONS})')
+    dboards = dec.get('dashboards')
+    if not isinstance(dboards, dict):
+        raise ValueError('cle "dashboards" absente ou non-dict')
+    for did, d in dboards.items():
+        act = d.get('action')
+        if act not in _ACTIONS:
+            raise ValueError(f'action invalide pour {did}: {act!r} (attendu {_ACTIONS})')
+        if not d.get('title'):
+            raise ValueError(f'entree {did} sans "title"')
+        if act == 'clean' and d.get('expected_version') is None:
+            raise ValueError(f'clean {did} sans "expected_version" (controle de version requis)')
 
 
 def resolve_token(args):
@@ -76,8 +85,12 @@ def main():
     ap.add_argument('--only', choices=['delete', 'clean'])
     args = ap.parse_args()
 
-    dec = json.load(open(args.decisions, encoding='utf-8'))
-    validate_decisions(dec)
+    try:
+        with open(args.decisions, encoding='utf-8') as f:
+            dec = json.load(f)
+        validate_decisions(dec)
+    except ValueError as e:
+        sys.exit(f'decisions rejetees: {e}')
     t = resolve_token(args)
     here = os.path.dirname(os.path.abspath(__file__))
 

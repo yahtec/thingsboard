@@ -51,6 +51,25 @@ def test_find_dead_aliases():
     assert lib.find_dead_aliases(CFG) == ["a-dead"]
 
 
+def test_dead_alias_scan_covers_nonstandard_ref_keys():
+    # 'a-map' is referenced ONLY via dsEntityAliasId (map marker) -> must NOT be dead.
+    # 'a-plural' is referenced ONLY via a plural targetDeviceAliasIds list -> must NOT be dead.
+    # 'a-orphan' is referenced nowhere -> IS dead.
+    cfg = {
+        "widgets": {
+            "w1": {"config": {"settings": {"markers": [{"dsEntityAliasId": "a-map"}]}}},
+            "w2": {"config": {"targetDeviceAliasIds": ["a-plural"]}},
+        },
+        "states": {},
+        "entityAliases": {
+            "a-map": {"alias": "Map"},
+            "a-plural": {"alias": "Plural"},
+            "a-orphan": {"alias": "Orphan"},
+        },
+    }
+    assert lib.find_dead_aliases(cfg) == ["a-orphan"]
+
+
 def test_find_wip_widgets():
     wip = lib.find_wip_widgets(CFG)
     assert [w["id"] for w in wip] == ["w-wip"]

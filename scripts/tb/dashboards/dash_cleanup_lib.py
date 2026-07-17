@@ -1,11 +1,11 @@
 """Logique pure (aucune I/O) d'analyse et de transformation de configs dashboard TB.
 Testable sans reseau. `cfg` = le champ `configuration` d'un dashboard TB."""
 import copy
+import json
 import re
 
 _WIP_RE = re.compile(r'wip', re.IGNORECASE)
 _NONPROD_RE = re.compile(r'(test|backup|wip)', re.IGNORECASE)
-_ALIAS_KEYS = ('entityAliasId', 'targetDeviceAliasId', 'aliasId')
 
 
 def get_config(dash):
@@ -29,27 +29,22 @@ def find_orphan_widgets(cfg):
     return sorted(set((cfg.get('widgets') or {}).keys()) - placed_widget_ids(cfg))
 
 
-def collect_used_alias_ids(cfg):
-    """Tous les alias ids references n'importe ou (recursif)."""
-    used = set()
-
-    def walk(o):
-        if isinstance(o, dict):
-            for k, v in o.items():
-                if k in _ALIAS_KEYS and isinstance(v, str):
-                    used.add(v)
-                walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-
-    walk(cfg)
-    return used
-
-
 def find_dead_aliases(cfg):
-    """Ids d'entityAliases jamais references. Trie."""
-    return sorted(set((cfg.get('entityAliases') or {}).keys()) - collect_used_alias_ids(cfg))
+    """Ids d'entityAliases dont l'UUID n'apparait NULLE PART ailleurs dans la config.
+    Scan brut de l'UUID (36 car.) -> robuste a toute cle de reference : entityAliasId,
+    targetDeviceAliasId(s), dsEntityAliasId, ou toute cle future. Trie."""
+    aliases = cfg.get('entityAliases') or {}
+    if not aliases:
+        return []
+    rest_blob = json.dumps({k: v for k, v in cfg.items() if k != 'entityAliases'},
+                           ensure_ascii=False)
+    dead = []
+    for aid in aliases:
+        others_blob = json.dumps({k: v for k, v in aliases.items() if k != aid},
+                                 ensure_ascii=False)
+        if aid not in rest_blob and aid not in others_blob:
+            dead.append(aid)
+    return sorted(dead)
 
 
 def find_wip_widgets(cfg):
