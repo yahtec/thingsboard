@@ -28,7 +28,9 @@ def main():
     dash = tb.get_dashboard(t)
     conf = dash['configuration']
     w = conf['widgets']
-    lay = conf['states'][STATE]['layouts']['main']['widgets']
+    main = conf['states'][STATE]['layouts']['main']
+    main.setdefault('gridSettings', {})['margin'] = 6   # espace inter-widgets reduit (12->6)
+    lay = main['widgets']
 
     def fqn(wid):
         return w.get(wid, {}).get('typeFullFqn')
