@@ -36,7 +36,7 @@ def main():
     # 1. hauteurs des cartes info
     for wid in lay:
         if fqn(wid) == 'tenant.tsmart.pac_detail_top_wip':
-            lay[wid]['sizeY'] = 8
+            lay[wid]['sizeY'] = 7   # 8 laissait du gris entre la table PAC et la barre retroview
         elif fqn(wid) == 'tenant.tsmart.pac_boiler_info':
             lay[wid]['sizeY'] = 6
 
@@ -46,7 +46,7 @@ def main():
         sys.exit('camembert (pac_usage_wip) introuvable')
     lay[donut]['col'] = 12
     lay[donut]['sizeX'] = 12
-    lay[donut]['sizeY'] = 5   # meme hauteur que les graphes -> pas de vide gris sous la courbe
+    lay[donut]['sizeY'] = 7   # revert taille camembert (demande JE)
     if GAS in lay:
         lay[GAS]['col'] = 0
         lay[GAS]['sizeX'] = 12
