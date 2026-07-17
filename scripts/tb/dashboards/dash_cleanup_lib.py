@@ -143,10 +143,11 @@ def build_decisions(audits, audited_at):
         if a['classification'] == 'nonprod':
             dboards[a['id']] = {'title': a['title'], 'action': 'delete'}
         else:
+            wip_ids = {w['id'] for w in a['wip_widgets']}
             dboards[a['id']] = {
                 'title': a['title'], 'action': 'clean',
                 'expected_version': a['version'],
-                'remove_widgets': list(a['orphan_widgets']),
+                'remove_widgets': [w for w in a['orphan_widgets'] if w not in wip_ids],
                 'remove_aliases': list(a['dead_aliases']),
                 'remove_states': [],
             }
@@ -166,9 +167,11 @@ def render_report(audits):
             lines.append('')
             lines.append('- [ ] **SUPPRESSION COMPLETE** (export JSON ecrit avant DELETE)')
         else:
-            if a['orphan_widgets']:
-                lines.append(f"\n**Widgets orphelins ({len(a['orphan_widgets'])})** — retrait sur :")
-                for wid in a['orphan_widgets']:
+            wip_ids = {w['id'] for w in a['wip_widgets']}
+            removable = [w for w in a['orphan_widgets'] if w not in wip_ids]
+            if removable:
+                lines.append(f"\n**Widgets orphelins ({len(removable)})** — retrait sur :")
+                for wid in removable:
                     lines.append(f"- [ ] `{wid}`")
             if a['dead_aliases']:
                 lines.append(f"\n**Alias morts ({len(a['dead_aliases'])})** :")

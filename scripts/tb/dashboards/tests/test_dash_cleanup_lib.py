@@ -163,3 +163,26 @@ def test_render_report_contains_key_facts():
     assert "SUPPRESSION" in md          # marqueur delete
     assert "w-orphan" in md             # orphelin liste
     assert "old_key" in md              # inventaire datakeys
+
+
+def test_wip_orphan_widget_never_scheduled_for_removal():
+    cfg = {
+        "widgets": {
+            "w-normal-orphan": {"typeFullFqn": "system.cards.html_card", "config": {"title": "Orphan"}},
+            "w-wip-orphan": {"typeFullFqn": "tenant.tsmart.foo_wip", "config": {"title": "Draft"}},
+        },
+        "states": {"menu": {"name": "Menu", "root": True, "layouts": {"main": {"widgets": {}}}}},
+        "entityAliases": {},
+    }
+    full = {"id": {"id": "d9"}, "title": "Mes Installations", "version": 5, "configuration": cfg}
+    a = lib.audit_dashboard({"id": {"id": "d9"}, "title": "Mes Installations"}, full)
+    # both are orphan facts...
+    assert set(a["orphan_widgets"]) == {"w-normal-orphan", "w-wip-orphan"}
+    assert [w["id"] for w in a["wip_widgets"]] == ["w-wip-orphan"]
+    # ...but the wip one must NOT be scheduled for removal
+    dec = lib.build_decisions([a], "2026-07-17T00:00:00")
+    assert dec["dashboards"]["d9"]["remove_widgets"] == ["w-normal-orphan"]
+    # ...and the report removal checklist must not offer it either
+    md = lib.render_report([a])
+    assert "w-normal-orphan" in md
+    assert "- [ ] `w-wip-orphan`" not in md
