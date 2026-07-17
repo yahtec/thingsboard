@@ -40,15 +40,17 @@ def main():
         elif fqn(wid) == 'tenant.tsmart.pac_boiler_info':
             lay[wid]['sizeY'] = 6
 
-    # 2. camembert a gauche / courbe gaz a droite (demi-largeur)
+    # 2. courbe gaz a GAUCHE (col0) / camembert a DROITE (col12), demi-largeur
     donut = next((wid for wid in lay if fqn(wid) == 'tenant.tsmart.pac_usage_wip'), None)
     if not donut:
         sys.exit('camembert (pac_usage_wip) introuvable')
-    lay[donut]['col'] = 0
+    lay[donut]['col'] = 12
     lay[donut]['sizeX'] = 12
+    lay[donut]['sizeY'] = 5   # meme hauteur que les graphes -> pas de vide gris sous la courbe
     if GAS in lay:
-        lay[GAS]['col'] = 12
+        lay[GAS]['col'] = 0
         lay[GAS]['sizeX'] = 12
+        lay[GAS]['sizeY'] = 5
 
     # 3. reflow : regroupe par row courant, re-empile sequentiellement
     bands = {}
