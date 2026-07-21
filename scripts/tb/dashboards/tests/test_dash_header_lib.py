@@ -48,9 +48,9 @@ def test_add_line_inserts_banner_and_shifts():
     lay = _lay(out, "default")
     bid = hdr.BANNER_IDS["default"]
     assert bid in lay
-    assert lay[bid] == {"row": 0, "col": 0, "sizeX": 24, "sizeY": 2}
-    # widgets existants decales de +2
-    assert lay["photo"]["row"] == 2 and lay["map"]["row"] == 2
+    assert lay[bid] == {"row": 0, "col": 0, "sizeX": 24, "sizeY": 1}
+    # widgets existants decales de +1
+    assert lay["photo"]["row"] == 1 and lay["map"]["row"] == 1
     # definition du widget ajoutee
     assert out["widgets"][bid]["typeFullFqn"] == "system.cards.markdown_card"
 
@@ -58,8 +58,8 @@ def test_add_line_inserts_banner_and_shifts():
 def test_add_line_idempotent_no_double_shift():
     once = hdr.add_reminder_line(CFG, "default")
     twice = hdr.add_reminder_line(once, "default")
-    assert _lay(twice, "default")["photo"]["row"] == 2  # pas 4
-    assert _lay(twice, "default")["map"]["row"] == 2
+    assert _lay(twice, "default")["photo"]["row"] == 1  # pas 2
+    assert _lay(twice, "default")["map"]["row"] == 1
 
 
 def test_add_line_absent_state_is_noop():
@@ -77,12 +77,17 @@ def test_banner_uses_selected_alias():
 
 def test_banner_widget_shape():
     w = hdr.build_banner_widget("x-1", "a-sel")
-    assert w["sizeX"] == 24 and w["sizeY"] == 2 and w["row"] == 0 and w["col"] == 0
+    assert w["sizeX"] == 24 and w["sizeY"] == 1 and w["row"] == 0 and w["col"] == 0
     c = w["config"]
     assert c["showTitle"] is False
+    ds = c["datasources"][0]
+    assert ds["entityAliasId"] == "a-sel" and ds["type"] == "entity"
+    attr_keys = {k["name"]: k["type"] for k in ds["dataKeys"]}
+    assert attr_keys == {"nom_alternatif": "attribute", "nom_residence": "attribute"}
     s = c["settings"]
     assert s["useMarkdownTextFunction"] is True
-    assert "entityLabel" in s["markdownTextFunction"]
+    assert "nom_residence" in s["markdownTextFunction"]
+    assert "nom_alternatif" in s["markdownTextFunction"]
     assert "entityName" in s["markdownTextFunction"]
     assert ".ins-line" in s["markdownCss"] and "space-between" in s["markdownCss"]
 
@@ -105,8 +110,19 @@ def test_apply_all_covers_present_states_and_strips_title():
 def test_apply_all_idempotent():
     out1 = hdr.apply_all(CFG)
     out2 = hdr.apply_all(out1)
-    assert _lay(out2, "default")["photo"]["row"] == 2
-    assert _lay(out2, "historique")["hist"]["row"] == 2
+    assert _lay(out2, "default")["photo"]["row"] == 1
+    assert _lay(out2, "historique")["hist"]["row"] == 1
+
+
+def test_add_line_height_change_reflows():
+    # 1re pose en hauteur 2 (comme la v374 en prod) : photo 0 -> 2
+    h2 = hdr.add_reminder_line(CFG, "default", height=2)
+    assert _lay(h2, "default")["photo"]["row"] == 2
+    assert _lay(h2, "default")[hdr.BANNER_IDS["default"]]["sizeY"] == 2
+    # re-pose en hauteur 1 : la ligne existe deja -> reflow de -1, photo 2 -> 1
+    h1 = hdr.add_reminder_line(h2, "default", height=1)
+    assert _lay(h1, "default")["photo"]["row"] == 1
+    assert _lay(h1, "default")[hdr.BANNER_IDS["default"]]["sizeY"] == 1
 
 
 def test_no_mutation_of_input():

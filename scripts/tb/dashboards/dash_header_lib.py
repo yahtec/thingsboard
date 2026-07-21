@@ -5,7 +5,7 @@ import copy
 
 HEADER_STATES = ['default', 'depart_chauffage', 'ecs', 'donnees_HP1',
                  'fault_diagnostic', 'historique']
-HEADER_H = 2
+HEADER_H = 1
 # ids deterministes = marqueur d'idempotence (segment '0b17' libre dans ce dashboard).
 BANNER_IDS = {
     'default':          'a1b2c3d4-0b17-4000-a000-000000000001',
@@ -19,13 +19,16 @@ PHOTO_FQN = 'tenant.tsmart.photo_card'
 _MARKDOWN_TYPE_ID = {'id': '5ff7fcd0-3d7d-11f1-8ec8-ef2af873172d',
                      'entityType': 'WIDGET_TYPE'}
 
-# Rendu : label a gauche (masque si vide OU == serial), n serie a droite.
 _BANNER_FN = (
-    "var ds = (data && data[0] && data[0].datasource) || "
-    "(ctx && ctx.datasources && ctx.datasources[0]) || {};\n"
-    "var serial = ds.entityName || '';\n"
-    "var label = ds.entityLabel || '';\n"
-    "var name = (label && label !== serial) ? label : '';\n"
+    "var ctxRef = (typeof ctx !== 'undefined' && ctx) ? ctx : "
+    "((typeof self !== 'undefined' && self.ctx) ? self.ctx : null);\n"
+    "function attr(re){ var v=''; var arr=(ctxRef && ctxRef.data) || []; "
+    "for(var i=0;i<arr.length;i++){ var d=arr[i]; "
+    "if(d && d.dataKey && re.test(d.dataKey.name) && d.data && d.data.length){ "
+    "v = d.data[d.data.length-1][1]; } } return (v==null?'':String(v)).trim(); }\n"
+    "var d0 = ctxRef && ctxRef.datasources && ctxRef.datasources[0];\n"
+    "var serial = (d0 && (d0.entityName || (d0.entity && d0.entity.name))) || '';\n"
+    "var name = attr(/^nom_alternatif$/i) || attr(/^nom_residence$/i);\n"
     "var left = '<span class=\"ins-name\">' + name + '</span>';\n"
     "var right = serial ? '<span class=\"ins-serial\">N&deg; de s&eacute;rie ' "
     "+ serial + '</span>' : '';\n"
@@ -37,10 +40,10 @@ _BANNER_CSS = (
     ".ins-line{display:flex;align-items:center;justify-content:space-between;"
     "height:100%;box-sizing:border-box;padding:0 16px;background:#f5f6f8;"
     "border-bottom:1px solid #e0e0e0;font-family:-apple-system,BlinkMacSystemFont,"
-    "'Segoe UI',Roboto,Arial,sans-serif;}\n"
-    ".ins-name{font-weight:700;font-size:15px;color:#1f2933;white-space:nowrap;"
+    "'Segoe UI',Roboto,Arial,sans-serif;line-height:1.2;}\n"
+    ".ins-name{font-weight:700;font-size:14px;color:#1f2933;white-space:nowrap;"
     "overflow:hidden;text-overflow:ellipsis;}\n"
-    ".ins-serial{font-size:13px;color:#6b7280;white-space:nowrap;margin-left:12px;}"
+    ".ins-serial{font-size:12px;color:#6b7280;white-space:nowrap;margin-left:12px;}"
 )
 
 
@@ -84,7 +87,8 @@ def selected_entity_alias_id(cfg):
 
 
 def build_banner_widget(wid, alias_id):
-    """Definition complete du widget markdown_card 'ligne de rappel'."""
+    """Definition complete du widget markdown_card 'ligne de rappel'.
+    Lit nom_alternatif/nom_residence (attributs) + entityName via la fonction."""
     return {
         'id': wid,
         'typeFullFqn': 'system.cards.markdown_card',
@@ -100,8 +104,16 @@ def build_banner_widget(wid, alias_id):
             'margin': '0px',
             'backgroundColor': 'rgba(0, 0, 0, 0)',
             'color': 'rgba(0, 0, 0, 0.87)',
-            'datasources': [{'type': 'entity', 'name': '',
-                             'dataKeys': [], 'entityAliasId': alias_id}],
+            'datasources': [{
+                'type': 'entity', 'name': '',
+                'entityAliasId': alias_id,
+                'dataKeys': [
+                    {'name': 'nom_alternatif', 'type': 'attribute',
+                     'label': 'nom_alternatif', 'color': '#2196f3', 'settings': {}},
+                    {'name': 'nom_residence', 'type': 'attribute',
+                     'label': 'nom_residence', 'color': '#4caf50', 'settings': {}},
+                ],
+            }],
             'settings': {
                 'useMarkdownTextFunction': True,
                 'markdownTextFunction': _BANNER_FN,
@@ -115,14 +127,22 @@ def build_banner_widget(wid, alias_id):
 
 def add_reminder_line(cfg, sid, height=HEADER_H):
     """COPIE de cfg avec la ligne de rappel en row=0 de l'etat sid.
-    Idempotent : si deja presente, met a jour def/position SANS re-decaler."""
+    Idempotent ET correct en hauteur : si la ligne est deja presente, decale les
+    autres widgets de (height - ancienne_hauteur) — 0 si inchangee — au lieu de
+    re-decaler de height ; premiere pose = decalage de +height."""
     out = copy.deepcopy(cfg)
     lay = _state_main_widgets(out, sid)
     if lay is None:
         return out
     wid = BANNER_IDS[sid]
     alias_id = selected_entity_alias_id(out)
-    if wid not in lay:
+    if wid in lay:
+        delta = height - lay[wid].get('sizeY', height)
+        if delta:
+            for k, l in lay.items():
+                if k != wid:
+                    l['row'] = l.get('row', 0) + delta
+    else:
         for l in lay.values():
             l['row'] = l.get('row', 0) + height
     out.setdefault('widgets', {})[wid] = build_banner_widget(wid, alias_id)
