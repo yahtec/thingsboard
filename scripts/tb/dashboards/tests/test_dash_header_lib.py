@@ -3,6 +3,8 @@ import copy
 import json
 import os
 
+import pytest
+
 import dash_header_lib as hdr
 
 # default: photo (col0) + map (col8) sur row0 ; historique: 1 widget ; menu: intouche.
@@ -139,7 +141,7 @@ def test_apply_all_on_real_backup_if_present():
     bkp = os.path.join(here, "..",
                        "backup-Mes-Installations-0964da30.before_cleanup.20260717-173316.json")
     if not os.path.exists(bkp):
-        return  # pas d'echec en CI sans le backup
+        pytest.skip("backup absent")  # skip explicite (pas un faux vert en CI)
     dash = json.load(open(bkp, encoding="utf-8"))
     out = hdr.apply_all(hdr.get_config(dash))
     for sid in hdr.HEADER_STATES:

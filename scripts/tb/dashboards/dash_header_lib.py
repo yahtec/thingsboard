@@ -3,8 +3,6 @@ etats de detail de 'Mes Installations' et retire le titre de la carte photo.
 cfg = le champ configuration d'un dashboard TB. Ne mute jamais l'entree."""
 import copy
 
-HEADER_STATES = ['default', 'depart_chauffage', 'ecs', 'donnees_HP1',
-                 'fault_diagnostic', 'historique']
 HEADER_H = 1
 # ids deterministes = marqueur d'idempotence (segment '0b17' libre dans ce dashboard).
 BANNER_IDS = {
@@ -15,7 +13,11 @@ BANNER_IDS = {
     'fault_diagnostic': 'a1b2c3d4-0b17-4000-a000-000000000005',
     'historique':       'a1b2c3d4-0b17-4000-a000-000000000006',
 }
+# derive des cles de BANNER_IDS (ordre d'insertion) -> pas de liste a maintenir en lockstep.
+HEADER_STATES = list(BANNER_IDS)
 PHOTO_FQN = 'tenant.tsmart.photo_card'
+# UUID du widget-type markdown_card, specifique a cette instance TB ; TB resout surtout
+# via typeFullFqn, cet id est une securite. A revalider si on change d'instance.
 _MARKDOWN_TYPE_ID = {'id': '5ff7fcd0-3d7d-11f1-8ec8-ef2af873172d',
                      'entityType': 'WIDGET_TYPE'}
 
