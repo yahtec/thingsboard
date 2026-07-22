@@ -341,7 +341,7 @@
           </mat-drawer-content>
         </mat-drawer-container>
         <section data-html2canvas-ignore class="tb-header-buttons tb-enter-edit-mode flex flex-row flex-wrap items-end justify-start" *ngIf="!readonly && (hideToolbar || widgetEditMode)">
-          <button [class.!hidden]="isEdit"
+          <button [class.!hidden]="isEdit || !canEditDashboards()"
                   color="primary"
                   mat-mini-fab
                   class="tb-btn-header tb-btn-edit"

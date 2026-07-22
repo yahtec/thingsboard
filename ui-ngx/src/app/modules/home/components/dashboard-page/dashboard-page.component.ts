@@ -1155,6 +1155,12 @@ export class DashboardPageComponent extends PageComponent implements IDashboardC
   }
 
   private setEditMode(isEdit: boolean, revert: boolean) {
+    // Fork Yahtec : seuls les comptes autorises (canEditDashboards) peuvent ENTRER en
+    // mode edition. Garde au point de passage unique -> bloque TOUS les points d'entree
+    // (crayon toolbar, crayon flottant quand la barre est masquee, hotkey, dashboard vide).
+    if (isEdit && !this.canEditDashboards()) {
+      return;
+    }
     this.isEdit = isEdit;
     if (this.isEdit) {
       this.dashboardCtx.stateController.preserveState();
