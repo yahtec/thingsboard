@@ -6,31 +6,6 @@
   "configuration": {
     "description": "",
     "widgets": {
-      "fe678c4f-ea86-4cae-8d81-6fca493fe311": {
-          "type": "static",
-          "sizeX": 7.5,
-          "sizeY": 6.5,
-          "config": {
-              "showTitle": false,
-              "backgroundColor": "rgb(255, 255, 255)",
-              "color": "rgba(0, 0, 0, 0.87)",
-              "padding": "16px",
-              "settings": {},
-              "title": "IoT Hub",
-              "dropShadow": true,
-              "enableFullscreen": false,
-              "widgetStyle": {},
-              "widgetCss": "",
-              "pageSize": 1024,
-              "noDataDisplayMessage": "",
-              "showLegend": false,
-              "datasources": []
-          },
-          "row": 0,
-          "col": 0,
-          "id": "fe678c4f-ea86-4cae-8d81-6fca493fe311",
-          "typeFullFqn": "system.home_page_widgets.iot_hub"
-      },
       "d70cc256-4c7b-ee06-9905-b8c5e546605f": {
         "type": "latest",
         "sizeX": 5,
@@ -1203,14 +1178,6 @@
                 "col": 0,
                 "mobileOrder": 2,
                 "mobileHeight": 10
-              },
-              "fe678c4f-ea86-4cae-8d81-6fca493fe311": {
-                "sizeX": 85,
-                "sizeY": 15,
-                "row": 0,
-                "col": 0,
-                "mobileOrder": 3,
-                "mobileHeight": 12
               },
               "35d3ac3b-f1af-dc3d-a1d1-11f351d16fc6": {
                 "sizeX": 43,
