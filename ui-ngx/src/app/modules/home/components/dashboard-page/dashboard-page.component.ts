@@ -867,6 +867,15 @@ export class DashboardPageComponent extends PageComponent implements IDashboardC
     return this.authUser.authority === Authority.SYS_ADMIN;
   }
 
+  // Fork Yahtec : le crayon "mode edition" du dashboard est reserve aux admins
+  // Yahtec designes. Les autres comptes TENANT_ADMIN (ex. ADMIN_OPS cote client)
+  // ne doivent pas modifier la structure des dashboards -> edition via les scripts
+  // du toolkit (scripts/tb/dashboards). Pour ajouter un editeur : completer la liste.
+  public canEditDashboards(): boolean {
+    const allowed = ['je@yahtec.com', 'af@yahtec.com'];
+    return allowed.includes((this.authUser.sub || '').toLowerCase());
+  }
+
   public exportDashboard($event: Event) {
     if ($event) {
       $event.preventDefault();
