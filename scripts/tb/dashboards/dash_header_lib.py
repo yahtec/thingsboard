@@ -38,12 +38,13 @@ _BANNER_CSS = (
     ".tb-markdown-view{height:100%!important;min-height:100%!important;"
     "padding:0!important;background:transparent;overflow:hidden!important;}\n"
     ".ins-line{display:flex;align-items:center;justify-content:space-between;"
-    "height:100%;box-sizing:border-box;padding:0 16px;background:#f5f6f8;"
-    "border-bottom:1px solid #e0e0e0;font-family:-apple-system,BlinkMacSystemFont,"
+    "height:44px;max-height:100%;box-sizing:border-box;padding:0 18px;"
+    "background:#f5f6f8;border-bottom:1px solid #e0e0e0;"
+    "font-family:-apple-system,BlinkMacSystemFont,"
     "'Segoe UI',Roboto,Arial,sans-serif;line-height:1.2;}\n"
-    ".ins-name{font-weight:700;font-size:14px;color:#1f2933;white-space:nowrap;"
+    ".ins-name{font-weight:700;font-size:18px;color:#1f2933;white-space:nowrap;"
     "overflow:hidden;text-overflow:ellipsis;}\n"
-    ".ins-serial{font-size:12px;color:#6b7280;white-space:nowrap;margin-left:12px;}"
+    ".ins-serial{font-size:13px;color:#6b7280;white-space:nowrap;margin-left:12px;}"
 )
 
 
