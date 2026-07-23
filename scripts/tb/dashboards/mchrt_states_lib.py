@@ -5,13 +5,14 @@ import copy
 
 STATE_APERCU = "mchrt_apercu"
 STATE_DETAIL = "mchrt_detail"
-APERCU_WID = "0mch0001-0000-0000-0000-000000000001"
-DETAIL_WID = "0mch0002-0000-0000-0000-000000000002"
+APERCU_WID = "0bc70001-0000-0000-0000-000000000001"
+DETAIL_WID = "0bc70002-0000-0000-0000-000000000002"
 
-def _placeholder_widget(title, body_md):
+def _placeholder_widget(wid, title, body_md):
     return {
+        "id": wid,
         "typeFullFqn": "system.cards.markdown_card",
-        "type": "latest", "showTitle": False,
+        "type": "latest",
         "config": {"showTitle": False, "dropShadow": True, "enableFullscreen": False,
                    "datasources": [], "timewindow": {"realtime": {"timewindowMs": 60000}},
                    "settings": {"markdownTextPattern": body_md, "useMarkdownTextFunction": False},
@@ -20,7 +21,7 @@ def _placeholder_widget(title, body_md):
     }
 
 def _grid(cfg):
-    return copy.deepcopy(cfg["states"]["default"]["layouts"]["main"]["gridSettings"])
+    return copy.deepcopy(cfg["states"]["default"]["layouts"]["main"].get("gridSettings", {}))
 
 def add_states(cfg):
     cfg = copy.deepcopy(cfg)
@@ -33,9 +34,8 @@ def add_states(cfg):
          "## Détail chaudière\n\n_Détail chaudière — à compléter (données non figées)._"),
     ]
     for sid, name, wid, md in plan:
-        w = _placeholder_widget(name, md)
-        pos = {"row": w.pop("row"), "col": w.pop("col"),
-               "sizeX": w.pop("sizeX"), "sizeY": w.pop("sizeY")}
+        w = _placeholder_widget(wid, name, md)
+        pos = {"row": w["row"], "col": w["col"], "sizeX": w["sizeX"], "sizeY": w["sizeY"]}
         cfg["widgets"][wid] = w
         cfg["states"][sid] = {"name": name, "root": False,
             "layouts": {"main": {"widgets": {wid: pos}, "gridSettings": _grid(cfg)}}}

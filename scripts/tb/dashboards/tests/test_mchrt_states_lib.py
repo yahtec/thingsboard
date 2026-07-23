@@ -33,3 +33,16 @@ def test_idempotent():
 def test_does_not_mutate_input():
     c = _cfg(); before = copy.deepcopy(c); mod.add_states(c)
     assert c == before
+
+def test_stored_widget_has_id_and_layout_fields():
+    out = mod.add_states(_cfg())
+    for wid in (mod.APERCU_WID, mod.DETAIL_WID):
+        w = out["widgets"][wid]
+        assert w["id"] == wid
+        for f in ("row", "col", "sizeX", "sizeY"):
+            assert f in w, f
+
+def test_widget_ids_are_valid_uuid():
+    import uuid
+    for wid in (mod.APERCU_WID, mod.DETAIL_WID):
+        uuid.UUID(wid)  # ValueError if not a well-formed UUID
