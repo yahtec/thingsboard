@@ -1,6 +1,6 @@
 """Crée la rule chain 'MCHRT Router' (idempotent). Défaut = dry-run ; --apply pour écrire.
 Auth via TB_TOKEN (env). Backup non requis (création, pas mutation d'existant)."""
-import os, sys, json, urllib.request, urllib.error
+import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "dashboards"))
 import _lib_tb as tb  # http_get/http_post/token_or_login/BASE_URL
 import build_mchrt_chain as B

@@ -5,6 +5,7 @@ import copy
 
 MARKER = "__MCHRT_MENU_V1__"
 MENU_FQN = "system.cards.html_value_card"
+ALIAS_ID = "c2b38a85-fd8a-2e7b-5f04-d35093ee0877"
 QUERY_OLD = "deviceTypes:['pac hybride']"      # ajuster si l'espacement live diffère (cf. Step 0)
 QUERY_NEW = "deviceTypes:['pac hybride','mchrt']"
 
@@ -47,7 +48,8 @@ AUG_SCRIPT = """<script>/*__MCHRT_MENU_V1__*/(function(){
       ACTIVE=b.getAttribute('data-t');var bs=bar.querySelectorAll('button');
       for(var i=0;i<bs.length;i++)bs[i].classList.toggle('on',bs[i]===b);applyFilter();});
   }
-  function wrapNav(){var orig=window.tb_menu_naviguer;if(typeof orig!=='function')return;
+  function wrapNav(){var orig=window.tb_menu_naviguer;
+    if(typeof orig!=='function'){console.warn('[mchrt] tb_menu_naviguer absent — nav MCHRT non montee');return;}
     if(orig.__mchrtWrapped)return;
     var w=function(id){var ty=TYPES[id];
       if(ty==='mchrt'){var b=btoa(JSON.stringify([{id:'mchrt_apercu',
@@ -57,7 +59,9 @@ AUG_SCRIPT = """<script>/*__MCHRT_MENU_V1__*/(function(){
         window.dispatchEvent(ev);return;}
       return orig.apply(this,arguments);};
     w.__mchrtWrapped=true;window.tb_menu_naviguer=w;}
-  function init(){loadTypes(function(){wrapNav();buildToggle();applyFilter();
+  function init(){loadTypes(function(){
+    if(!document.getElementById('menu-container')){console.warn('[mchrt] #menu-container introuvable — bascule PAC|MCHRT inactive (widget menu modifie ?)');}
+    wrapNav();buildToggle();applyFilter();
     var grid=document.getElementById('menu-container');
     if(grid&&window.MutationObserver)new MutationObserver(function(){buildToggle();
       wrapNav();applyFilter();}).observe(grid,{childList:true});
@@ -81,17 +85,26 @@ def find_menu_widget(cfg):
         w = cfg["widgets"].get(wid, {})
         if w.get("typeFullFqn") == MENU_FQN:
             return w
-    for w in cfg["widgets"].values():          # fallback: seul html_value_card
+    for w in cfg["widgets"].values():          # fallback: html_value_card portant les marqueurs du menu
         if w.get("typeFullFqn") == MENU_FQN:
-            return w
+            html = w.get("config", {}).get("settings", {}).get("cardHtml", "")
+            if "tb_menu_naviguer" in html or "menu-container" in html:
+                return w
     raise SystemExit("widget menu html_value_card introuvable dans l'état 'menu'")
 
 def _broaden_alias(cfg):
-    for a in cfg.get("entityAliases", {}).values():
+    import sys
+    matched = False
+    for aid, a in cfg.get("entityAliases", {}).items():
         f = a.get("filter", {})
-        if a.get("alias") == "Toutes les chaufferies" and f.get("type") == "deviceType":
-            if "mchrt" not in f.get("deviceTypes", []):
-                f["deviceTypes"] = ["pac hybride", "mchrt"]
+        if (aid == ALIAS_ID or a.get("alias") == "Toutes les chaufferies") and f.get("type") == "deviceType":
+            dts = list(f.get("deviceTypes", []))
+            if "mchrt" not in dts:
+                dts.append("mchrt")          # union: préserve les types existants
+            f["deviceTypes"] = dts
+            matched = True
+    if not matched:
+        print("[mchrt] avertissement: alias 'Toutes les chaufferies' introuvable — non élargi", file=sys.stderr)
 
 def apply(cfg):
     cfg = copy.deepcopy(cfg)
@@ -99,10 +112,10 @@ def apply(cfg):
     s = w["config"]["settings"]
     html = s.get("cardHtml", "")
     if MARKER not in html:
-        if QUERY_OLD in html:
-            html = html.replace(QUERY_OLD, QUERY_NEW)
-        else:
-            raise SystemExit(f"ancre requête introuvable ({QUERY_OLD!r}); ajuster QUERY_OLD (Step 0)")
+        n = html.count(QUERY_OLD)
+        if n != 1:
+            raise SystemExit(f"attendu 1 occurrence de {QUERY_OLD!r}, trouvé {n}; ajuster QUERY_OLD (Step 0)")
+        html = html.replace(QUERY_OLD, QUERY_NEW)
         html = html + AUG_SCRIPT
         s["cardHtml"] = html
     css = s.get("cardCss", "")

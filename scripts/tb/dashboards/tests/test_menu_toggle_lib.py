@@ -45,3 +45,22 @@ def test_idempotent():
 def test_does_not_mutate_input():
     c = _cfg(); before = copy.deepcopy(c); mod.apply(c)
     assert c == before
+
+def test_alias_union_keeps_existing_types():
+    c = _cfg()
+    c["entityAliases"]["a1"]["filter"]["deviceTypes"] = ["pac hybride", "autre"]
+    out = mod.apply(c)
+    dts = out["entityAliases"]["a1"]["filter"]["deviceTypes"]
+    assert "pac hybride" in dts and "autre" in dts and "mchrt" in dts
+
+def test_missing_query_anchor_raises():
+    import pytest
+    c = _cfg()
+    c["widgets"]["w1"]["config"]["settings"]["cardHtml"] = "<div>no anchor here</div>"
+    with pytest.raises(SystemExit):
+        mod.apply(c)
+
+def test_aug_script_has_observable_guard():
+    out = mod.apply(_cfg())
+    html = out["widgets"]["w1"]["config"]["settings"]["cardHtml"]
+    assert "console.warn" in html
