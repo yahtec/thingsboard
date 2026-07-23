@@ -12,6 +12,8 @@ BANNER_IDS = {
     'donnees_HP1':      'a1b2c3d4-0b17-4000-a000-000000000004',
     'fault_diagnostic': 'a1b2c3d4-0b17-4000-a000-000000000005',
     'historique':       'a1b2c3d4-0b17-4000-a000-000000000006',
+    "mchrt_apercu": "0b170007-0000-0000-0000-000000000007",
+    "mchrt_detail": "0b170008-0000-0000-0000-000000000008",
 }
 # derive des cles de BANNER_IDS (ordre d'insertion) -> pas de liste a maintenir en lockstep.
 HEADER_STATES = list(BANNER_IDS)
