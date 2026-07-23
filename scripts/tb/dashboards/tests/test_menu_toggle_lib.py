@@ -64,3 +64,13 @@ def test_aug_script_has_observable_guard():
     out = mod.apply(_cfg())
     html = out["widgets"]["w1"]["config"]["settings"]["cardHtml"]
     assert "console.warn" in html
+
+def test_ambiguous_double_anchor_raises():
+    # deux occurrences de l'ancre requête => ambigu => SystemExit (garde count==1).
+    # Sur l'ancien code (replace-all sans garde) ceci ne levait PAS : ce test prouve le fix.
+    import pytest
+    c = _cfg()
+    s = c["widgets"]["w1"]["config"]["settings"]
+    s["cardHtml"] = s["cardHtml"] + "var q2={deviceTypes:['pac hybride']};"
+    with pytest.raises(SystemExit):
+        mod.apply(c)
