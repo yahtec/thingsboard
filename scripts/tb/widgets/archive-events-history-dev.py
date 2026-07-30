@@ -2,13 +2,13 @@
 """
 Archive 6 dev versions of tduo.events_history (events_history2..7).
 Backups each widget_type JSON before deletion. Idempotent.
+
+Auth : TB_TOKEN, ou TB_USER + TB_PASS. Cible : TB_URL (defaut 127.0.0.1:8080).
 """
-import json, sys, urllib.request, urllib.error
+import json, os, sys, urllib.request, urllib.error
 from datetime import datetime, timezone
 
-TB = "http://127.0.0.1:8080"
-USERNAME = "je@yahtec.com"
-PASSWORD = "Yahtec77100"
+TB = os.environ.get("TB_URL", "http://127.0.0.1:8080")
 
 DEV_FQNS = [f"tduo.events_history{i}" for i in range(2, 8)]
 PROD_FQN = "tduo.events_history"
@@ -21,14 +21,23 @@ def req(method, url, headers=None, body=None, parse_json=True):
         raw = resp.read()
         return json.loads(raw) if parse_json and raw else raw
 
+def auth_header():
+    """En-tetes authentifies. Jeton via TB_TOKEN, sinon login TB_USER/TB_PASS.
+    Aucun identifiant en dur : ce depot est public."""
+    tok = os.environ.get("TB_TOKEN")
+    if not tok:
+        user, pwd = os.environ.get("TB_USER"), os.environ.get("TB_PASS")
+        if not (user and pwd):
+            sys.exit("Definir TB_TOKEN, ou TB_USER et TB_PASS.")
+        tok = req("POST", f"{TB}/api/auth/login",
+                  {"Content-Type": "application/json"},
+                  {"username": user, "password": pwd})["token"]
+    return {"Content-Type": "application/json", "X-Authorization": f"Bearer {tok}"}
+
 # 1. Login
 print("=== 1. Login ===")
-auth = req("POST", f"{TB}/api/auth/login",
-           {"Content-Type": "application/json"},
-           {"username": USERNAME, "password": PASSWORD})
-jwt = auth["token"]
-hdr = {"Content-Type": "application/json", "X-Authorization": f"Bearer {jwt}"}
-print(f"JWT acquired ({len(jwt)} chars)")
+hdr = auth_header()
+print("Authenticated")
 
 # 2. Known IDs from SQL audit (avoid endpoint signature quirks)
 DEV_IDS = {

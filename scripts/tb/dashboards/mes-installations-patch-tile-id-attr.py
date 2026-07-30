@@ -4,13 +4,13 @@ Patch HTML Value Card (entry tile) in dashboard "Mes Installations" :
 bascule la datakey `id` de type 'timeseries' → 'attribute' (SERVER_SCOPE).
 
 Idempotent : si la dataKey est déjà en attribute, ne refait rien.
-"""
-import json, sys, urllib.request, urllib.error
 
-TB = "http://127.0.0.1:8080"
+Auth : TB_TOKEN, ou TB_USER + TB_PASS. Cible : TB_URL (defaut 127.0.0.1:8080).
+"""
+import json, os, sys, urllib.request, urllib.error
+
+TB = os.environ.get("TB_URL", "http://127.0.0.1:8080")
 DASHBOARD_ID = "0964da30-3e56-11f1-bbfe-e1395562cba0"
-USERNAME = "je@yahtec.com"
-PASSWORD = "Yahtec77100"
 
 def req(method, url, headers=None, body=None):
     headers = headers or {}
@@ -19,14 +19,23 @@ def req(method, url, headers=None, body=None):
     with urllib.request.urlopen(r) as resp:
         return json.loads(resp.read())
 
+def auth_header():
+    """En-tetes authentifies. Jeton via TB_TOKEN, sinon login TB_USER/TB_PASS.
+    Aucun identifiant en dur : ce depot est public."""
+    tok = os.environ.get("TB_TOKEN")
+    if not tok:
+        user, pwd = os.environ.get("TB_USER"), os.environ.get("TB_PASS")
+        if not (user and pwd):
+            sys.exit("Definir TB_TOKEN, ou TB_USER et TB_PASS.")
+        tok = req("POST", f"{TB}/api/auth/login",
+                  {"Content-Type": "application/json"},
+                  {"username": user, "password": pwd})["token"]
+    return {"Content-Type": "application/json", "X-Authorization": f"Bearer {tok}"}
+
 # 1. Login
 print("=== 1. Login ===")
-auth = req("POST", f"{TB}/api/auth/login",
-           {"Content-Type": "application/json"},
-           {"username": USERNAME, "password": PASSWORD})
-jwt = auth["token"]
-hdr = {"Content-Type": "application/json", "X-Authorization": f"Bearer {jwt}"}
-print(f"JWT acquired ({len(jwt)} chars)")
+hdr = auth_header()
+print("Authenticated")
 
 # 2. GET dashboard
 print("\n=== 2. GET dashboard ===")
