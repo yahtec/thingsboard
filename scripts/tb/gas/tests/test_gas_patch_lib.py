@@ -154,3 +154,43 @@ def test_le_patch_diagnostic_est_idempotent(diag_src):
 def test_la_lib_injectee_dans_le_diagnostic_est_la_meme(diag_src):
     out, _ = lib.patch_diag(diag_src)
     assert lib.load_gas_lib() in out
+
+
+def _settings_live():
+    """Forme relevee en production le 2026-07-31."""
+    return {'title': 'Gaz / Sécurité', 'series': [
+        {'unit': '%LFL', 'color': '#ff6f00', 'field': 'HP.conR290',
+         'label': 'Conc. R290', 'scale': 0.1},
+        {'unit': '%LFL', 'color': '#00acc1', 'field': 'boil.conG20',
+         'label': 'Conc. G20', 'scale': 0.1},
+    ]}
+
+
+def test_les_deux_series_de_seuil_sont_ajoutees():
+    out, note = lib.add_threshold_series(_settings_live())
+    champs = [s['field'] for s in out['series']]
+    assert champs == ['HP.conR290', 'boil.conG20',
+                     'HP.leakThresR290', 'boil.leakThresG20']
+    assert note
+
+
+def test_les_series_existantes_ne_sont_pas_touchees():
+    avant = _settings_live()
+    out, _ = lib.add_threshold_series(avant)
+    assert out['series'][0] == {'unit': '%LFL', 'color': '#ff6f00',
+                               'field': 'HP.conR290', 'label': 'Conc. R290', 'scale': 0.1}
+    assert out['title'] == 'Gaz / Sécurité'
+
+
+def test_la_serie_de_seuil_porte_la_meme_echelle_que_la_mesure():
+    out, _ = lib.add_threshold_series(_settings_live())
+    seuil = [s for s in out['series'] if s['field'] == 'HP.leakThresR290'][0]
+    assert seuil['scale'] == 0.1, 'sinon le seuil ne serait pas comparable a la mesure'
+    assert seuil['unit'] == '%LFL'
+
+
+def test_l_ajout_du_seuil_est_idempotent():
+    once, _ = lib.add_threshold_series(_settings_live())
+    twice, note = lib.add_threshold_series(once)
+    assert twice == once
+    assert 'skip' in note

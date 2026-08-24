@@ -212,3 +212,28 @@ def patch_diag(controller_script):
     out = inject_lib(out)
     notes.append(f'lib injectee ({len(load_gas_lib())} c)')
     return out, notes
+
+
+# ---------- instance du graphe Gaz / Securite ----------
+
+GAS_CHART_WIDGET_ID = 'a1b2c3d4-0730-4000-a000-000000000701'
+
+# Le seuil est lu dans la telemetrie, jamais code en dur (regle R4).
+THRESHOLD_SERIES = [
+    {'field': 'HP.leakThresR290', 'label': 'Seuil R290', 'unit': '%LFL',
+     'scale': 0.1, 'color': '#9e9e9e'},
+    {'field': 'boil.leakThresG20', 'label': 'Seuil G20', 'unit': '%LFL',
+     'scale': 0.1, 'color': '#bdbdbd'},
+]
+
+
+def add_threshold_series(settings):
+    """(nouveaux_settings, note). Idempotent, n'altere pas les series existantes."""
+    out = dict(settings)
+    series = list(out.get('series', []))
+    presents = {s.get('field') for s in series}
+    ajoutes = [dict(s) for s in THRESHOLD_SERIES if s['field'] not in presents]
+    if not ajoutes:
+        return settings, 'series de seuil deja presentes (skip)'
+    out['series'] = series + ajoutes
+    return out, 'series ajoutees: ' + ', '.join(s['field'] for s in ajoutes)
