@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,59 @@ def test_le_patch_leak_line_est_idempotent(diag_src):
 def test_une_ancre_absente_de_la_ligne_alarme_capteur_leve_une_erreur():
     with pytest.raises(lib.AnchorError):
         lib.patch_diag_leak('self._renderHeader = function(){};')
+
+
+# ---------- coherence appelant / appele avec _src/gas_lib.js ----------
+# Le defaut constate en prod le 2026-08-24 : un commit a ajoute leakWindow() a
+# gas_lib.js et un script a ecrit un appel a window.__gasLib.leakWindow(...) dans
+# tduo.fault_diagnostic, mais la lib deployee n'avait jamais ete rafraichie -- la
+# fonction appelee n'existait pas en prod, en silence (le .catch() masquait tout).
+# Les tests ci-dessous relevent, par expression reguliere, les noms REELLEMENT
+# appeles dans le resultat des fonctions de patch, et les comparent aux noms
+# REELLEMENT exportes par root.__gasLib dans _src/gas_lib.js -- jamais un texte
+# recopie a la main -- pour qu'un futur ajout d'appel a une fonction absente (ou un
+# renommage cote lib non repercute) echoue ici plutot qu'en production.
+
+_GASLIB_CALL_RE = re.compile(r'__gasLib\.(\w+)\(')
+
+
+def _lib_export_names():
+    """Noms exportes par root.__gasLib = { ... } dans _src/gas_lib.js, extraits par
+    regex sur le fichier source lui-meme (pas une liste recopiee a la main)."""
+    src = lib.load_gas_lib()
+    m = re.search(r'root\.__gasLib\s*=\s*\{(.*?)\};', src, re.S)
+    assert m, 'bloc `root.__gasLib = {...}` introuvable dans _src/gas_lib.js'
+    noms = set(re.findall(r'(\w+)\s*:', m.group(1)))
+    assert noms, 'regex export : aucun nom trouve -- verifier le format de gas_lib.js'
+    return noms
+
+
+@pytest.fixture
+def patched_sources(hp_src, boil_src, diag_src):
+    """Sortie des trois fonctions de patch appliquees aux fixtures live -- les memes
+    sources que celles postees en production par les enveloppes REST patch-*.py."""
+    return {
+        "patch_table('HP')": lib.patch_table(hp_src, 'HP')[0],
+        "patch_table('boil')": lib.patch_table(boil_src, 'boil')[0],
+        'patch_diag': lib.patch_diag(diag_src)[0],
+        'patch_diag_leak': lib.patch_diag_leak(diag_src)[0],
+    }
+
+
+def test_tous_les_appels_a_gaslib_correspondent_a_un_export_de_la_lib(patched_sources):
+    exports = _lib_export_names()
+    vus = set()
+    for label, js in patched_sources.items():
+        appeles = set(_GASLIB_CALL_RE.findall(js))
+        assert appeles, f'{label} : aucun appel __gasLib.*( detecte -- regex a verifier'
+        vus |= appeles
+        manquants = appeles - exports
+        assert not manquants, (
+            f"{label} appelle __gasLib.{sorted(manquants)}, absent des exports de "
+            "_src/gas_lib.js")
+    # Garde-fou du test lui-meme : s'assurer qu'on couvre bien plusieurs fonctions de
+    # la lib, pas seulement une, sans quoi le test serait trivialement peu utile.
+    assert len(vus) >= 3, f'couverture trop faible, seulement {sorted(vus)} appeles'
 
 
 def _settings_live():

@@ -324,13 +324,25 @@ _DIAG_LEAK_LINE_NEW = _DIAG_LEAK_LINE_OLD + (
 
 _DIAG_LEAK_FETCH_OLD = "self._fetchRealtime = function(){"
 
+# R1 applique a l'echec technique lui-meme : une absence d'information (lib pas
+# rafraichie, fetch en erreur) ne doit jamais rendre un ecran silencieux -- c'est
+# precisement ce qui a permis au defaut du 2026-08-24 (lib jamais rafraichie) de
+# passer inapercu. Ce message est repris tel quel par le test qui verifie que
+# gas_patch_lib.py et gas_lib.js restent en phase (test_gas_patch_lib.py).
+DIAG_LEAK_UNAVAILABLE_MSG = 'Alarme capteur : lecture indisponible'
+
 _DIAG_LEAK_FETCH_NEW = (
     "// Ligne « alarme capteur » : le bit d'alarme est maintenu 5 min par le capteur, donc\n"
     "// observable a 1/min, contrairement a la concentration qui est evacuee en quelques\n"
     "// dizaines de secondes. Declenchement paresseux depuis _renderHeader.\n"
     "self._loadLeakLine = function(){\n"
     "    var c = self._ctx;\n"
+    "    var UNAVAILABLE = '" + DIAG_LEAK_UNAVAILABLE_MSG + "';\n"
     "    if (self._leakLine !== undefined) { return; }\n"
+    "    if (!window.__gasLib || typeof window.__gasLib.leakWindow !== 'function') {\n"
+    "        self._leakLine = UNAVAILABLE;   // R1 : jamais d'ecran silencieux sur un echec\n"
+    "        return;\n"
+    "    }\n"
     "    self._leakLine = null;\n"
     "    var probeTs = (c.evtResolvedTs && c.evtResolvedTs > 0) ? c.evtResolvedTs : c.evtTs;\n"
     "    if (!c.devId || !probeTs) { return; }\n"
@@ -359,7 +371,7 @@ _DIAG_LEAK_FETCH_NEW = (
     "            : 'Alarme capteur : aucune donn\\u00e9e capteur sur \\u00b110 min';\n"
     "          self._render();\n"
     "      })\n"
-    "      .catch(function(){ self._leakLine = null; });\n"
+    "      .catch(function(){ self._leakLine = UNAVAILABLE; self._render(); });\n"
     "};\n"
     "\n"
     "self._fetchRealtime = function(){"
@@ -371,9 +383,11 @@ _DIAG_LEAK_TRIGGER_NEW = (
     "self._renderHeader = function(){\n    var c = self._ctx;\n    self._loadLeakLine();"
 )
 
-# Presence => deja patche. Contrairement a patch_table/patch_diag, ce patch n'injecte
-# aucun bloc de lib encadre (leakWindow n'est qu'un ajout a la lib deja injectee par
-# patch_diag) : l'idempotence se verifie donc sur son propre marqueur, pas sur LIB_BEGIN.
+# Presence => les trois ancres d'appel sont deja en place. On continue neanmoins
+# jusqu'a inject_lib() dans tous les cas (voir patch_diag_leak ci-dessous) : sinon ce
+# script dependrait de l'ordre d'execution avec les autres patch-*.py pour que la lib
+# effectivement injectee corresponde a l'appel __gasLib.leakWindow qu'il pose. C'est
+# exactement le defaut constate en prod le 2026-08-24 (lib jamais rafraichie).
 DIAG_LEAK_MARK = 'self._loadLeakLine'
 
 
@@ -387,10 +401,13 @@ def diag_leak_replacements():
 
 
 def patch_diag_leak(controller_script):
-    """(nouvelle_source, notes). Idempotent par DIAG_LEAK_MARK : rejoue les trois ancres
-    une seule fois, chacune devant apparaitre exactement une fois dans la source vierge."""
+    """(nouvelle_source, notes). Idempotent par DIAG_LEAK_MARK sur les trois ancres
+    d'appel ; termine dans tous les cas par inject_lib(), comme patch_table et
+    patch_diag, pour qu'une seule execution suffise a mettre l'appelant
+    (self._loadLeakLine) et l'appele (__gasLib.leakWindow) en coherence, sans
+    dependre de l'ordre d'execution des scripts patch-*.py."""
     if DIAG_LEAK_MARK in controller_script:
-        return controller_script, ['ligne alarme capteur deja en place (skip)']
+        return inject_lib(controller_script), ['ancres deja en place, lib rafraichie']
     notes = []
     out = controller_script
     for name, old, new in diag_leak_replacements():
@@ -399,4 +416,6 @@ def patch_diag_leak(controller_script):
             raise AnchorError(f'[{name}] ancre {n}x (attendu 1) -- source live a change')
         out = out.replace(old, new, 1)
         notes.append(f'[{name}] OK (+{len(new) - len(old)}c)')
+    out = inject_lib(out)
+    notes.append(f'lib injectee ({len(load_gas_lib())} c)')
     return out, notes
