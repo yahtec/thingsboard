@@ -21,6 +21,9 @@ LIB_END = '/* __GAS_LIB_END__ */'
 # Presence du marqueur d'ouverture = lib deja injectee (donc a remplacer, pas a ajouter).
 DONE_MARK = LIB_BEGIN
 
+LEGACY_MARK = 'root.__gasLib = {'   # lib injectee sans marqueurs (avant cette tache)
+WIDGET_START = 'self.onInit'        # premiere ligne du code propre au widget
+
 # Cible -> (objet JS, suffixe de champ, prefixe de libelle d'origine)
 TARGETS = {
     'HP':   {'obj': 'hp',   'sfx': 'R290'},
@@ -54,6 +57,16 @@ def inject_lib(controller_script):
     return controller_script[:i] + bloc + controller_script[j + len(LIB_END) + 1:]
 
 
+def _strip_legacy_lib(controller_script):
+    """Retire une lib injectee sans marqueurs. Le code propre au widget commence a
+    `self.onInit` dans les trois widget_types concernes, et la lib n'en contient pas :
+    c'est donc une frontiere fiable et verifiable."""
+    i = controller_script.find(WIDGET_START)
+    if i < 0:
+        raise AnchorError('debut du code widget introuvable -- migration impossible')
+    return controller_script[i:]
+
+
 def _old_block(obj, sfx):
     """Bloc conditionnel ecrit a la main dans la source live (sans saut de ligne)."""
     label = 'Concentration ' + sfx
@@ -77,8 +90,11 @@ def table_replacements(target):
 
 def patch_table(controller_script, target):
     """(nouvelle_source, notes). Idempotent."""
-    if DONE_MARK in controller_script:
+    if LIB_BEGIN in controller_script:
         return inject_lib(controller_script), ['appels deja en place, lib rafraichie']
+    if LEGACY_MARK in controller_script:
+        return (inject_lib(_strip_legacy_lib(controller_script)),
+                ['lib heritee sans marqueurs -> migree et rafraichie'])
     notes = []
     out = controller_script
     for name, old, new in table_replacements(target):

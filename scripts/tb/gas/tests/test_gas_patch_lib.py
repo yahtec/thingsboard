@@ -54,7 +54,7 @@ def test_le_patch_est_idempotent(hp_src):
     once, _ = lib.patch_table(hp_src, 'HP')
     twice, notes = lib.patch_table(once, 'HP')
     assert twice == once, 'une seconde application ne doit rien changer'
-    assert any('skip' in n for n in notes)
+    assert any('rafraichie' in n for n in notes)
 
 
 def test_une_ancre_absente_leve_une_erreur():
@@ -62,9 +62,15 @@ def test_une_ancre_absente_leve_une_erreur():
         lib.patch_table('self.onInit=function(){};', 'HP')
 
 
-def test_done_mark_existe_dans_la_lib():
-    src = lib.load_gas_lib()
-    assert lib.DONE_MARK in src, 'DONE_MARK doit exister dans _src/gas_lib.js'
+def test_une_lib_heritee_sans_marqueurs_est_migree(hp_src):
+    once, _ = lib.patch_table(hp_src, 'HP')
+    legacy = once.replace(lib.LIB_BEGIN + '\n', '', 1).replace(lib.LIB_END + '\n', '', 1)
+    assert lib.LIB_BEGIN not in legacy, 'la fixture de depart doit imiter la prod actuelle'
+    out, notes = lib.patch_table(legacy, 'HP')
+    assert out.count(lib.LIB_BEGIN) == 1, 'un seul bloc, pas de duplication'
+    assert lib.load_gas_lib() in out
+    assert out.count("window.__gasLib.rows('R290',hp)") == 1, 'les ancres ne sont pas rejouees'
+    assert any('migree' in n for n in notes)
 
 
 def test_la_lib_injectee_est_encadree_par_des_marqueurs(hp_src):
