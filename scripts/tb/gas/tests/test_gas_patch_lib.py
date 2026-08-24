@@ -219,3 +219,29 @@ def test_quand_tout_est_conforme_l_objet_recu_est_renvoye_tel_quel():
     twice, note = lib.add_threshold_series(once)
     assert twice is once, 'contrat sur lequel s appuyait le script : identite preservee au skip'
     assert 'skip' in note
+
+
+def test_les_pistes_couvrent_les_deux_circuits():
+    champs = [l['field'] for l in lib.LANES]
+    assert any(c.startswith('HP.') for c in champs)
+    assert any(c.startswith('boil.') for c in champs)
+    for suffixe in ('leak', 'opMode', 'err', 'leakThres', 'addr', 'gasType'):
+        assert any(suffixe in c for c in champs), f'registre {suffixe} absent des pistes'
+
+
+def test_chaque_piste_est_completement_declaree():
+    for l in lib.LANES:
+        assert l.get('field') and l.get('label'), f'piste incomplete: {l}'
+        if 'map' in l:
+            assert set(l['map']) >= {0, 1}, f'table map incomplete: {l["field"]}'
+            for v in l['map'].values():
+                assert v.get('t') and v.get('c'), f'entree map incomplete: {l["field"]}'
+        else:
+            assert l.get('kind') in ('errbits', 'value'), f'kind manquant: {l["field"]}'
+
+
+def test_les_pistes_de_seuil_portent_l_echelle():
+    seuils = [l for l in lib.LANES if 'leakThres' in l['field']]
+    assert seuils
+    for l in seuils:
+        assert l['scale'] == 0.1 and l['unit'] == '%LFL'
