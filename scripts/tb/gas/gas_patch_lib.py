@@ -61,6 +61,10 @@ def _strip_legacy_lib(controller_script):
     """Retire une lib injectee sans marqueurs. Le code propre au widget commence a
     `self.onInit` dans les trois widget_types concernes, et la lib n'en contient pas :
     c'est donc une frontiere fiable et verifiable."""
+    if WIDGET_START in load_gas_lib():
+        raise AnchorError(
+            f'{WIDGET_START!r} apparait maintenant dans _src/gas_lib.js -- la frontiere '
+            'de migration heritee n\'est plus fiable, decoupe refusee')
     i = controller_script.find(WIDGET_START)
     if i < 0:
         raise AnchorError('debut du code widget introuvable -- migration impossible')

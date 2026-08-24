@@ -88,3 +88,10 @@ def test_une_lib_deja_injectee_est_remplacee_et_non_dupliquee(hp_src):
     assert refait.count(lib.LIB_BEGIN) == 1, 'aucune duplication de bloc'
     assert 'fmtVerAncienNom' not in refait, 'le bloc obsolete doit etre remplace'
     assert lib.load_gas_lib() in refait
+
+
+def test_widget_start_absent_de_la_lib(hp_src):
+    """Invariant dont depend _strip_legacy_lib : si WIDGET_START apparaissait dans
+    gas_lib.js, la frontiere de migration heritee deviendrait ambigue (mauvaise
+    decoupe silencieuse). Verifie pour lui-meme, pas seulement par ricochet."""
+    assert lib.WIDGET_START not in lib.load_gas_lib()
