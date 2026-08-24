@@ -42,14 +42,18 @@ def main():
     print('  ' + note)
     if new_settings == avant:
         return
-    cfg['settings'] = new_settings
     if a.dry_run:
+        cfg['settings'] = new_settings
         prev = os.path.join(HERE, 'preview-gas-threshold.json')
         with open(prev, 'wb') as f:
             f.write(json.dumps(dash, ensure_ascii=False, indent=1).encode('utf-8'))
         print(f'  [dry-run] preview: {prev}')
         return
+    # Sauvegarde AVANT l'affectation qui suit : l'objet sauvegarde doit etre celui
+    # d'avant ce script, pas celui deja reecrit (sinon le retour arriere ne restaure
+    # rien).
     tb.backup(dash, 'gas_threshold_series')
+    cfg['settings'] = new_settings
     tb.post_dashboard(dash, t)
 
 
