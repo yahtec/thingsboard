@@ -46,7 +46,7 @@ def _old_block(obj, sfx):
     return (
         "({obj}.con{sfx}!=null?kv('{label}',{obj}.con{sfx}*0.1,' %LFL',1)"
         "+'<div class=\"pd-kv\"><span class=\"k\">Capteur {sfx}</span><span class=\"v\">'"
-        "+({obj}.err{sfx}==null?'—':(Number({obj}.err{sfx})===0?'OK':String({obj}.err{sfx})))"
+        "+({obj}.err{sfx}==null?'\u2014':(Number({obj}.err{sfx})===0?'OK':String({obj}.err{sfx})))"
         "+'</span></div>':'')"
     ).format(obj=obj, sfx=sfx, label=label)
 

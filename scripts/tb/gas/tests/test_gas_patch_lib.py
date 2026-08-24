@@ -60,3 +60,8 @@ def test_le_patch_est_idempotent(hp_src):
 def test_une_ancre_absente_leve_une_erreur():
     with pytest.raises(lib.AnchorError):
         lib.patch_table('self.onInit=function(){};', 'HP')
+
+
+def test_done_mark_existe_dans_la_lib():
+    src = lib.load_gas_lib()
+    assert lib.DONE_MARK in src, 'DONE_MARK doit exister dans _src/gas_lib.js'
