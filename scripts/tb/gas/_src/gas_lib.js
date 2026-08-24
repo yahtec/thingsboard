@@ -61,11 +61,11 @@
     if (con === null || con === undefined) { return ''; }          // R3
     var conTxt = (Number(con) * 0.1).toFixed(1) + ' %LFL';
     var err = decodeErr(o['err' + sfx]);
-    var errTxt = (err === null) ? '—' : err;
+    var errTxt = (err === null) ? '\u2014' : err;
 
     if (blockUnread({ addr: o['addr' + sfx], fw: o['fwVer' + sfx] })) {   // R7
       return row('Concentration ' + sfx, conTxt) +
-             row('Capteur ' + sfx, errTxt + ' · registres non lus par ce firmware');
+             row('Capteur ' + sfx, errTxt + ' \u00b7 registres non lus par ce firmware');
     }
 
     var thr = o['leakThres' + sfx];
@@ -75,12 +75,12 @@
     var leak = Number(o['leak' + sfx]) === 1;
 
     var out = mesure ? row('Concentration ' + sfx, conTxt + ctx) : '';   // R1
-    out += row('État gaz ' + sfx,
-               leak ? '⚠ ALARME FUITE (maintenue 5 min)' : '● Aucune alarme',
+    out += row('\u00c9tat gaz ' + sfx,
+               leak ? '\u26a0 ALARME FUITE (maintenue 5 min)' : '\u25cf Aucune alarme',
                leak ? 'v-alarm' : '');                                  // R2
     out += row('Capteur ' + sfx, errTxt +
-               (mesure ? ' · mesure en cours'
-                       : ' · démarrage — mesure indisponible'));
+               (mesure ? ' \u00b7 mesure en cours'
+                       : ' \u00b7 d\u00e9marrage \u2014 mesure indisponible'));
     return out;
   }
 
