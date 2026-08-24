@@ -9,9 +9,15 @@ quelle en tete de chaque controllerScript. Les blocs conditionnels ecrits a la
 main dans les widgets sont remplaces par un appel a cette lib.
 """
 import os
+import subprocess
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GAS_LIB_PATH = os.path.join(HERE, '_src', 'gas_lib.js')
+
+# Meme binaire pour les trois enveloppes REST qui postent du controllerScript :
+# node --check est la seule garde contre une virgule oubliee dans gas_lib.js.
+NODE_PATH = r'c:\Projets\TB\thingsboard\ui-ngx\target\node\node.exe'
 
 # Marqueurs encadrant la lib injectee. Ils rendent l'injection REMPLACABLE : sans eux,
 # une evolution de _src/gas_lib.js ne pourrait plus atteindre un widget deja patche.
@@ -41,20 +47,56 @@ def load_gas_lib():
         return f.read()
 
 
-def _lib_block():
+def node_check(js):
+    """Refuse de continuer si `js` n'est pas syntaxiquement valide pour Node.
+
+    Factorisee depuis deploy-gas-registers-widget.py pour que les trois enveloppes
+    REST qui postent du controllerScript (patch-gas-state-rows.py,
+    patch-fault-diagnostic-gas-registers.py, deploy-gas-registers-widget.py) partagent
+    la meme garde : une virgule oubliee dans gas_lib.js ne doit jamais atteindre la
+    production, quel que soit le script qui rejoue le patch.
+
+    Le fichier temporaire est ecrit dans le repertoire courant (pas via le repertoire
+    temp par defaut de tempfile) : sous Windows, quand ce script tourne dans un shell
+    POSIX (Git Bash), tempfile.gettempdir() peut renvoyer un chemin /tmp que le
+    node.exe natif ne resout pas -- node --check echouerait alors sur un probleme
+    d'environnement, pas de syntaxe.
+    """
+    path = os.path.join(os.getcwd(), '_gas_patch_node_check.tmp.js')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('var self={},window={},localStorage={},fetch=function(){};\n' + js)
+    try:
+        r = subprocess.run([NODE_PATH, '--check', path], capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+    if r.returncode != 0:
+        sys.exit('node --check ECHEC:\n' + r.stderr[:1200])
+    print('  node --check OK')
+
+
+def lib_block():
+    """Bloc gas_lib.js encadre par LIB_BEGIN/LIB_END, pret a etre concatene devant le
+    code propre d'un widget. Utilisable hors de ce module (deploy-gas-registers-widget.py
+    compose ainsi le controllerScript du 4e widget, qui n'a pas d'ancre a remplacer)."""
     return LIB_BEGIN + '\n' + load_gas_lib().rstrip('\n') + '\n' + LIB_END + '\n'
 
 
 def inject_lib(controller_script):
     """Injecte la lib, ou remplace le bloc deja present. Idempotent par remplacement."""
-    bloc = _lib_block()
+    bloc = lib_block()
     i = controller_script.find(LIB_BEGIN)
     if i < 0:
         return bloc + controller_script
     j = controller_script.find(LIB_END, i)
     if j < 0:
         raise AnchorError('marqueur de fin de lib absent -- source live incoherente')
-    return controller_script[:i] + bloc + controller_script[j + len(LIB_END) + 1:]
+    # Le bloc genere par lib_block() se termine par LIB_END + un seul '\n'. On ne peut
+    # pas supposer que la source relue en porte forcement un a cet endroit precis :
+    # sauter systematiquement 1 caractere de plus mangerait le premier caractere du
+    # code voisin si ce saut de ligne etait absent, en silence. On retire seulement
+    # les sauts de ligne effectivement presents en tete du reste.
+    reste = controller_script[j + len(LIB_END):].lstrip('\n')
+    return controller_script[:i] + bloc + reste
 
 
 def _strip_legacy_lib(controller_script):
@@ -281,4 +323,6 @@ LANES = [
     {'field': 'boil.addrG20', 'label': 'Adresse bus G20', 'kind': 'value'},
     {'field': 'HP.gasTypeR290', 'label': 'Type de gaz R290 (brut)', 'kind': 'value'},
     {'field': 'boil.gasTypeG20', 'label': 'Type de gaz G20 (brut)', 'kind': 'value'},
+    {'field': 'HP.fwVerR290', 'label': 'Version capteur R290', 'kind': 'value'},
+    {'field': 'boil.fwVerG20', 'label': 'Version capteur G20', 'kind': 'value'},
 ]
