@@ -110,3 +110,105 @@ def patch_table(controller_script, target):
     out = inject_lib(out)
     notes.append(f'lib injectee ({len(load_gas_lib())} c)')
     return out, notes
+
+
+# ---------- widget Diagnostic defaut (tduo.fault_diagnostic) ----------
+
+# Libelles ASCII : le bloc gaz voisin de KEY_META le fait deja explicitement.
+DIAG_KEY_META = """    gas_r290_leak     :{l:'Alarme fuite R290',u:'',s:1,d:0},
+    gas_g20_leak      :{l:'Alarme fuite G20', u:'',s:1,d:0},
+    gas_r290_op_mode  :{l:'Mode capteur R290',u:'',s:1,d:0},
+    gas_g20_op_mode   :{l:'Mode capteur G20', u:'',s:1,d:0},
+    gas_r290_leak_thr :{l:'Seuil alarme R290',u:'%LFL',s:0.1,d:1},
+    gas_g20_leak_thr  :{l:'Seuil alarme G20', u:'%LFL',s:0.1,d:1},
+    gas_r290_temp     :{l:'T capteur R290',u:'°C',s:0.1,d:1},
+    gas_g20_temp      :{l:'T capteur G20', u:'°C',s:0.1,d:1},
+    gas_r290_hum      :{l:'HR capteur R290',u:'%RH',s:0.1,d:1},
+    gas_g20_hum       :{l:'HR capteur G20', u:'%RH',s:0.1,d:1},
+    gas_r290_fw_ver   :{l:'Version capteur R290',u:'',s:1,d:0,f:'ver'},
+    gas_g20_fw_ver    :{l:'Version capteur G20', u:'',s:1,d:0,f:'ver'},
+    gas_r290_spec_ver :{l:'Version protocole R290',u:'',s:1,d:0,f:'ver'},
+    gas_g20_spec_ver  :{l:'Version protocole G20', u:'',s:1,d:0,f:'ver'},
+    gas_r290_addr     :{l:'Adresse bus R290',u:'',s:1,d:0},
+    gas_g20_addr      :{l:'Adresse bus G20', u:'',s:1,d:0},
+    gas_r290_gas_type :{l:'Type de gaz R290 (code brut)',u:'',s:1,d:0},
+    gas_g20_gas_type  :{l:'Type de gaz G20 (code brut)', u:'',s:1,d:0},
+    gas_r290_life_days :{l:'Duree de service R290',u:'j',s:1,d:0},
+    gas_g20_life_days  :{l:'Duree de service G20', u:'j',s:1,d:0},
+    gas_r290_life_hours:{l:'Duree de service R290 (heures)',u:'h',s:1,d:0},
+    gas_g20_life_hours :{l:'Duree de service G20 (heures)', u:'h',s:1,d:0},
+    gas_r290_life_warn_thr :{l:'Seuil avertissement fin de vie R290',u:'j',s:1,d:0},
+    gas_g20_life_warn_thr  :{l:'Seuil avertissement fin de vie G20', u:'j',s:1,d:0},
+    gas_r290_life_alarm_thr:{l:'Seuil fin de vie R290',u:'j',s:1,d:0},
+    gas_g20_life_alarm_thr :{l:'Seuil fin de vie G20', u:'j',s:1,d:0},
+"""
+
+# ENUM_LABELS accepte les accents : ses voisins en contiennent.
+DIAG_ENUMS = """    gas_r290_leak:{0:'non',1:'oui'},
+    gas_g20_leak :{0:'non',1:'oui'},
+    gas_r290_op_mode:{0:'démarrage',1:'mesure'},
+    gas_g20_op_mode :{0:'démarrage',1:'mesure'},
+"""
+
+_DIAG_META_OLD = (
+    "    gas_r290_err :{l:'Defaut capteur R290 (registre)',u:'',s:1,d:0},\n"
+    "    gas_g20_err  :{l:'Defaut capteur G20 (registre)', u:'',s:1,d:0},\n"
+)
+
+_DIAG_META_NEW = (
+    "    gas_r290_err :{l:'Defaut capteur R290 (registre)',u:'',s:1,d:0,f:'errbits'},\n"
+    "    gas_g20_err  :{l:'Defaut capteur G20 (registre)', u:'',s:1,d:0,f:'errbits'},\n"
+    + DIAG_KEY_META
+)
+
+_DIAG_ENUM_OLD = (
+    "var ENUM_LABELS = {\n"
+    "    gas_r290_err:{0:'OK'},\n"
+    "    gas_g20_err :{0:'OK'},\n"
+)
+
+_DIAG_ENUM_NEW = _DIAG_ENUM_OLD + DIAG_ENUMS
+
+# fmtVal : on route vers la lib AVANT la consultation de ENUM_LABELS, pour que
+# f:'errbits' prime sur l'entree {0:'OK'} deja presente.
+_DIAG_FMT_OLD = (
+    "function fmtVal(k,v){\n"
+    "    if(v==null||isNaN(v)) return '—';\n"
+    "    var m=metaFor(k);\n"
+)
+
+_DIAG_FMT_NEW = _DIAG_FMT_OLD + (
+    "    if(m.f==='ver'){ var _vv=window.__gasLib.fmtVer(v); return _vv==null?'—':_vv; }\n"
+    "    if(m.f==='errbits'){ var _eb=window.__gasLib.decodeErr(v); return _eb==null?'—':_eb; }\n"
+)
+
+
+def diag_replacements():
+    """[(nom, ANCIEN, NOUVEAU)] pour tduo.fault_diagnostic."""
+    return [
+        ('KEY_META gaz', _DIAG_META_OLD, _DIAG_META_NEW),
+        ('ENUM_LABELS gaz', _DIAG_ENUM_OLD, _DIAG_ENUM_NEW),
+        ('fmtVal formateurs', _DIAG_FMT_OLD, _DIAG_FMT_NEW),
+    ]
+
+
+def patch_diag(controller_script):
+    """(nouvelle_source, notes). Idempotent, avec les trois memes cas que patch_table :
+    marqueurs presents -> rafraichissement ; lib heritee sans marqueurs -> migration ;
+    source vierge -> remplacement des ancres puis injection."""
+    if LIB_BEGIN in controller_script:
+        return inject_lib(controller_script), ['appels deja en place, lib rafraichie']
+    if LEGACY_MARK in controller_script:
+        return (inject_lib(_strip_legacy_lib(controller_script)),
+                ['lib heritee sans marqueurs -> migree et rafraichie'])
+    notes = []
+    out = controller_script
+    for name, old, new in diag_replacements():
+        n = out.count(old)
+        if n != 1:
+            raise AnchorError(f'[{name}] ancre {n}x (attendu 1) -- source live a change')
+        out = out.replace(old, new, 1)
+        notes.append(f'[{name}] OK (+{len(new) - len(old)}c)')
+    out = inject_lib(out)
+    notes.append(f'lib injectee ({len(load_gas_lib())} c)')
+    return out, notes

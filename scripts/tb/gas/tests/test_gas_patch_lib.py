@@ -95,3 +95,62 @@ def test_widget_start_absent_de_la_lib(hp_src):
     gas_lib.js, la frontiere de migration heritee deviendrait ambigue (mauvaise
     decoupe silencieuse). Verifie pour lui-meme, pas seulement par ricochet."""
     assert lib.WIDGET_START not in lib.load_gas_lib()
+
+
+@pytest.fixture
+def diag_src():
+    return (FIXTURES / 'fault_diagnostic.live.js').read_text(encoding='utf-8')
+
+
+def test_les_ancres_du_diagnostic_sont_uniques(diag_src):
+    for name, old, _new in lib.diag_replacements():
+        assert diag_src.count(old) == 1, f'ancre {name} introuvable ou multiple'
+
+
+def test_le_diagnostic_declare_les_nouvelles_cles(diag_src):
+    out, _ = lib.patch_diag(diag_src)
+    for k in ('gas_r290_leak', 'gas_g20_leak', 'gas_r290_leak_thr', 'gas_r290_temp',
+              'gas_r290_hum', 'gas_r290_fw_ver', 'gas_r290_addr', 'gas_r290_gas_type',
+              'gas_r290_life_days', 'gas_r290_life_alarm_thr'):
+        assert f'{k} ' in out or f'{k}:' in out, f'cle {k} absente de KEY_META'
+
+
+def test_les_libelles_gaz_du_diagnostic_restent_ascii(diag_src):
+    out, _ = lib.patch_diag(diag_src)
+    i = out.index('gas_r290_leak')
+    bloc = out[i:i + 2000]
+    labels = [s for s in bloc.split("l:'")[1:]]
+    for lab in labels[:20]:
+        texte = lab.split("'")[0]
+        assert texte.isascii(), f'libelle non ASCII dans le bloc gaz : {texte}'
+
+
+def test_le_diagnostic_route_les_formateurs_vers_la_lib(diag_src):
+    out, _ = lib.patch_diag(diag_src)
+    assert "m.f==='ver'" in out
+    assert "m.f==='errbits'" in out
+    assert 'window.__gasLib.fmtVer(v)' in out
+    assert 'window.__gasLib.decodeErr(v)' in out
+
+
+def test_le_diagnostic_marque_les_registres_de_defaut(diag_src):
+    out, _ = lib.patch_diag(diag_src)
+    assert "gas_r290_err :{l:'Defaut capteur R290 (registre)',u:'',s:1,d:0,f:'errbits'}" in out
+
+
+def test_le_diagnostic_enumere_alarme_et_mode(diag_src):
+    out, _ = lib.patch_diag(diag_src)
+    assert "gas_r290_leak:{0:'non',1:'oui'}" in out
+    assert "gas_r290_op_mode:{0:'démarrage',1:'mesure'}" in out
+
+
+def test_le_patch_diagnostic_est_idempotent(diag_src):
+    once, _ = lib.patch_diag(diag_src)
+    twice, notes = lib.patch_diag(once)
+    assert twice == once
+    assert any('skip' in n for n in notes)
+
+
+def test_la_lib_injectee_dans_le_diagnostic_est_la_meme(diag_src):
+    out, _ = lib.patch_diag(diag_src)
+    assert lib.load_gas_lib() in out
