@@ -88,4 +88,31 @@ t('rows fonctionne a l identique sur le suffixe G20', () => {
   assert.ok(h.includes('module HS (remplacer)'), 'le decodage des bits doit s appliquer');
 });
 
+function histLeak(vals, obj, champ) {
+  return vals.map(function (v, i) {
+    var o = {}; o[champ] = v;
+    var hp = { HP: {}, boil: {} }; hp[obj] = o;
+    return [i * 60000, { HPs: [hp] }];
+  });
+}
+t('leakWindow ne trouve rien quand le bit reste a zero', () => {
+  const r = G.leakWindow(histLeak([0, 0, 0], 'HP', 'leakR290'), 'HP.leakR290', 1);
+  assert.strictEqual(r.alarme, false);
+});
+t('leakWindow date la fenetre d alarme et sa duree', () => {
+  const r = G.leakWindow(histLeak([0, 1, 1, 1, 1, 1, 0], 'HP', 'leakR290'), 'HP.leakR290', 1);
+  assert.strictEqual(r.alarme, true);
+  assert.strictEqual(r.start, 60000);
+  assert.strictEqual(r.end, 300000);
+  assert.strictEqual(r.minutes, 4);
+});
+t('leakWindow retient la plus longue fenetre si plusieurs', () => {
+  const r = G.leakWindow(histLeak([1, 0, 1, 1, 1, 0], 'HP', 'leakR290'), 'HP.leakR290', 1);
+  assert.strictEqual(r.minutes, 2);
+});
+t('leakWindow sans donnee renvoie alarme inconnue', () => {
+  const r = G.leakWindow([], 'HP.leakR290', 1);
+  assert.strictEqual(r.alarme, null);
+});
+
 console.log(ok + ' assertions passees');

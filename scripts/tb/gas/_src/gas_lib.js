@@ -99,9 +99,32 @@
     return v;
   }
 
+  // Fenetre pendant laquelle le bit d'alarme du capteur est reste a 1. Fiable a
+  // 1 echantillon/minute parce que le capteur maintient ce bit 5 minutes apres le
+  // retour sous le seuil. alarme === null => aucune donnee sur la periode.
+  function leakWindow(hist, field, hpIndex) {
+    var pts = [];
+    for (var i = 0; i < hist.length; i++) {
+      var v = getField(hist[i][1], field, hpIndex);
+      if (v === null || v === undefined) { continue; }
+      pts.push([hist[i][0], Number(v)]);
+    }
+    if (!pts.length) { return { alarme: null, start: null, end: null, minutes: 0 }; }
+    var best = null;
+    var segs = segments(pts);
+    for (var k = 0; k < segs.length; k++) {
+      var s = segs[k];
+      if (s.v !== 1) { continue; }
+      if (!best || (s.end - s.start) > (best.end - best.start)) { best = s; }
+    }
+    if (!best) { return { alarme: false, start: null, end: null, minutes: 0 }; }
+    return { alarme: true, start: best.start, end: best.end,
+             minutes: Math.round((best.end - best.start) / 60000) };
+  }
+
   root.__gasLib = {
     decodeErr: decodeErr, fmtVer: fmtVer, blockUnread: blockUnread,
     segments: segments, row: row, rows: rows, ERR_BITS: ERR_BITS,
-    getField: getField
+    getField: getField, leakWindow: leakWindow
   };
 })();

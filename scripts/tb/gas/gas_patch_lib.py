@@ -303,3 +303,100 @@ def add_threshold_series(settings):
 GAS_REGISTERS_FQN = 'tsmart.gas_registers'
 GAS_REGISTERS_WIDGET_ID = 'a1b2c3d4-0740-4000-a000-000000000701'
 DIAG_STATE = 'fault_diagnostic'
+
+
+# ---------- ligne "alarme capteur" du widget Diagnostic defaut (amendement 2026-08-24) ----------
+# Remplace le widget timeline retire ci-dessus : __gasLib.leakWindow() (voir _src/gas_lib.js)
+# reduit l'historique pac_v2 a la fenetre pendant laquelle le bit d'alarme est reste a 1,
+# seule grandeur fiable a 1 echantillon/minute (la concentration, elle, est evacuee en
+# quelques dizaines de secondes). Les trois ancres ci-dessous cablent son affichage dans
+# _renderHeader et son chargement paresseux avant _fetchRealtime.
+
+_DIAG_LEAK_LINE_OLD = (
+    "          (self._snapTs ? \"<div class='when'>Données envoyées vers le <b>\"+"
+    "fmtFull(c.evtTs+30000)+\"</b> · ts snapshot DB <b>\"+fmtFull(self._snapTs)+"
+    "\"</b></div>\" : \"\")+\n"
+)
+
+_DIAG_LEAK_LINE_NEW = _DIAG_LEAK_LINE_OLD + (
+    "          (self._leakLine ? \"<div class='when'>\"+self._leakLine+\"</div>\" : \"\")+\n"
+)
+
+_DIAG_LEAK_FETCH_OLD = "self._fetchRealtime = function(){"
+
+_DIAG_LEAK_FETCH_NEW = (
+    "// Ligne « alarme capteur » : le bit d'alarme est maintenu 5 min par le capteur, donc\n"
+    "// observable a 1/min, contrairement a la concentration qui est evacuee en quelques\n"
+    "// dizaines de secondes. Declenchement paresseux depuis _renderHeader.\n"
+    "self._loadLeakLine = function(){\n"
+    "    var c = self._ctx;\n"
+    "    if (self._leakLine !== undefined) { return; }\n"
+    "    self._leakLine = null;\n"
+    "    var probeTs = (c.evtResolvedTs && c.evtResolvedTs > 0) ? c.evtResolvedTs : c.evtTs;\n"
+    "    if (!c.devId || !probeTs) { return; }\n"
+    "    fetch('/api/plugins/telemetry/DEVICE/'+c.devId+'/values/timeseries?keys=pac_v2&startTs='+\n"
+    "          (probeTs-600000)+'&endTs='+(probeTs+600000)+'&limit=200&orderBy=ASC',\n"
+    "          {headers:{'X-Authorization':'Bearer '+getToken()}})\n"
+    "      .then(function(r){ return r.json(); })\n"
+    "      .then(function(dd){\n"
+    "          var hist = ((dd && dd.pac_v2) || []).map(function(x){\n"
+    "              var v = null; try { v = JSON.parse(x.value); } catch(e) {}\n"
+    "              return [Number(x.ts), v];\n"
+    "          }).filter(function(x){ return x[1]; });\n"
+    "          var parts = [];\n"
+    "          [['R290','HP.leakR290'],['G20','boil.leakG20']].forEach(function(p){\n"
+    "              var w = window.__gasLib.leakWindow(hist, p[1], 1);\n"
+    "              if (w.alarme === null) { return; }\n"
+    "              if (w.alarme) {\n"
+    "                  parts.push('<b>'+p[0]+' : oui</b>, de '+fmtTime(w.start)+' a '+\n"
+    "                             fmtTime(w.end)+' ('+w.minutes+' min)');\n"
+    "              } else {\n"
+    "                  parts.push(p[0]+' : non');\n"
+    "              }\n"
+    "          });\n"
+    "          self._leakLine = parts.length\n"
+    "            ? ('Alarme capteur sur \\u00b110 min &mdash; ' + parts.join(' \\u00b7 '))\n"
+    "            : 'Alarme capteur : aucune donn\\u00e9e capteur sur \\u00b110 min';\n"
+    "          self._render();\n"
+    "      })\n"
+    "      .catch(function(){ self._leakLine = null; });\n"
+    "};\n"
+    "\n"
+    "self._fetchRealtime = function(){"
+)
+
+_DIAG_LEAK_TRIGGER_OLD = "self._renderHeader = function(){\n    var c = self._ctx;"
+
+_DIAG_LEAK_TRIGGER_NEW = (
+    "self._renderHeader = function(){\n    var c = self._ctx;\n    self._loadLeakLine();"
+)
+
+# Presence => deja patche. Contrairement a patch_table/patch_diag, ce patch n'injecte
+# aucun bloc de lib encadre (leakWindow n'est qu'un ajout a la lib deja injectee par
+# patch_diag) : l'idempotence se verifie donc sur son propre marqueur, pas sur LIB_BEGIN.
+DIAG_LEAK_MARK = 'self._loadLeakLine'
+
+
+def diag_leak_replacements():
+    """[(nom, ANCIEN, NOUVEAU)] pour la ligne "alarme capteur" de tduo.fault_diagnostic."""
+    return [
+        ('ligne alarme capteur (rendu)', _DIAG_LEAK_LINE_OLD, _DIAG_LEAK_LINE_NEW),
+        ('chargement alarme capteur (_loadLeakLine)', _DIAG_LEAK_FETCH_OLD, _DIAG_LEAK_FETCH_NEW),
+        ('declenchement paresseux (_renderHeader)', _DIAG_LEAK_TRIGGER_OLD, _DIAG_LEAK_TRIGGER_NEW),
+    ]
+
+
+def patch_diag_leak(controller_script):
+    """(nouvelle_source, notes). Idempotent par DIAG_LEAK_MARK : rejoue les trois ancres
+    une seule fois, chacune devant apparaitre exactement une fois dans la source vierge."""
+    if DIAG_LEAK_MARK in controller_script:
+        return controller_script, ['ligne alarme capteur deja en place (skip)']
+    notes = []
+    out = controller_script
+    for name, old, new in diag_leak_replacements():
+        n = out.count(old)
+        if n != 1:
+            raise AnchorError(f'[{name}] ancre {n}x (attendu 1) -- source live a change')
+        out = out.replace(old, new, 1)
+        notes.append(f'[{name}] OK (+{len(new) - len(old)}c)')
+    return out, notes

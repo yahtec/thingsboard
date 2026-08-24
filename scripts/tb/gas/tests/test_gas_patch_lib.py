@@ -172,6 +172,54 @@ def test_la_lib_injectee_dans_le_diagnostic_est_la_meme(diag_src):
     assert lib.load_gas_lib() in out
 
 
+# ---------- ligne "alarme capteur" (amendement 2026-08-24, remplace le widget timeline) ----------
+
+def test_les_ancres_de_la_ligne_alarme_capteur_sont_uniques(diag_src):
+    for name, old, _new in lib.diag_leak_replacements():
+        assert diag_src.count(old) == 1, f'ancre {name} introuvable ou multiple'
+
+
+def test_l_ancre_de_declenchement_reste_unique_malgre_plusieurs_var_c_self_ctx(diag_src):
+    """`var c = self._ctx;` apparait a plusieurs endroits du fichier (_renderHeader,
+    _fetchRealtime, et un troisieme site) : seule l'ancre elargie a la signature
+    self._renderHeader = function(){ est fiable pour cibler le declenchement."""
+    assert diag_src.count('var c = self._ctx;') > 1, (
+        'la fixture doit contenir plusieurs occurrences pour que ce test ait un sens')
+    _, old, _new = [r for r in lib.diag_leak_replacements()
+                    if 'declenchement' in r[0]][0]
+    assert diag_src.count(old) == 1
+
+
+def test_le_patch_leak_line_ajoute_la_ligne_de_rendu(diag_src):
+    out, _ = lib.patch_diag_leak(diag_src)
+    assert "self._leakLine ? \"<div class='when'>\"+self._leakLine+\"</div>\"" in out
+
+
+def test_le_patch_leak_line_ajoute_le_chargement_paresseux(diag_src):
+    out, _ = lib.patch_diag_leak(diag_src)
+    assert 'self._loadLeakLine = function(){' in out
+    assert 'window.__gasLib.leakWindow(hist, p[1], 1)' in out
+    assert out.index('self._loadLeakLine = function(){') < out.index(
+        'self._fetchRealtime = function(){'), 'le chargement doit preceder _fetchRealtime'
+
+
+def test_le_patch_leak_line_declenche_depuis_renderheader(diag_src):
+    out, _ = lib.patch_diag_leak(diag_src)
+    assert 'self._renderHeader = function(){\n    var c = self._ctx;\n    self._loadLeakLine();' in out
+
+
+def test_le_patch_leak_line_est_idempotent(diag_src):
+    once, _ = lib.patch_diag_leak(diag_src)
+    twice, notes = lib.patch_diag_leak(once)
+    assert twice == once
+    assert any('deja' in n for n in notes)
+
+
+def test_une_ancre_absente_de_la_ligne_alarme_capteur_leve_une_erreur():
+    with pytest.raises(lib.AnchorError):
+        lib.patch_diag_leak('self._renderHeader = function(){};')
+
+
 def _settings_live():
     """Forme relevee en production le 2026-07-31."""
     return {'title': 'Gaz / Sécurité', 'series': [
