@@ -35,11 +35,12 @@ def main():
     if wid not in widgets:
         sys.exit(f'instance du graphe gaz introuvable: {wid}')
     cfg = widgets[wid]['config']
-    titre = (cfg.get('settings') or {}).get('title', '?')
+    avant = cfg.get('settings') or {}
+    titre = avant.get('title', '?')
     print(f'instance {wid} — titre "{titre}"')
-    new_settings, note = lib.add_threshold_series(cfg.get('settings') or {})
+    new_settings, note = lib.add_threshold_series(avant)
     print('  ' + note)
-    if new_settings is cfg.get('settings'):
+    if new_settings == avant:
         return
     cfg['settings'] = new_settings
     if a.dry_run:

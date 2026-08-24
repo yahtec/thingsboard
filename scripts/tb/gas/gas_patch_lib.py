@@ -228,12 +228,25 @@ THRESHOLD_SERIES = [
 
 
 def add_threshold_series(settings):
-    """(nouveaux_settings, note). Idempotent, n'altere pas les series existantes."""
+    """(nouveaux_settings, note). Idempotent, et ramene une serie de seuil divergente
+    a la forme canonique. Sur le chemin « rien a faire », renvoie l'objet recu tel quel."""
     out = dict(settings)
-    series = list(out.get('series', []))
+    series = [dict(s) for s in out.get('series', [])]
+    canon = {s['field']: s for s in THRESHOLD_SERIES}
+    corrigees = []
+    for i, s in enumerate(series):
+        f = s.get('field')
+        if f in canon and s != canon[f]:
+            series[i] = dict(canon[f])
+            corrigees.append(f)
     presents = {s.get('field') for s in series}
     ajoutes = [dict(s) for s in THRESHOLD_SERIES if s['field'] not in presents]
-    if not ajoutes:
-        return settings, 'series de seuil deja presentes (skip)'
+    if not ajoutes and not corrigees:
+        return settings, 'series de seuil deja conformes (skip)'
     out['series'] = series + ajoutes
-    return out, 'series ajoutees: ' + ', '.join(s['field'] for s in ajoutes)
+    notes = []
+    if corrigees:
+        notes.append('corrigees: ' + ', '.join(corrigees))
+    if ajoutes:
+        notes.append('ajoutees: ' + ', '.join(s['field'] for s in ajoutes))
+    return out, ' ; '.join(notes)

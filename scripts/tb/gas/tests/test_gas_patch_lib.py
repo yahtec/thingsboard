@@ -194,3 +194,28 @@ def test_l_ajout_du_seuil_est_idempotent():
     twice, note = lib.add_threshold_series(once)
     assert twice == once
     assert 'skip' in note
+
+
+def test_une_serie_de_seuil_divergente_est_ramenee_a_la_forme_canonique():
+    settings = _settings_live()
+    settings['series'].append(
+        {'field': 'HP.leakThresR290', 'label': 'Seuil R290', 'unit': '%LFL',
+         'scale': 1, 'color': '#9e9e9e'})
+    out, note = lib.add_threshold_series(settings)
+    seuil = [s for s in out['series'] if s['field'] == 'HP.leakThresR290'][0]
+    assert seuil['scale'] == 0.1, 'la serie divergente doit etre ramenee a la forme canonique'
+    assert 'corrigees' in note
+
+
+def test_les_dicts_de_series_ne_sont_pas_partages_avec_l_entree():
+    avant = _settings_live()
+    out, _ = lib.add_threshold_series(avant)
+    assert out['series'][0] is not avant['series'][0], \
+        'la sortie ne doit pas partager les dicts de series de l entree'
+
+
+def test_quand_tout_est_conforme_l_objet_recu_est_renvoye_tel_quel():
+    once, _ = lib.add_threshold_series(_settings_live())
+    twice, note = lib.add_threshold_series(once)
+    assert twice is once, 'contrat sur lequel s appuyait le script : identite preservee au skip'
+    assert 'skip' in note
