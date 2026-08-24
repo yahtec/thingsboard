@@ -1,0 +1,11 @@
+.gr-card { height: 100%; display: flex; flex-direction: column;
+           background: #0f1115; color: #cfd8dc; padding: 8px 12px;
+           font: 12px/1.3 Roboto, Arial, sans-serif; box-sizing: border-box; }
+.gr-title { font-size: 13px; font-weight: 600; color: #eceff1; margin-bottom: 6px; }
+.gr-plot { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.gr-svg { width: 100%; height: 100%; }
+.gr-svg text { fill: #b0bec5; }
+.gr-tip { position: absolute; display: none; background: #263238; color: #eceff1;
+          border: 1px solid #37474f; border-radius: 3px; padding: 4px 8px;
+          font-size: 11px; pointer-events: none; white-space: nowrap; z-index: 5; }
+.gr-empty { color: #78909c; padding: 12px; }
