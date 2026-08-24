@@ -8,14 +8,14 @@
 // ([[ts, payload], ...]). Toute divergence casserait la synchronisation.
 self.onInit = function () {
   function PD() {
-    if (window.__pacData) { return window.__pacData; }
+    if (window.__pacData) return window.__pacData;
     var d = {
       hours: 12, frac: 1, offset: 0, hist: [], eid: null, et: 'DEVICE', ls: [], fetching: false,
-      register: function (fn) { if (this.ls.indexOf(fn) < 0) { this.ls.push(fn); } },
-      unregister: function (fn) { var i = this.ls.indexOf(fn); if (i >= 0) { this.ls.splice(i, 1); } },
+      register: function (fn) { if (this.ls.indexOf(fn) < 0) this.ls.push(fn); },
+      unregister: function (fn) { var i = this.ls.indexOf(fn); if (i >= 0) this.ls.splice(i, 1); },
       notify: function () { this.ls.forEach(function (fn) { try { fn(); } catch (e) {} }); },
       ensure: function (et, eid) {
-        if (!eid) { return; }
+        if (!eid) return;
         if (eid !== this.eid) { this.eid = eid; this.et = et || 'DEVICE'; this.load(); }
         else if (this.hist.length) { this.notify(); }
         else if (!this.fetching) { this.load(); }
@@ -24,7 +24,7 @@ self.onInit = function () {
       setFrac: function (f) { this.frac = f; this.notify(); },
       setOffset: function (o) { this.offset = o; this.notify(); },
       load: function () {
-        var s = this; if (!s.eid) { return; }
+        var s = this; if (!s.eid) return;
         s.fetching = true;
         var end = Date.now(), start = end - s.hours * 3600000;
         fetch('/api/plugins/telemetry/' + s.et + '/' + s.eid +
@@ -86,7 +86,12 @@ self.onInit = function () {
     var svgEl = $c.find('.gr-svg')[0];
     if (!lanes.length) {
       svgEl.innerHTML = '<div class="gr-empty">Pas de registre sur la periode</div>';
-      svgEl._cd = null; return;
+      // Le survol lit plot._cd (pas svgEl._cd) : c'est cette cible qu'il faut vider,
+      // sinon une navigation vers une installation sans registre garde le tooltip
+      // de l'installation precedente.
+      var plotEl = $c.find('.gr-plot')[0];
+      if (plotEl) { plotEl._cd = null; }
+      return;
     }
 
     var W = $c.find('.gr-plot')[0].clientWidth || 600;
