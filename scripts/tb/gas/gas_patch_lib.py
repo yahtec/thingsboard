@@ -50,11 +50,11 @@ def load_gas_lib():
 def node_check(js):
     """Refuse de continuer si `js` n'est pas syntaxiquement valide pour Node.
 
-    Factorisee depuis deploy-gas-registers-widget.py pour que les trois enveloppes
-    REST qui postent du controllerScript (patch-gas-state-rows.py,
-    patch-fault-diagnostic-gas-registers.py, deploy-gas-registers-widget.py) partagent
-    la meme garde : une virgule oubliee dans gas_lib.js ne doit jamais atteindre la
-    production, quel que soit le script qui rejoue le patch.
+    Partagee par les enveloppes REST qui postent du controllerScript
+    (patch-gas-state-rows.py, patch-fault-diagnostic-gas-registers.py,
+    patch-fault-diagnostic-leak-line.py) : une virgule oubliee dans gas_lib.js ou dans
+    un bloc injecte ne doit jamais atteindre la production, quel que soit le script qui
+    rejoue le patch.
 
     Le fichier temporaire est ecrit dans le repertoire courant (pas via le repertoire
     temp par defaut de tempfile) : sous Windows, quand ce script tourne dans un shell
@@ -76,8 +76,7 @@ def node_check(js):
 
 def lib_block():
     """Bloc gas_lib.js encadre par LIB_BEGIN/LIB_END, pret a etre concatene devant le
-    code propre d'un widget. Utilisable hors de ce module (deploy-gas-registers-widget.py
-    compose ainsi le controllerScript du 4e widget, qui n'a pas d'ancre a remplacer)."""
+    code propre d'un widget. Utilise par inject_lib() ci-dessous."""
     return LIB_BEGIN + '\n' + load_gas_lib().rstrip('\n') + '\n' + LIB_END + '\n'
 
 
@@ -294,35 +293,13 @@ def add_threshold_series(settings):
     return out, ' ; '.join(notes)
 
 
-# ---------- widget timeline des registres (tsmart.gas_registers) ----------
+# ---------- widget timeline des registres (tsmart.gas_registers), retire ----------
+# Le widget_type et son instance sont retires par retire-gas-registers-widget.py
+# (amendement du 2026-08-24 : remplaces par la ligne "alarme capteur", voir
+# leakWindow() dans _src/gas_lib.js et diag_leak_replacements() ci-dessous). Ces
+# trois constantes restent : le script de retrait en a besoin pour retrouver
+# l'instance et l'etat a nettoyer.
 
 GAS_REGISTERS_FQN = 'tsmart.gas_registers'
 GAS_REGISTERS_WIDGET_ID = 'a1b2c3d4-0740-4000-a000-000000000701'
 DIAG_STATE = 'fault_diagnostic'
-DIAG_WIDGET_ID = 'fa5e1c00-1234-1234-1234-fa017d106057'
-GAS_REGISTERS_LAYOUT = {'col': 0, 'row': 15, 'sizeX': 24, 'sizeY': 8,
-                        'mobileOrder': 2, 'mobileHeight': 10}
-
-_LEAK_MAP = {0: {'t': 'non', 'c': '#2e7d32'}, 1: {'t': 'ALARME FUITE', 'c': '#e53935'}}
-_MODE_MAP = {0: {'t': 'demarrage', 'c': '#f9a825'}, 1: {'t': 'mesure', 'c': '#2e7d32'}}
-
-# Une piste par registre. Les pistes sans donnee ne sont pas dessinees (R3), donc
-# les pistes d'un circuit non instrumente restent silencieuses.
-LANES = [
-    {'field': 'HP.leakR290', 'label': 'Alarme fuite R290', 'map': _LEAK_MAP},
-    {'field': 'boil.leakG20', 'label': 'Alarme fuite G20', 'map': _LEAK_MAP},
-    {'field': 'HP.opModeR290', 'label': 'Mode capteur R290', 'map': _MODE_MAP},
-    {'field': 'boil.opModeG20', 'label': 'Mode capteur G20', 'map': _MODE_MAP},
-    {'field': 'HP.errR290', 'label': 'Defauts capteur R290', 'kind': 'errbits'},
-    {'field': 'boil.errG20', 'label': 'Defauts capteur G20', 'kind': 'errbits'},
-    {'field': 'HP.leakThresR290', 'label': 'Seuil R290', 'kind': 'value',
-     'scale': 0.1, 'unit': '%LFL', 'd': 1},
-    {'field': 'boil.leakThresG20', 'label': 'Seuil G20', 'kind': 'value',
-     'scale': 0.1, 'unit': '%LFL', 'd': 1},
-    {'field': 'HP.addrR290', 'label': 'Adresse bus R290', 'kind': 'value'},
-    {'field': 'boil.addrG20', 'label': 'Adresse bus G20', 'kind': 'value'},
-    {'field': 'HP.gasTypeR290', 'label': 'Type de gaz R290 (brut)', 'kind': 'value'},
-    {'field': 'boil.gasTypeG20', 'label': 'Type de gaz G20 (brut)', 'kind': 'value'},
-    {'field': 'HP.fwVerR290', 'label': 'Version capteur R290', 'kind': 'value'},
-    {'field': 'boil.fwVerG20', 'label': 'Version capteur G20', 'kind': 'value'},
-]

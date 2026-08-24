@@ -1,6 +1,6 @@
 // Logique d'affichage des registres capteurs gaz. SOURCE UNIQUE : ce fichier est
-// injecte tel quel dans tsmart.pac_detail_top_wip, tsmart.pac_boiler_info,
-// tduo.fault_diagnostic et tsmart.gas_registers. Ne jamais le recopier a la main.
+// injecte tel quel dans tsmart.pac_detail_top_wip, tsmart.pac_boiler_info et
+// tduo.fault_diagnostic. Ne jamais le recopier a la main.
 // Regles R1 a R7 : voir docs/superpowers/specs/2026-07-31-registres-capteurs-gaz-dashboard-design.md
 (function () {
   var root = (typeof window !== 'undefined') ? window : globalThis;
@@ -99,48 +99,9 @@
     return v;
   }
 
-  var VALUE_SHADES = ['#37474f', '#546e7a'];
-  var NEUTRAL = '#455a64';
-  var ALERT = '#e53935';
-
-  function buildLanes(hist, laneDefs, hpIndex) {
-    var out = [];
-    for (var i = 0; i < laneDefs.length; i++) {
-      var def = laneDefs[i];
-      var pts = [];
-      for (var j = 0; j < hist.length; j++) {
-        var v = getField(hist[j][1], def.field, hpIndex);
-        if (v === null || v === undefined) { continue; }
-        pts.push([hist[j][0], Number(v)]);
-      }
-      if (!pts.length) { continue; }                                  // R3
-      var segs = segments(pts, def.maxGapMs);
-      var shaded = 0;
-      for (var k = 0; k < segs.length; k++) {
-        var s = segs[k];
-        if (def.kind === 'errbits') {
-          s.txt = decodeErr(s.v) || String(s.v);
-          s.color = (Number(s.v) === 0) ? NEUTRAL : ALERT;
-        } else if (def.kind === 'value') {
-          var n = s.v * (def.scale != null ? def.scale : 1);
-          s.txt = n.toFixed(def.d != null ? def.d : (def.scale ? 1 : 0)) +
-                  (def.unit ? ' ' + def.unit : '');
-          s.color = VALUE_SHADES[shaded % VALUE_SHADES.length];
-          shaded++;
-        } else {
-          var m = (def.map || {})[s.v];
-          s.txt = m ? m.t : String(s.v);
-          s.color = m ? m.c : NEUTRAL;
-        }
-      }
-      out.push({ label: def.label, segs: segs });
-    }
-    return out;
-  }
-
   root.__gasLib = {
     decodeErr: decodeErr, fmtVer: fmtVer, blockUnread: blockUnread,
     segments: segments, row: row, rows: rows, ERR_BITS: ERR_BITS,
-    getField: getField, buildLanes: buildLanes
+    getField: getField
   };
 })();
