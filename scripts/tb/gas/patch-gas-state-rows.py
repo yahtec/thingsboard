@@ -55,6 +55,7 @@ def main():
             new_cs, notes = lib.patch_table(cs, target)
         except lib.AnchorError as e:
             sys.exit(f'  {e}')
+        lib.node_check(new_cs)
         new_css, css_note = add_css(w['descriptor'].get('templateCss', ''))
         for n in notes + [css_note]:
             print('  ' + n)

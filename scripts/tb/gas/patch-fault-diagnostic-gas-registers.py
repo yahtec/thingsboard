@@ -39,6 +39,7 @@ def main():
         new_cs, notes = lib.patch_diag(cs)
     except lib.AnchorError as e:
         sys.exit(f'  {e}')
+    lib.node_check(new_cs)
     for n in notes:
         print('  ' + n)
     if a.dry_run:
