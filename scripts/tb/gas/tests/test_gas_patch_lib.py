@@ -221,6 +221,102 @@ def test_une_ancre_absente_de_la_ligne_alarme_capteur_leve_une_erreur():
         lib.patch_diag_leak('self._renderHeader = function(){};')
 
 
+def _leak_block_body(js):
+    """Contenu du bloc _loadLeakLine encadre (entre DIAG_LEAK_BEGIN et DIAG_LEAK_END),
+    marqueurs exclus. Sert a isoler les assertions sur probeTs : la meme sous-chaine
+    (ordre evtResolvedTs d'abord) apparait LEGITIMEMENT ailleurs dans le widget, dans
+    _fetchRealtime, ou ce choix est correct -- chercher dans la source complete
+    donnerait de faux positifs/negatifs sans rapport avec le bloc teste ici."""
+    i = js.index(lib.DIAG_LEAK_BEGIN)
+    j = js.index(lib.DIAG_LEAK_END, i)
+    return js[i:j]
+
+
+# ---------- bloc _loadLeakLine remplacable (correction du defaut d'ancrage 2026-08-24) ----
+# Le defaut de prod : un bloc deja insere (DIAG_LEAK_MARK present) faisait prendre a
+# patch_diag_leak() la branche "deja en place", qui rafraichissait la lib mais ne
+# rejouait jamais _DIAG_LEAK_FETCH_CONTENT -- aucune correction du bloc ne pouvait donc
+# atteindre un widget deja patche. Les quatre tests ci-dessous verifient le mecanisme
+# de remplacement introduit pour lever ce blocage : un bloc deja encadre est remplace
+# (pas ignore), un bloc insere avant les marqueurs est reconnu et migre, aucun des deux
+# chemins ne duplique le bloc, et l'ensemble reste idempotent.
+
+def test_la_fenetre_alarme_capteur_est_ancree_sur_evtts_pas_evtresolvedts(diag_src):
+    """Le defaut lui-meme (point 1) : la fenetre doit etre centree sur l'apparition du
+    defaut (c.evtTs), pas sur sa resolution (c.evtResolvedTs) -- contrairement a
+    _fetchRealtime, ou ce choix est legitime. Preuve relevee en base : un defaut gaz
+    apparu le 08/08 a 12:23:30 et resolu 16 jours plus tard (24/08 10:28:20)."""
+    out, _ = lib.patch_diag_leak(diag_src)
+    bloc = _leak_block_body(out)
+    assert 'var probeTs = (c.evtTs && c.evtTs > 0) ? c.evtTs : c.evtResolvedTs;' in bloc
+    assert 'var probeTs = (c.evtResolvedTs && c.evtResolvedTs > 0) ? c.evtResolvedTs : c.evtTs;' \
+        not in bloc, 'ancienne priorite (resolution avant apparition) : ne doit plus apparaitre'
+
+
+def test_le_bloc_loadleakline_est_encadre_par_des_marqueurs(diag_src):
+    out, _ = lib.patch_diag_leak(diag_src)
+    assert lib.DIAG_LEAK_BEGIN in out and lib.DIAG_LEAK_END in out
+    assert out.index(lib.DIAG_LEAK_BEGIN) < out.index('self._loadLeakLine = function(){') < \
+        out.index(lib.DIAG_LEAK_END) < out.index('self._fetchRealtime = function(){')
+
+
+def test_un_bloc_loadleakline_deja_marque_est_remplace_sans_duplication(diag_src):
+    """Simule une correction future du bloc : on altere le contenu deja encadre (comme
+    le ferait un vieux deploiement portant encore le defaut d'ancrage) puis on
+    reapplique le patch. Le bloc altere doit disparaitre, remplace par la version
+    courante -- pas conserve au pretexte que DIAG_LEAK_MARK est deja present."""
+    once, _ = lib.patch_diag_leak(diag_src)
+    altere = once.replace(
+        'var probeTs = (c.evtTs && c.evtTs > 0) ? c.evtTs : c.evtResolvedTs;',
+        'var probeTs = (c.evtResolvedTs && c.evtResolvedTs > 0) ? c.evtResolvedTs : c.evtTs;', 1)
+    assert 'evtResolvedTs && c.evtResolvedTs > 0' in altere, 'la simulation doit avoir pris effet'
+    refait, notes = lib.patch_diag_leak(altere)
+    assert refait.count(lib.DIAG_LEAK_BEGIN) == 1, 'aucune duplication de bloc'
+    assert refait.count(lib.DIAG_LEAK_END) == 1
+    assert refait.count('self._loadLeakLine = function(){') == 1
+    bloc = _leak_block_body(refait)
+    assert 'evtResolvedTs && c.evtResolvedTs > 0' not in bloc, 'le bloc altere doit etre remplace'
+    assert 'var probeTs = (c.evtTs && c.evtTs > 0) ? c.evtTs : c.evtResolvedTs;' in bloc
+    assert any('remplace' in n for n in notes)
+
+
+def test_un_bloc_loadleakline_non_encadre_en_prod_est_migre_et_corrige(diag_src):
+    """Simule l'etat REEL de prod au 2026-08-24 : le bloc _loadLeakLine a ete insere par
+    une version anterieure de ce script, SANS marqueurs, et porte encore le defaut
+    d'ancrage (probeTs teste evtResolvedTs en premier). La migration doit reconnaitre
+    ce bloc a partir de DIAG_LEAK_LEGACY_START (et non DIAG_LEAK_BEGIN, absent), le
+    remplacer par la version courante et l'encadrer -- exactement comme
+    _strip_legacy_lib() le fait pour la lib heritee. Sans ce chemin, la correction du
+    defaut d'ancrage resterait bloquee en local (elle ne pourrait jamais atteindre la
+    prod, deja patchee sans marqueurs)."""
+    once, _ = lib.patch_diag_leak(diag_src)
+    legacy = once.replace(lib.DIAG_LEAK_BEGIN + '\n', '', 1).replace(
+        '\n' + lib.DIAG_LEAK_END, '', 1)
+    legacy = legacy.replace(
+        'var probeTs = (c.evtTs && c.evtTs > 0) ? c.evtTs : c.evtResolvedTs;',
+        'var probeTs = (c.evtResolvedTs && c.evtResolvedTs > 0) ? c.evtResolvedTs : c.evtTs;', 1)
+    assert lib.DIAG_LEAK_BEGIN not in legacy, 'la fixture de depart doit imiter la prod actuelle'
+    assert lib.DIAG_LEAK_MARK in legacy, 'le bloc legacy doit rester detectable comme deja insere'
+    migre, notes = lib.patch_diag_leak(legacy)
+    assert migre.count(lib.DIAG_LEAK_BEGIN) == 1, 'un seul bloc, pas de duplication'
+    assert migre.count(lib.DIAG_LEAK_END) == 1
+    assert migre.count('self._loadLeakLine = function(){') == 1
+    bloc = _leak_block_body(migre)
+    assert 'var probeTs = (c.evtTs && c.evtTs > 0) ? c.evtTs : c.evtResolvedTs;' in bloc, \
+        'la migration doit corriger le defaut d ancrage, pas seulement encadrer le bloc'
+    assert 'evtResolvedTs && c.evtResolvedTs > 0' not in bloc
+    assert any('migre' in n for n in notes)
+
+
+def test_le_remplacement_et_la_migration_du_bloc_loadleakline_restent_idempotents(diag_src):
+    once, _ = lib.patch_diag_leak(diag_src)
+    twice, notes_deux = lib.patch_diag_leak(once)
+    thrice, notes_trois = lib.patch_diag_leak(twice)
+    assert twice == once == thrice
+    assert any('deja' in n for n in notes_deux)
+    assert any('deja' in n for n in notes_trois)
+
+
 # ---------- coherence appelant / appele avec _src/gas_lib.js ----------
 # Le defaut constate en prod le 2026-08-24 : un commit a ajoute leakWindow() a
 # gas_lib.js et un script a ecrit un appel a window.__gasLib.leakWindow(...) dans

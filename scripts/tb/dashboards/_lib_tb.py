@@ -13,12 +13,19 @@ def login(user, pwd):
     return json.loads(urllib.request.urlopen(r).read().decode('utf-8'))['token']
 
 def token_or_login(user, pwd):
+    """Ordre de priorite : TB_TOKEN (env) > --pwd > TB_USER+TB_PASS (env). Le dernier
+    cas permet de lire les identifiants du compte de service svc-tbnotify@yahtec.com
+    (TENANT_ADMIN) depuis le fichier .env de prod, via scripts/tb/gas/creds-from-server.sh
+    -- aucun mot de passe n'apparait alors jamais dans une ligne de commande."""
     t = os.environ.get('TB_TOKEN')
     if t:
         return t
-    if not pwd:
-        sys.exit('Fournir --pwd ou definir TB_TOKEN')
-    return login(user, pwd)
+    if pwd:
+        return login(user, pwd)
+    env_user, env_pwd = os.environ.get('TB_USER'), os.environ.get('TB_PASS')
+    if env_user and env_pwd:
+        return login(env_user, env_pwd)
+    sys.exit('Fournir TB_TOKEN (env), --pwd, ou TB_USER+TB_PASS (env)')
 
 def http_get(p, t):
     r = urllib.request.Request(f'{BASE_URL}{p}', headers={'X-Authorization': f'Bearer {t}'})

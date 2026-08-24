@@ -331,7 +331,23 @@ _DIAG_LEAK_FETCH_OLD = "self._fetchRealtime = function(){"
 # gas_patch_lib.py et gas_lib.js restent en phase (test_gas_patch_lib.py).
 DIAG_LEAK_UNAVAILABLE_MSG = 'Alarme capteur : lecture indisponible'
 
-_DIAG_LEAK_FETCH_NEW = (
+# Marqueurs encadrant le bloc _loadLeakLine, sur le modele exact de LIB_BEGIN/LIB_END
+# (voir plus haut). Meme raison d'etre : sans eux, une correction de
+# _DIAG_LEAK_FETCH_CONTENT (ex. le defaut d'ancrage corrige ci-dessous) ne peut plus
+# atteindre un widget deja patche -- patch_diag_leak() verrait DIAG_LEAK_MARK deja
+# present, prendrait la branche "ancres deja en place" et s'arreterait sans jamais
+# rejouer _DIAG_LEAK_FETCH_CONTENT. C'est exactement ce qui a rendu la correction du
+# defaut d'ancrage du 2026-08-24 indeployable en l'etat.
+DIAG_LEAK_BEGIN = '/* __GAS_LEAK_BEGIN__ */'
+DIAG_LEAK_END = '/* __GAS_LEAK_END__ */'
+
+# Frontiere de debut d'un bloc _loadLeakLine insere AVANT l'introduction de
+# DIAG_LEAK_BEGIN/END -- c'est l'etat de prod au 2026-08-24. Ce commentaire est la
+# toute premiere ligne du bloc depuis sa version initiale : une frontiere fiable,
+# identique que le bloc soit encadre ou non.
+DIAG_LEAK_LEGACY_START = "// Ligne « alarme capteur »"
+
+_DIAG_LEAK_FETCH_CONTENT = (
     "// Ligne « alarme capteur » : le bit d'alarme est maintenu 5 min par le capteur, donc\n"
     "// observable a 1/min, contrairement a la concentration qui est evacuee en quelques\n"
     "// dizaines de secondes. Declenchement paresseux depuis _renderHeader.\n"
@@ -344,7 +360,18 @@ _DIAG_LEAK_FETCH_NEW = (
     "        return;\n"
     "    }\n"
     "    self._leakLine = null;\n"
-    "    var probeTs = (c.evtResolvedTs && c.evtResolvedTs > 0) ? c.evtResolvedTs : c.evtTs;\n"
+    "    // ANCRE = c.evtTs (APPARITION du defaut), jamais c.evtResolvedTs (resolution) en\n"
+    "    // priorite : la fenetre d'alarme capteur doit encadrer l'apparition du defaut, pas\n"
+    "    // sa resolution -- ce choix etait correct dans _fetchRealtime (les tableaux temps\n"
+    "    // reel sont envoyes au moment de la resolution) mais faux ici, recopie a tort.\n"
+    "    // Defaut constate en prod : un defaut gaz apparu le 08/08 a 12:23:30 et resolu 16\n"
+    "    // jours plus tard, le 24/08 a 10:28:20 -- ancrer sur evtResolvedTs cherchait\n"
+    "    // l'alarme autour du 24/08 et affichait \"R290 : non\", alors que le bit d'alarme\n"
+    "    // valait 1 de 12:23:38 a 12:28:39 le 08/08 (6 echantillons consecutifs, le maintien\n"
+    "    // de 5 min du capteur). Une affirmation fausse sur une question de securite est\n"
+    "    // pire que pas d'affichage : ne JAMAIS retomber sur evtResolvedTs, sauf si evtTs\n"
+    "    // est absent ou nul. NE PAS reintervertir cet ordre.\n"
+    "    var probeTs = (c.evtTs && c.evtTs > 0) ? c.evtTs : c.evtResolvedTs;\n"
     "    if (!c.devId || !probeTs) { return; }\n"
     "    fetch('/api/plugins/telemetry/DEVICE/'+c.devId+'/values/timeseries?keys=pac_v2&startTs='+\n"
     "          (probeTs-600000)+'&endTs='+(probeTs+600000)+'&limit=200&orderBy=ASC',\n"
@@ -373,9 +400,69 @@ _DIAG_LEAK_FETCH_NEW = (
     "      })\n"
     "      .catch(function(){ self._leakLine = UNAVAILABLE; self._render(); });\n"
     "};\n"
-    "\n"
-    "self._fetchRealtime = function(){"
 )
+
+
+def _wrap_marked_block(begin, end, content):
+    """Encadre `content` par les marqueurs begin/end. Meme forme que lib_block() pour
+    LIB_BEGIN/LIB_END, generalisee a tout bloc insere qui doit rester remplacable."""
+    return begin + '\n' + content.rstrip('\n') + '\n' + end + '\n'
+
+
+def _replace_marked_block(text, begin, end, new_content):
+    """Remplace, dans `text`, le contenu encadre par begin/end par new_content ;
+    conserve tout le reste de `text` inchange. A appeler seulement quand `begin` est
+    deja present (sinon AnchorError). Meme prudence que inject_lib() sur le saut de
+    ligne suivant le marqueur de fin : on ne peut pas supposer qu'il en existe
+    exactement un dans une source relue, donc on retire seulement ceux effectivement
+    presents plutot que de sauter un nombre fixe de caracteres."""
+    i = text.find(begin)
+    if i < 0:
+        raise AnchorError(f'marqueur de debut {begin!r} absent -- appeler seulement si present')
+    j = text.find(end, i)
+    if j < 0:
+        raise AnchorError(f'marqueur de fin {end!r} absent -- source live incoherente')
+    reste = text[j + len(end):].lstrip('\n')
+    return text[:i] + _wrap_marked_block(begin, end, new_content) + reste
+
+
+def _leak_fetch_block():
+    """Bloc _loadLeakLine courant, encadre par DIAG_LEAK_BEGIN/END et pret a etre
+    concatene devant l'ancre _DIAG_LEAK_FETCH_OLD."""
+    return _wrap_marked_block(DIAG_LEAK_BEGIN, DIAG_LEAK_END, _DIAG_LEAK_FETCH_CONTENT)
+
+
+def _refresh_leak_fetch_block(controller_script):
+    """Remplace un bloc _loadLeakLine deja encadre par la version courante -- c'est ce
+    qui permet a une correction (ex. le defaut d'ancrage) d'atteindre un widget deja
+    patche, au lieu d'etre ignoree comme avant l'introduction des marqueurs."""
+    return _replace_marked_block(controller_script, DIAG_LEAK_BEGIN, DIAG_LEAK_END,
+                                  _DIAG_LEAK_FETCH_CONTENT)
+
+
+def _migrate_legacy_leak_block(controller_script):
+    """Retire un bloc _loadLeakLine insere avant l'introduction des marqueurs (etat de
+    prod au 2026-08-24) et le remplace par le bloc courant, encadre -- meme logique que
+    _strip_legacy_lib() pour la lib heritee : une frontiere de debut fiable
+    (DIAG_LEAK_LEGACY_START, inchangee depuis la premiere version du bloc) et une
+    frontiere de fin fiable (_DIAG_LEAK_FETCH_OLD, presente avant et apres patch
+    puisque self._fetchRealtime n'est jamais retire)."""
+    i = controller_script.find(DIAG_LEAK_LEGACY_START)
+    if i < 0:
+        raise AnchorError('debut du bloc _loadLeakLine legacy introuvable -- migration impossible')
+    j = controller_script.find(_DIAG_LEAK_FETCH_OLD, i)
+    if j < 0:
+        raise AnchorError(
+            'ancre _fetchRealtime introuvable apres le bloc _loadLeakLine legacy -- migration impossible')
+    return controller_script[:i] + _leak_fetch_block() + controller_script[j:]
+
+
+# Pas de saut de ligne supplementaire entre le bloc et l'ancre : _leak_fetch_block()
+# se termine deja par exactement un '\n' apres DIAG_LEAK_END (meme convention que
+# lib_block()/inject_lib() pour LIB_BEGIN/LIB_END), et _refresh_leak_fetch_block()
+# normalise a zero saut de ligne resultant avant de reappliquer ce meme '\n' -- les
+# deux chemins doivent produire la meme sortie pour rester idempotents.
+_DIAG_LEAK_FETCH_NEW = _leak_fetch_block() + _DIAG_LEAK_FETCH_OLD
 
 _DIAG_LEAK_TRIGGER_OLD = "self._renderHeader = function(){\n    var c = self._ctx;"
 
@@ -401,13 +488,29 @@ def diag_leak_replacements():
 
 
 def patch_diag_leak(controller_script):
-    """(nouvelle_source, notes). Idempotent par DIAG_LEAK_MARK sur les trois ancres
-    d'appel ; termine dans tous les cas par inject_lib(), comme patch_table et
-    patch_diag, pour qu'une seule execution suffise a mettre l'appelant
-    (self._loadLeakLine) et l'appele (__gasLib.leakWindow) en coherence, sans
-    dependre de l'ordre d'execution des scripts patch-*.py."""
+    """(nouvelle_source, notes). Trois chemins, dans cet ordre :
+
+    - bloc _loadLeakLine deja encadre (DIAG_LEAK_BEGIN present) -> son contenu est
+      REMPLACE par la version courante de _DIAG_LEAK_FETCH_CONTENT. C'est ce qui
+      permet a une correction du bloc (ex. le defaut d'ancrage evtTs/evtResolvedTs du
+      2026-08-24) d'atteindre un widget deja patche ;
+    - bloc present mais SANS marqueurs (DIAG_LEAK_MARK trouve, DIAG_LEAK_BEGIN absent
+      -- etat de prod au 2026-08-24) -> MIGRE vers la forme encadree et corrige au
+      passage, exactement comme _strip_legacy_lib() le fait pour la lib heritee ;
+    - source vierge -> applique les trois remplacements d'ancrage (diag_leak_replacements),
+      ce qui pose un bloc _loadLeakLine deja encadre.
+
+    Termine dans tous les cas par inject_lib(), comme patch_table et patch_diag, pour
+    qu'une seule execution suffise a mettre l'appelant (self._loadLeakLine) et
+    l'appele (__gasLib.leakWindow) en coherence, sans dependre de l'ordre d'execution
+    des scripts patch-*.py."""
+    if DIAG_LEAK_BEGIN in controller_script:
+        out = _refresh_leak_fetch_block(controller_script)
+        return inject_lib(out), ['bloc _loadLeakLine deja marque -> remplace, lib rafraichie']
     if DIAG_LEAK_MARK in controller_script:
-        return inject_lib(controller_script), ['ancres deja en place, lib rafraichie']
+        out = _migrate_legacy_leak_block(controller_script)
+        return inject_lib(out), [
+            'bloc _loadLeakLine legacy (sans marqueurs) -> migre et corrige, lib rafraichie']
     notes = []
     out = controller_script
     for name, old, new in diag_leak_replacements():

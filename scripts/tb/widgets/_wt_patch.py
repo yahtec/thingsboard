@@ -18,12 +18,19 @@ def _login(u, p):
 
 
 def token_or_login(user, pwd):
+    """Ordre de priorite : TB_TOKEN (env) > --pwd > TB_USER+TB_PASS (env). Le dernier
+    cas permet de lire les identifiants du compte de service svc-tbnotify@yahtec.com
+    (TENANT_ADMIN) depuis le fichier .env de prod, via scripts/tb/gas/creds-from-server.sh
+    -- aucun mot de passe n'apparait alors jamais dans une ligne de commande."""
     t = os.environ.get('TB_TOKEN')
     if t:
         return t
-    if not pwd:
-        sys.exit('Fournir TB_TOKEN (env) ou --pwd')
-    return _login(user, pwd)
+    if pwd:
+        return _login(user, pwd)
+    env_user, env_pwd = os.environ.get('TB_USER'), os.environ.get('TB_PASS')
+    if env_user and env_pwd:
+        return _login(env_user, env_pwd)
+    sys.exit('Fournir TB_TOKEN (env), --pwd, ou TB_USER+TB_PASS (env)')
 
 
 def _get(path, tok):
