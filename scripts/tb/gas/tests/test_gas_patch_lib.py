@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 import gas_patch_lib as lib
 
 FIXTURES = Path(__file__).parent / 'fixtures'
+SRC = Path(__file__).resolve().parents[1] / '_src'
 
 
 @pytest.fixture
@@ -90,6 +92,17 @@ def test_une_lib_deja_injectee_est_remplacee_et_non_dupliquee(hp_src):
     assert lib.load_gas_lib() in refait
 
 
+def test_inject_lib_ne_mange_pas_le_premier_caractere_sans_saut_de_ligne_apres_lib_end():
+    """Bug initial : `controller_script[j + len(LIB_END) + 1:]` supposait exactement un
+    caractere (le '\\n' que lib_block() ajoute toujours en sortie) apres le marqueur de
+    fin. Une source relue dont LIB_END n'est PAS suivi d'un saut de ligne faisait manger
+    le premier caractere du code voisin, en silence."""
+    src = lib.LIB_BEGIN + '\nCONTENU_ANCIEN\n' + lib.LIB_END + 'self.onInit=function(){};'
+    out = lib.inject_lib(src)
+    assert out.endswith('self.onInit=function(){};'), (
+        'le premier caractere du code voisin ne doit pas etre mange silencieusement')
+
+
 def test_widget_start_absent_de_la_lib(hp_src):
     """Invariant dont depend _strip_legacy_lib : si WIDGET_START apparaissait dans
     gas_lib.js, la frontiere de migration heritee deviendrait ambigue (mauvaise
@@ -116,12 +129,17 @@ def test_le_diagnostic_declare_les_nouvelles_cles(diag_src):
 
 
 def test_les_libelles_gaz_du_diagnostic_restent_ascii(diag_src):
+    """Verifie les 26 libelles (13 champs x 2 capteurs) de DIAG_KEY_META, pas
+    seulement les 20 premiers : une fenetre tronquee laissait passer les six derniers
+    (durees de service en heures, seuils d'avertissement/fin de vie) sans controle.
+    Bornage sur lib.DIAG_KEY_META lui-meme (plutot que sur une fenetre de caracteres
+    arbitraire dans la sortie complete) pour ne pas deborder sur les libelles d'un
+    bloc KEY_META voisin, non soumis a la contrainte ASCII."""
     out, _ = lib.patch_diag(diag_src)
-    i = out.index('gas_r290_leak')
-    bloc = out[i:i + 2000]
-    labels = [s for s in bloc.split("l:'")[1:]]
-    for lab in labels[:20]:
-        texte = lab.split("'")[0]
+    assert lib.DIAG_KEY_META in out
+    labels = [s.split("'")[0] for s in lib.DIAG_KEY_META.split("l:'")[1:]]
+    assert len(labels) == 26, 'attendu 13 champs x 2 capteurs'
+    for texte in labels:
         assert texte.isascii(), f'libelle non ASCII dans le bloc gaz : {texte}'
 
 
@@ -222,10 +240,15 @@ def test_quand_tout_est_conforme_l_objet_recu_est_renvoye_tel_quel():
 
 
 def test_les_pistes_couvrent_les_deux_circuits():
+    """Liste recopiee de la spec (§8 : enumeres leak/op_mode, champ de bits err,
+    valeur leak_thr/addr/gas_type/fw_ver) -- PAS derivee de lib.LANES. Un test qui
+    itere sur les suffixes que le code contient passerait tel quel meme si une piste
+    manquait : c'est exactement ce qui a laisse passer l'oubli de la version
+    firmware."""
     champs = [l['field'] for l in lib.LANES]
     assert any(c.startswith('HP.') for c in champs)
     assert any(c.startswith('boil.') for c in champs)
-    for suffixe in ('leak', 'opMode', 'err', 'leakThres', 'addr', 'gasType'):
+    for suffixe in ('leak', 'opMode', 'err', 'leakThres', 'addr', 'gasType', 'fwVer'):
         assert any(suffixe in c for c in champs), f'registre {suffixe} absent des pistes'
 
 
@@ -245,3 +268,70 @@ def test_les_pistes_de_seuil_portent_l_echelle():
     assert seuils
     for l in seuils:
         assert l['scale'] == 0.1 and l['unit'] == '%LFL'
+
+
+# ---------- widget timeline (tsmart.gas_registers) : composition avec marqueurs ----------
+
+def test_le_controleur_du_widget_timeline_recoit_la_lib_encadree():
+    """deploy-gas-registers-widget.py compose le controllerScript du 4e widget avec
+    lib.lib_block() + ctrl -- jamais une concatenation brute de load_gas_lib(). Sans les
+    marqueurs LIB_BEGIN/LIB_END, ce widget porterait LEGACY_MARK ('root.__gasLib = {')
+    sans marqueur d'ouverture, et un futur rafraichissement le prendrait pour une lib
+    heritee (cf. _strip_legacy_lib, qui ne s'applique qu'en l'absence de LIB_BEGIN)."""
+    ctrl = (SRC / 'gas-registers.controller.js').read_text(encoding='utf-8')
+    deployed = lib.lib_block() + ctrl
+    assert deployed.count(lib.LIB_BEGIN) == 1
+    assert deployed.count(lib.LIB_END) == 1
+    i, j, k = deployed.index(lib.LIB_BEGIN), deployed.index(lib.LIB_END), deployed.index(lib.WIDGET_START)
+    assert i < j < k, 'ordre attendu : LIB_BEGIN, lib, LIB_END, code du widget'
+    assert lib.load_gas_lib() in deployed
+
+
+# ---------- contrat partage avec tsmart.pac_chart (bootstrap window.__pacData) ----------
+
+def _extract_pd_block(src):
+    """Le bloc complet `function PD() { ... }` (bornes par comptage d'accolades, pas par
+    une longueur fixe), quelle que soit sa mise en forme."""
+    i = src.index('function PD(')
+    debut_accolade = src.index('{', i)
+    profondeur = 0
+    j = debut_accolade
+    while True:
+        c = src[j]
+        if c == '{':
+            profondeur += 1
+        elif c == '}':
+            profondeur -= 1
+            if profondeur == 0:
+                break
+        j += 1
+    return src[i:j + 1]
+
+
+def _sans_espaces(s):
+    """Ignore la mise en forme (indentation, retours a la ligne, espacement autour des
+    operateurs) pour ne comparer que la sequence de tokens."""
+    return re.sub(r'\s+', '', s)
+
+
+def test_le_bootstrap_pd_correspond_au_singleton_de_tsmart_pac_chart():
+    """gas-registers.controller.js recopie a la main le bloc d'amorcage du singleton
+    window.__pacData defini par tsmart.pac_chart (commentaire en tete du fichier :
+    'il doit rester compatible avec la forme de hist ([[ts, payload], ...]). Toute
+    divergence casserait la synchronisation.'). Rien ne verrouillait ce contrat avant ce
+    test.
+
+    Fixture capturee en production le 2026-08-24 par
+    GET /api/widgetType?fqn=tenant.tsmart.pac_chart (meme moyen que les autres
+    fixtures de ce dossier) : tests/fixtures/pac_chart.live.js. Comparaison robuste
+    aux seules differences d'indentation : tout l'espace blanc est retire des deux
+    cotes avant comparaison, donc seule une divergence de tokens (donc de
+    comportement) fait echouer ce test."""
+    ctrl = (SRC / 'gas-registers.controller.js').read_text(encoding='utf-8')
+    live = (FIXTURES / 'pac_chart.live.js').read_text(encoding='utf-8')
+    ours = _extract_pd_block(ctrl)
+    theirs = _extract_pd_block(live)
+    assert _sans_espaces(ours) == _sans_espaces(theirs), (
+        'le bootstrap PD() a diverge du singleton window.__pacData de tsmart.pac_chart '
+        '-- recapturer tests/fixtures/pac_chart.live.js si la source live a legitimement '
+        'change, sinon corriger gas-registers.controller.js')
