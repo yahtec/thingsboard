@@ -148,7 +148,7 @@ def test_le_patch_diagnostic_est_idempotent(diag_src):
     once, _ = lib.patch_diag(diag_src)
     twice, notes = lib.patch_diag(once)
     assert twice == once
-    assert any('skip' in n for n in notes)
+    assert any('rafraichie' in n for n in notes)
 
 
 def test_la_lib_injectee_dans_le_diagnostic_est_la_meme(diag_src):

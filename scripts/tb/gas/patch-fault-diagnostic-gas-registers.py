@@ -34,8 +34,7 @@ def main():
     cs = w['descriptor']['controllerScript']
     print(f'{FQN} v{w.get("version")} — {len(cs)} caracteres')
     if lib.DONE_MARK in cs:
-        print('  deja patche (skip)')
-        return
+        print('  deja patche (lib a rafraichir)')
     try:
         new_cs, notes = lib.patch_diag(cs)
     except lib.AnchorError as e:
