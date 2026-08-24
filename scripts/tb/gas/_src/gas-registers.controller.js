@@ -58,6 +58,11 @@ self.onInit = function () {
 
   var GEO = { mL: 150, mR: 12, mT: 6, mB: 20, lane: 22, gapLane: 6 };
 
+  // Meme echappement que les deux sites SVG existants (label de piste, texte de
+  // segment) : ces valeurs viennent de la configuration (def.label, def.map[v].t)
+  // et sont injectees dans du HTML (SVG ou tooltip), donc jamais telles quelles.
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
   self._draw = function () {
     var $c = self.ctx.$container;
     if (!$c.find('.gr-card').length) { return; }
@@ -100,7 +105,7 @@ self.onInit = function () {
     lanes.forEach(function (l, li) {
       var y = GEO.mT + li * (GEO.lane + GEO.gapLane);
       svg += '<text x="0" y="' + (y + GEO.lane * 0.7) + '" font-size="11">' +
-             l.label.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</text>';
+             esc(l.label) + '</text>';
       l.segs.forEach(function (g) {
         var x1 = X(g.start), x2 = Math.max(X(g.end), x1 + 2);
         svg += '<rect x="' + x1.toFixed(1) + '" y="' + y + '" width="' + (x2 - x1).toFixed(1) +
@@ -108,7 +113,7 @@ self.onInit = function () {
         if ((x2 - x1) > 44) {
           svg += '<text x="' + (x1 + 5).toFixed(1) + '" y="' + (y + GEO.lane * 0.7) +
                  '" font-size="10" fill="#fff">' +
-                 String(g.txt).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</text>';
+                 esc(g.txt) + '</text>';
         }
       });
     });
@@ -145,7 +150,7 @@ self.onInit = function () {
           return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
         }
         var mn = Math.max(1, Math.round((seg.end - seg.start) / 60000));
-        tip.innerHTML = cd.lanes[li].label + ' — <b>' + seg.txt + '</b><br>de ' +
+        tip.innerHTML = esc(cd.lanes[li].label) + ' — <b>' + esc(seg.txt) + '</b><br>de ' +
                         hm(seg.start) + ' à ' + hm(seg.end) + ' (' + mn + ' min)';
         tip.style.display = 'block';
         tip.style.left = Math.max(4, Math.min(x + 12, cd.W - 230)) + 'px';
