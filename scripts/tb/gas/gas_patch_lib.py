@@ -13,8 +13,13 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 GAS_LIB_PATH = os.path.join(HERE, '_src', 'gas_lib.js')
 
-# Presence de la lib dans la source = patch deja applique.
-DONE_MARK = 'root.__gasLib = {'
+# Marqueurs encadrant la lib injectee. Ils rendent l'injection REMPLACABLE : sans eux,
+# une evolution de _src/gas_lib.js ne pourrait plus atteindre un widget deja patche.
+LIB_BEGIN = '/* __GAS_LIB_BEGIN__ */'
+LIB_END = '/* __GAS_LIB_END__ */'
+
+# Presence du marqueur d'ouverture = lib deja injectee (donc a remplacer, pas a ajouter).
+DONE_MARK = LIB_BEGIN
 
 # Cible -> (objet JS, suffixe de champ, prefixe de libelle d'origine)
 TARGETS = {
@@ -33,11 +38,20 @@ def load_gas_lib():
         return f.read()
 
 
+def _lib_block():
+    return LIB_BEGIN + '\n' + load_gas_lib().rstrip('\n') + '\n' + LIB_END + '\n'
+
+
 def inject_lib(controller_script):
-    """Prepend la lib au controllerScript. Sans effet si deja presente."""
-    if DONE_MARK in controller_script:
-        return controller_script
-    return load_gas_lib().rstrip('\n') + '\n' + controller_script
+    """Injecte la lib, ou remplace le bloc deja present. Idempotent par remplacement."""
+    bloc = _lib_block()
+    i = controller_script.find(LIB_BEGIN)
+    if i < 0:
+        return bloc + controller_script
+    j = controller_script.find(LIB_END, i)
+    if j < 0:
+        raise AnchorError('marqueur de fin de lib absent -- source live incoherente')
+    return controller_script[:i] + bloc + controller_script[j + len(LIB_END) + 1:]
 
 
 def _old_block(obj, sfx):
@@ -64,7 +78,7 @@ def table_replacements(target):
 def patch_table(controller_script, target):
     """(nouvelle_source, notes). Idempotent."""
     if DONE_MARK in controller_script:
-        return controller_script, ['lib deja injectee (skip)']
+        return inject_lib(controller_script), ['appels deja en place, lib rafraichie']
     notes = []
     out = controller_script
     for name, old, new in table_replacements(target):

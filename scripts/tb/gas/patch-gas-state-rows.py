@@ -50,8 +50,7 @@ def main():
         w = wt.get_widget_by_fqn('tenant.' + fqn, tok)   # le GET exige le prefixe
         cs = w['descriptor']['controllerScript']
         if lib.DONE_MARK in cs:
-            print('  deja patche (skip)')
-            continue
+            print('  deja patche (lib a rafraichir)')
         try:
             new_cs, notes = lib.patch_table(cs, target)
         except lib.AnchorError as e:

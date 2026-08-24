@@ -65,3 +65,20 @@ def test_une_ancre_absente_leve_une_erreur():
 def test_done_mark_existe_dans_la_lib():
     src = lib.load_gas_lib()
     assert lib.DONE_MARK in src, 'DONE_MARK doit exister dans _src/gas_lib.js'
+
+
+def test_la_lib_injectee_est_encadree_par_des_marqueurs(hp_src):
+    out, _ = lib.patch_table(hp_src, 'HP')
+    assert lib.LIB_BEGIN in out and lib.LIB_END in out
+    assert out.index(lib.LIB_BEGIN) < out.index(lib.LIB_END)
+
+
+def test_une_lib_deja_injectee_est_remplacee_et_non_dupliquee(hp_src):
+    once, _ = lib.patch_table(hp_src, 'HP')
+    # on simule une evolution de la lib deja injectee
+    altere = once.replace('function fmtVer(', 'function fmtVerAncienNom(', 1)
+    assert 'fmtVerAncienNom' in altere
+    refait = lib.inject_lib(altere)
+    assert refait.count(lib.LIB_BEGIN) == 1, 'aucune duplication de bloc'
+    assert 'fmtVerAncienNom' not in refait, 'le bloc obsolete doit etre remplace'
+    assert lib.load_gas_lib() in refait

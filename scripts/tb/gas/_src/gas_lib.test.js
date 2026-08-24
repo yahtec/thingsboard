@@ -34,6 +34,8 @@ t('blockUnread accepte un bloc renseigne', () =>
   assert.strictEqual(G.blockUnread({ addr: 4, fw: 256 }), false));
 t('blockUnread refuse une adresse nulle meme avec version', () =>
   assert.strictEqual(G.blockUnread({ addr: 0, fw: 256 }), true));
+t('blockUnread accepte un bloc lu dont la version est illisible', () =>
+  assert.strictEqual(G.blockUnread({ addr: 4, fw: 0 }), false));
 
 t('segments fusionne les valeurs identiques consecutives', () => {
   const s = G.segments([[0, 0], [60000, 0], [120000, 1]], 180000);

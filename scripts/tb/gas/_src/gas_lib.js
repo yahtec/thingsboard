@@ -32,10 +32,13 @@
     return 'v' + (n >> 8) + '.' + (n & 255);
   }
 
-  // R7 : adresse bus nulle ou version 0.0 => le bloc n'a pas ete lu par ce firmware.
+  // R7 : une adresse bus nulle n'est pas une adresse legale => le bloc n'a pas ete lu.
+  // La version firmware n'entre PAS dans la garde : la production montre des blocs
+  // correctement lus (adresse et seuil valides) dont la version revient a 0 apres un
+  // redemarrage. La faire entrer masquerait des donnees valides.
   function blockUnread(o) {
     if (!o) { return true; }
-    return !(Number(o.addr) > 0) || !(Number(o.fw) > 0);
+    return !(Number(o.addr) > 0);
   }
 
   function segments(pts, maxGapMs) {
@@ -63,7 +66,7 @@
     var err = decodeErr(o['err' + sfx]);
     var errTxt = (err === null) ? '\u2014' : err;
 
-    if (blockUnread({ addr: o['addr' + sfx], fw: o['fwVer' + sfx] })) {   // R7
+    if (blockUnread({ addr: o['addr' + sfx] })) {   // R7
       return row('Concentration ' + sfx, conTxt) +
              row('Capteur ' + sfx, errTxt + ' \u00b7 registres non lus par ce firmware');
     }
