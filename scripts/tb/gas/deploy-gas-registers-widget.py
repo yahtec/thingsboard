@@ -14,7 +14,6 @@ import argparse
 import copy
 import json
 import os
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,30 +27,8 @@ import gas_patch_lib as lib     # noqa: E402
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-NODE = r'c:\Projets\TB\thingsboard\ui-ngx\target\node\node.exe'
 SRC = os.path.join(HERE, '_src')
 TEMPLATE_FQN = 'tsmart.pac_chart'
-
-
-def node_check(js):
-    """Meme garde que deploy-ecs-widget.py : refuser de deployer du JS invalide.
-
-    Le fichier temporaire est ecrit dans le repertoire courant (pas via le
-    repertoire temp par defaut de tempfile) : sous Windows, quand ce script
-    tourne dans un shell POSIX (Git Bash), tempfile.gettempdir() peut renvoyer
-    un chemin /tmp que le node.exe natif ne resout pas -- node --check
-    echouerait alors sur un probleme d'environnement, pas de syntaxe.
-    """
-    path = os.path.join(os.getcwd(), '_gas_registers_node_check.tmp.js')
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write('var self={},window={},localStorage={},fetch=function(){};\n' + js)
-    try:
-        r = subprocess.run([NODE, '--check', path], capture_output=True, text=True)
-    finally:
-        os.unlink(path)
-    if r.returncode != 0:
-        sys.exit('node --check ECHEC:\n' + r.stderr[:1200])
-    print('  node --check OK')
 
 
 def main():
@@ -65,8 +42,11 @@ def main():
     html = open(os.path.join(SRC, 'gas-registers.html'), encoding='utf-8').read()
     css = open(os.path.join(SRC, 'gas-registers.css'), encoding='utf-8').read()
     ctrl = open(os.path.join(SRC, 'gas-registers.controller.js'), encoding='utf-8').read()
-    gaslib = lib.load_gas_lib()
-    node_check(gaslib + '\n' + ctrl)
+    # Meme encadrement LIB_BEGIN/LIB_END que les trois autres widgets (patch_table,
+    # patch_diag) : sans les marqueurs, ce widget porterait LEGACY_MARK sans marqueur
+    # d'ouverture et serait pris pour une lib heritee par un futur rafraichissement.
+    gaslib_block = lib.lib_block()
+    lib.node_check(gaslib_block + ctrl)
 
     tok = wt.token_or_login(a.user, a.pwd)
 
@@ -88,20 +68,25 @@ def main():
     if w is None:
         base = wt.get_widget_by_fqn('tenant.' + TEMPLATE_FQN, tok)
         w = copy.deepcopy(base)
-        for champ in ('id', 'createdTime', 'version', 'tenantId'):
+        for champ in ('id', 'createdTime', 'version', 'tenantId', 'externalId'):
             w.pop(champ, None)
         w['fqn'] = lib.GAS_REGISTERS_FQN
         cloned = True
         print(f'  type cree par clone de {TEMPLATE_FQN}')
+    # Copie profonde AVANT toute mutation : c'est elle qu'on sauvegarde plus bas, pour
+    # qu'un retour arriere restaure vraiment l'etat d'avant ce script (pas l'etat deja
+    # reecrit).
+    w_orig = copy.deepcopy(w)
     w['name'] = 'Registres gaz'
     w['descriptor']['templateHtml'] = html
     w['descriptor']['templateCss'] = css
-    w['descriptor']['controllerScript'] = gaslib.rstrip('\n') + '\n' + ctrl
+    w['descriptor']['controllerScript'] = gaslib_block + ctrl
     w['descriptor']['sizeX'] = 24
     w['descriptor']['sizeY'] = 8
 
     # --- 2. instance dans le dashboard ---
     dash = tb.get_dashboard(tok)
+    dash_orig = copy.deepcopy(dash)   # idem : sauvegarde de l'etat AVANT mutation
     conf = dash['configuration']
     wid = lib.GAS_REGISTERS_WIDGET_ID
     if wid in conf['widgets']:
@@ -167,10 +152,10 @@ def main():
         sys.exit('  ARRET : garde anti-ecrasement echouee -- POST annule pour proteger '
                   f'{TEMPLATE_FQN} et ses sept graphes')
 
-    wt.backup(w, 'gas_registers.widget_type')
+    wt.backup(w_orig, 'gas_registers.widget_type')
     resp = wt.post_widget(w, tok)
     print(f'  widget_type POST OK, version {resp.get("version", "?")}')
-    tb.backup(dash, 'gas_registers_widget')
+    tb.backup(dash_orig, 'gas_registers_widget')
     tb.post_dashboard(dash, tok)
 
 
