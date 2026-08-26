@@ -114,14 +114,94 @@ def test_two_recipients_with_different_exclusions_get_different_content(monkeypa
 def test_fallback_sends_only_at_the_anchor_hour(monkeypatch):
     sent = _capture(monkeypatch)
     monkeypatch.setenv("PARC_ADMINS_FALLBACK", "secours@yahtec.com")
+    # `fallback_daily` lit l'ancre dans l'environnement, et common.py charge un
+    # .env a l'import : on l'epingle, sinon le test depend de la machine.
+    monkeypatch.setenv("DIGEST_RECAP_HOUR", "7")
     per = [_info("d1", "111", _at(9, 20), carried={"15|50"})]
     assert fd.fallback_daily(per, [], _at(10, 12)) == 0
-    assert sent == []
+    assert sent == []                                   # hors de l'heure d'ancrage
     assert fd.fallback_daily(per, [], _at(10, 7)) == 0
-    assert sent[0][0] == ["secours@yahtec.com"]
+    assert [to for to, _s, _t in sent] == [["secours@yahtec.com"]]
 
 
 def test_fallback_without_addresses_returns_error_code(monkeypatch):
     _capture(monkeypatch)
     monkeypatch.setenv("PARC_ADMINS_FALLBACK", "")
+    monkeypatch.setenv("DIGEST_RECAP_HOUR", "7")
     assert fd.fallback_daily([], [], _at(10, 7)) == 2
+
+
+# ── main() : l'integration elle-meme ────────────────────────────────────────
+# Les tests ci-dessus s'arretent a send_for_target. Ceux-ci couvrent ce que
+# seule main() porte : l'isolation par destinataire, la forme de id_of_name,
+# et le fait que la collecte ne soit pas rejouee par destinataire.
+
+class MainTB:
+    """TBClient minimal pour main() : deux devices, N destinataires, et un
+    compteur d'appels pour prouver qu'on ne collecte qu'une fois."""
+
+    def __init__(self, targets, raise_for=()):
+        self.targets = list(targets)
+        self.raise_for = set(raise_for)
+        self.states = {}
+        self.calls = {"list_devices": 0, "attrs": 0}
+
+    def list_devices_by_profile(self, profile):
+        self.calls["list_devices"] += 1
+        return [{"id": {"id": "d1"}, "name": "111"},
+                {"id": {"id": "d2"}, "name": "222"}]
+
+    def get_admin_targets(self):
+        return [dict(t) for t in self.targets]
+
+    def get_server_attrs(self, etype, eid, keys=None):
+        self.calls["attrs"] += 1
+        return {}
+
+    def get_timeseries(self, dev_id, keys, start_ts, end_ts, limit=50000):
+        return {}
+
+    def save_server_attrs(self, etype, eid, kv):
+        pass
+
+    def get_digest_state(self, uid):
+        if uid in self.raise_for:
+            raise RuntimeError("TB indisponible pour ce destinataire")
+        return common.load_digest_state(self.states.get(uid))
+
+    def save_digest_state(self, uid, state):
+        self.states[uid] = dict(state)
+
+
+def _install_main_tb(monkeypatch, tb):
+    monkeypatch.setattr(fd, "TBClient", lambda *a, **k: tb)
+    monkeypatch.setattr(fd, "send_mail", lambda to, subject, html, text=None: None)
+    monkeypatch.setenv("NOTIFY_EXCLUDE_DEVICES", "")
+
+
+def test_main_isolates_a_failing_recipient_from_the_others(monkeypatch):
+    """Un destinataire en echec ne prive pas les autres de leur recap, et le
+    code de sortie le signale au lieu de rester vert."""
+    tb = MainTB([{"id": "u1", "email": "a@yahtec.com", "exclude": set()},
+                 {"id": "u2", "email": "b@yahtec.com", "exclude": set()}],
+                raise_for={"u1"})
+    _install_main_tb(monkeypatch, tb)
+    assert fd.main() == 1                    # l'echec ressort
+    assert "u2" in tb.states                 # le second a bien ete traite
+    assert "u1" not in tb.states
+
+
+def test_main_collects_once_whatever_the_number_of_recipients(monkeypatch):
+    """La collecte et l'ecriture de digest_open_faults ne doivent pas etre
+    rejouees par destinataire."""
+    many = [{"id": f"u{i}", "email": f"a{i}@yahtec.com", "exclude": set()}
+            for i in range(5)]
+    tb = MainTB(many)
+    _install_main_tb(monkeypatch, tb)
+    assert fd.main() == 0
+    assert tb.calls["list_devices"] == 1
+    # Un seul get_server_attrs par device (la collecte), pas un par device et
+    # par destinataire : 2 et non 10. Les lectures d'etat des destinataires
+    # passent par get_digest_state, qui ne touche pas ce compteur.
+    assert tb.calls["attrs"] == 2
+    assert len(tb.states) == 5

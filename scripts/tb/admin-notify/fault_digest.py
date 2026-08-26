@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Cron every 4h: send a single digest mail to parc admins listing every
-chaufferie with at least one open fault.
+"""Cron horaire: recap des defauts, evalue et envoye destinataire par destinataire.
+
+L'envoi est decide par `decide_mail` (machine a etats par destinataire) : mail
+rapide a T+1h quand une chaufferie du perimetre du destinataire entre en defaut
+(quota 1/24h), sinon recap quotidien ancre sur DIGEST_RECAP_HOUR, et silence
+complet quand son perimetre est sain. Le perimetre d'un destinataire, c'est le
+parc moins le mute global moins ses exclusions personnelles.
 
 Source of truth = evt_* telemetry (NOT TB alarms — they may stay orphaned).
 
@@ -333,14 +338,20 @@ def send_for_target(tb: TBClient, target: dict, per_device: list[dict],
     # `errors` est une liste de NOMS de devices ; les exclusions sont des ids.
     errs = [n for n in errors if id_of_name.get(n) not in excl]
 
-    kind, new_state = decide_mail(scope, tb.get_digest_state(target["id"]),
-                                  now_ms, cfg, has_errors=bool(errs))
+    state = tb.get_digest_state(target["id"])
+    kind, new_state = decide_mail(scope, state, now_ms, cfg, has_errors=bool(errs))
     if kind:
         built = build_digest(scope, errs, now_ms)
         if built is None:
-            # Defensif : decide_mail ne rend un kind que si scope ou errs est
-            # non vide, donc build_digest ne peut pas rendre None ici.
-            kind = None
+            # Defensif et normalement inatteignable : decide_mail ne rend un
+            # kind que si scope ou errs est non vide, donc build_digest ne peut
+            # pas rendre None ici. Si ca arrivait quand meme, on rend l'ETAT
+            # D'ORIGINE : persister new_state brulerait le limiteur quotidien
+            # (last_mail_ts avance) sans qu'aucun mail ne soit parti, ce qui
+            # baillonnerait ce destinataire jusqu'au lendemain.
+            log.error("destinataire=%s kind=%s mais rien a rendre — echeance non consommee",
+                      target["email"], kind)
+            kind, new_state = None, state
         else:
             subject, html, text = built
             send_mail([target["email"]], subject, html, text)
@@ -384,7 +395,12 @@ def main() -> int:
     now_ms = int(time.time() * 1000)
     log.info("scanning %d devices over last %dd", len(devices), LOOKBACK_DAYS)
     per, errors = collect_open_per_device(tb, devices, now_ms)
-    id_of_name = {d["name"]: d["id"]["id"] for d in devices}
+    # Les deux voisins de cette table tolerent un device malforme
+    # (`filter_excluded` et `collect_open_per_device` utilisent `.get`) ; on
+    # fait pareil, sinon un seul dict incomplet tuerait le run pour TOUS les
+    # destinataires, hors de toute isolation.
+    id_of_name = {d["name"]: d["id"]["id"] for d in devices
+                  if d.get("name") and d.get("id")}
 
     try:
         targets = tb.get_admin_targets()
@@ -396,7 +412,7 @@ def main() -> int:
 
     cfg = {"grace_ms": mail_grace_ms(), "recap_hour": common_recap_hour(),
            "min_gap_ms": digest_min_gap_ms(), "fast_quota_ms": digest_fast_quota_ms()}
-    sent = 0
+    sent = failed = 0
     for target in targets:
         try:
             if send_for_target(tb, target, per, errors, id_of_name, now_ms, cfg):
@@ -404,9 +420,18 @@ def main() -> int:
         except Exception as exc:
             # Isolation par destinataire, dans le meme esprit que I8 : un
             # destinataire en echec ne prive pas les autres de leur recap.
-            log.exception("destinataire=%s echec — ignore ce run: %s", target["email"], exc)
-    log.info("run termine : %d mail(s) envoye(s) sur %d destinataire(s)", sent, len(targets))
-    return 0
+            # `.get` sur l'email : si l'echec venait d'un target malforme,
+            # indexer ici releverait et casserait l'isolation qu'on implemente.
+            failed += 1
+            log.exception("destinataire=%s echec — ignore ce run: %s",
+                          target.get("email", "?"), exc)
+    log.info("run termine : %d mail(s) envoye(s), %d destinataire(s) en echec sur %d",
+             sent, failed, len(targets))
+    # Le code de sortie est la seule surface de supervision de ce cron : un
+    # echec persistant par destinataire (401 sur get_digest_state, `exclude`
+    # malforme) doit ressortir, pas se repeter chaque heure sous un statut
+    # vert. Meme convention que fault_notify.main().
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
