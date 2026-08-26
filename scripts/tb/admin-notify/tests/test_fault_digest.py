@@ -209,3 +209,39 @@ def test_build_digest_sent_when_faults_present():
     info = {"name": "d1", "display": "d1", "address": "", "faults": []}
     built = fd.build_digest([info], [], NOW)
     assert built is not None
+
+
+# ── Task 4 : _process_device remonte l'id et la memoire precedente ──────────
+
+def test_process_device_reports_id_and_empty_carried_for_fresh_fault():
+    """Chaufferie saine au run precedent (pas de memoire) qui tombe en defaut :
+    `carried` vide, c'est ce qui la rend candidate au mail rapide."""
+    c = make_client({"dev-1": {}},
+                    {"dev-1": _ts_payload([(NOW - 3600_000, 1, 15, 50)])})
+    info = fd._process_device(c, DEV, NOW - 30 * DAY_MS, NOW)
+    assert info["id"] == "dev-1"
+    assert info["carried"] == set()
+    assert len(info["faults"]) == 1
+
+
+def test_process_device_reports_carried_from_previous_run():
+    """Defaut deja memorise et jamais resolu : `carried` non vide, la
+    chaufferie n'est donc pas "nouvellement en defaut"."""
+    c = make_client({"dev-1": {fd.STATE_ATTR: {"15|50": NOW - 5 * DAY_MS}}},
+                    {"dev-1": {}})
+    info = fd._process_device(c, DEV, NOW - 30 * DAY_MS, NOW)
+    assert info["carried"] == {"15|50"}
+    assert info["id"] == "dev-1"
+
+
+def test_process_device_carried_keeps_faults_resolved_this_run():
+    """Un defaut memorise ET resolu ce run laisse quand meme une trace dans
+    `carried` : la chaufferie etait bien en defaut au run precedent, donc un
+    nouveau defaut apparu en meme temps ne doit pas passer pour une entree en
+    defaut depuis un etat sain."""
+    c = make_client({"dev-1": {fd.STATE_ATTR: {"15|50": NOW - 5 * DAY_MS}}},
+                    {"dev-1": _ts_payload([(NOW - 7200_000, 4, 15, 50),
+                                           (NOW - 3600_000, 1, 16, 50)])})
+    info = fd._process_device(c, DEV, NOW - 30 * DAY_MS, NOW)
+    assert info["carried"] == {"15|50"}
+    assert [e.fault for e in info["faults"]] == [16]

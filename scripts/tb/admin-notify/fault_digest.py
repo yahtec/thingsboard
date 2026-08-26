@@ -140,7 +140,12 @@ def _process_device(tb: TBClient, d: dict, start_ms: int, end_ms: int) -> dict |
     if not synthetic:
         return None
     opens = sorted(synthetic.values(), key=lambda e: e.appear_ts or 0)
-    return {"name": dev_name, "display": display, "address": addr, "faults": opens}
+    # `carried` = memoire telle qu'elle etait AVANT l'ecriture de ce run.
+    # Vide => la chaufferie etait saine au run precedent, ce qui la rend
+    # candidate au mail rapide (spec §4.1). On garde meme les cles resolues
+    # ce run : la chaufferie etait bel et bien en defaut au run precedent.
+    return {"id": dev_id, "name": dev_name, "display": display, "address": addr,
+            "faults": opens, "carried": set(carried)}
 
 
 def collect_open_per_device(tb: TBClient, devices: list[dict], end_ms: int) -> tuple[list[dict], list[str]]:
