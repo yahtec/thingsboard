@@ -162,18 +162,37 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
             for e in events:
                 if e.resolved_ts is not None:
                     tracked.pop(f"{e.device}|{e.fault}", None)
+            # `e.resolved_ts is None` est ESSENTIEL, et c'est le meme critere
+            # que `common.open_faults` qu'utilise le digest. `pair_events` ne
+            # produit pas deux evenements pour un couple apparition/resolution :
+            # sur un type=4 il complete l'evenement de type 1 EN PLACE
+            # (common.py, `o.resolved_ts = r["ts"]`) sans rien ajouter a la
+            # liste, et sans aucune fenetre de temps. Un defaut apparu ET
+            # resolu dans une meme fenetre de scan est donc un unique evenement
+            # de type 1 portant deja `resolved_ts`. Sans ce filtre il serait
+            # inscrit, puis notifie une heure plus tard alors qu'il est clos —
+            # et sa resolution etant passee derriere le curseur, rien ne
+            # l'effacerait jamais. C'est exactement le defaut de communication
+            # qui bat de l'aile que ce chantier existe pour taire.
             new_appearances = [e for e in events
-                               if e.type == 1 and e.appear_ts
+                               if e.type == 1 and e.appear_ts and e.resolved_ts is None
                                and cursor < e.appear_ts <= cutoff_ms]
             new_appearances.sort(key=lambda e: e.appear_ts)
             skipped = 0
             for e in new_appearances:
                 key = f"{e.device}|{e.fault}"
-                if key in tracked:
-                    continue  # deja suivi
                 if e.appear_ts < int(cooldown.get(key, 0)) + COOLDOWN_S * 1000:
                     skipped += 1
                     continue  # anti-rebond 6 h : pas de nouveau cycle
+                # Une entree deja suivie est REARMEE, pas ignoree. Si on la
+                # laissait en place, une entree restee bloquee (resolution
+                # jamais observee, par exemple apres une coupure de cron plus
+                # longue que LOOKBACK_MAX_S) avalerait silencieusement toutes
+                # les apparitions suivantes de ce defaut : `fresh` exige
+                # `mails == 0`, donc elles ne seraient JAMAIS notifiees. Le
+                # cooldown 6 h ci-dessus est ce qui empeche un rearmement en
+                # rafale. Un defaut normalement suivi ne repasse pas ici : son
+                # apparition est derriere le curseur.
                 tracked[key] = {"appear_ts": e.appear_ts, "mails": 0, "last_mail_ts": 0}
                 cooldown[key] = e.appear_ts
             if skipped:

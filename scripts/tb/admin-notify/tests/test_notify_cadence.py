@@ -77,7 +77,8 @@ def test_mail_is_not_sent_twice_for_the_same_appearance(monkeypatch):
 
 
 def test_transient_fault_resolved_within_grace_sends_nothing(monkeypatch):
-    """Le cas du defaut de communication qui bat de l'aile."""
+    """Le cas du defaut de communication qui bat de l'aile, a cheval sur deux
+    fenetres de scan : le run 1 voit l'apparition, le run 2 la resolution."""
     cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
     _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
     sent = _run(cl, monkeypatch, NOW + 10 * MIN, [(NOW + 5 * MIN, 4, 5, 1)])
@@ -86,12 +87,57 @@ def test_transient_fault_resolved_within_grace_sends_nothing(monkeypatch):
     assert _run(cl, monkeypatch, NOW + GRACE + MIN) == []
 
 
+def test_fault_appearing_and_resolving_in_one_window_is_never_registered(monkeypatch):
+    """Le meme defaut transitoire, mais entierement contenu dans UNE fenetre
+    de scan. `pair_events` complete alors l'evenement d'apparition en place :
+    un seul evenement de type 1 portant deja `resolved_ts`, et aucune fenetre
+    de temps ne s'applique a cet appariement. Il ne doit laisser aucune trace
+    en memoire, sinon il partirait en mail une heure plus tard et sa
+    resolution, passee derriere le curseur, ne l'effacerait jamais."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    sent = _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1),
+                                       (NOW - 4 * MIN, 4, 5, 1)])
+    assert sent == []
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR] == {}
+    assert _run(cl, monkeypatch, NOW + GRACE + MIN) == []
+
+
+def test_new_appearance_rearms_a_stuck_entry_instead_of_being_swallowed(monkeypatch):
+    """Une entree dont la resolution n'a jamais ete observee ne doit pas avaler
+    les apparitions suivantes du meme defaut : `fresh` exigeant `mails == 0`,
+    elles ne seraient sinon JAMAIS notifiees. Le cooldown 6 h est ce qui borne
+    le rearmement."""
+    stuck = {"1|5": {"appear_ts": NOW - 12 * 3600_000, "mails": 1,
+                     "last_mail_ts": NOW - 11 * 3600_000}}
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN,
+                       fn.NOTIFY_STATE_ATTR: stuck,
+                       "recent_fault_notifs": {"1|5": NOW - 12 * 3600_000}})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    entry = cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]
+    assert entry == {"appear_ts": NOW - 5 * MIN, "mails": 0, "last_mail_ts": 0}
+    sent = _run(cl, monkeypatch, NOW + GRACE)
+    assert [to for to, _s in sent] == [["gerant@example.com"]]
+
+
+def test_cursor_still_advances_when_there_is_nothing_to_scan(monkeypatch):
+    """Le chemin `cursor >= cutoff` est le seul ou le curseur n'avance pas de
+    lui-meme : il doit quand meme etre persiste, sinon M18 ne tient que par
+    inspection."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW})
+    assert _run(cl, monkeypatch, NOW) == []
+    assert cl.attrs["last_notified_evt_ts"] == NOW
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR] == {}
+
+
 def test_cooldown_blocks_creating_a_new_entry(monkeypatch):
-    """Anti-rebond 6 h : il filtre desormais la CREATION d'entree, pas l'envoi."""
+    """Anti-rebond 6 h : il filtre desormais la CREATION d'entree, pas l'envoi.
+    On verifie aussi la consequence — aucun mail au run suivant le sursis —
+    et pas seulement la memoire restee vide."""
     cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN,
                        "recent_fault_notifs": {"1|5": NOW - 60 * MIN}})
     _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
     assert cl.attrs[fn.NOTIFY_STATE_ATTR] == {}
+    assert _run(cl, monkeypatch, NOW + GRACE + MIN) == []
 
 
 def test_cursor_advances_even_with_nothing_to_send(monkeypatch):
