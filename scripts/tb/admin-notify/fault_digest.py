@@ -266,6 +266,71 @@ def build_digest(per_device: list[dict], errors: list[str],
     return subject, html, text
 
 
+# ─── Machine a etats du recap, par destinataire (spec §4.1) ────────────────
+
+def _local_anchor_ms(now_ms: int, hour: int) -> int:
+    """Ancre du jour de `now_ms` : ce jour-la a `hour`:00 en heure LOCALE.
+    Le quotidien est ancre sur une heure de la journee et non sur un delai
+    glissant : un delai glissant evalue par un cron horaire repousse chaque
+    envoi d'un peu plus de 24 h et finit par faire le tour du cadran."""
+    day = dt.datetime.fromtimestamp(now_ms / 1000)
+    anchor = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return int(anchor.timestamp() * 1000)
+
+
+def decide_mail(per_device: list[dict], state: dict[str, int], now_ms: int,
+                cfg: dict, has_errors: bool = False) -> tuple[str | None, dict[str, int]]:
+    """Decide s'il faut envoyer un mail a UN destinataire, et lequel.
+
+    per_device  chaufferies de SON perimetre ayant au moins un defaut ouvert,
+                telles que rendues par `_process_device` (cles `id`, `faults`,
+                `carried`). Liste vide = perimetre sain.
+    state       {"last_mail_ts", "last_fast_ts"} lu sur l'utilisateur.
+    cfg         {"grace_ms", "recap_hour", "min_gap_ms", "fast_quota_ms"}.
+    has_errors  au moins une chaufferie de son perimetre a echoue a la
+                collecte ce run (invariant I8).
+
+    Retourne (kind, new_state), kind ∈ {None, "fast", "daily"}.
+    Fonction pure : aucun I/O, tout le temps passe par now_ms.
+    """
+    last_mail = int(state.get("last_mail_ts") or 0)
+    last_fast = int(state.get("last_fast_ts") or 0)
+
+    if not per_device and not has_errors:
+        # Fin d'episode : on oublie la date du dernier mail pour qu'un nouvel
+        # episode ne soit pas baillonne par lui. `last_fast_ts` est un
+        # limiteur de debit, il survit volontairement (spec §4.1 point 1).
+        return None, {"last_mail_ts": 0, "last_fast_ts": last_fast}
+
+    # Mail rapide : une chaufferie sans memoire au run precedent (`carried`
+    # vide) vient d'entrer en defaut, et son sursis est ecoule. Un echec de
+    # collecte n'est jamais une apparition de defaut : il n'entre pas ici.
+    fast_candidate = False
+    for info in per_device:
+        if info.get("carried"):
+            continue
+        appears = [e.appear_ts for e in info["faults"] if e.appear_ts]
+        if appears and now_ms - min(appears) >= cfg["grace_ms"]:
+            fast_candidate = True
+            break
+    if fast_candidate and now_ms - last_fast >= cfg["fast_quota_ms"]:
+        return "fast", {"last_mail_ts": now_ms, "last_fast_ts": now_ms}
+
+    # Quotidien ancre. `last_mail < ancre` interdit un deuxieme envoi aux runs
+    # suivants de la meme journee. `established` interdit au quotidien de
+    # court-circuiter le sursis : sans lui, un defaut apparu a 14 h un jour ou
+    # le perimetre etait sain partirait des le run de 14 h (ancre passee,
+    # last_mail a 0). Une chaufferie en echec de collecte compte comme
+    # etablie : une panne persistante doit ressortir une fois par jour (I8).
+    established = has_errors or any(info.get("carried") for info in per_device)
+    anchor = _local_anchor_ms(now_ms, cfg["recap_hour"])
+    if (established and now_ms >= anchor and last_mail < anchor
+            and now_ms - last_mail >= cfg["min_gap_ms"]):
+        return "daily", {"last_mail_ts": now_ms, "last_fast_ts": last_fast}
+
+    return None, {"last_mail_ts": last_mail, "last_fast_ts": last_fast}
+
+
 def main() -> int:
     profile = os.environ.get("TB_DEVICE_PROFILE_NAME", "pac hybride")
     tb = TBClient()
