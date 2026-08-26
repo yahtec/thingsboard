@@ -518,6 +518,63 @@ def open_faults(events: list[Event]) -> list[Event]:
     return [e for e in events if e.type == 1 and e.resolved_ts is None]
 
 
+# ─── Attributs d'etat (memoires des crons) ─────────────────────────────────
+
+def load_state_attr(raw) -> dict:
+    """Parse la valeur d'un attribut SERVER_SCOPE servant de memoire a un cron.
+    TB peut rendre l'objet JSON deja deserialise ou une chaine. Tout ce qui
+    n'est pas un dict exploitable (absent, JSON invalide, mauvais type,
+    contenu corrompu) vaut etat vierge : on repart de zero plutot que de faire
+    tomber le cron (spec §5.3)."""
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_int_map(raw) -> dict[str, int]:
+    """`load_state_attr` + coercion des valeurs en int. Une entree
+    inexploitable est ignoree seule, sans invalider les autres."""
+    out: dict[str, int] = {}
+    for k, v in load_state_attr(raw).items():
+        try:
+            out[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+# ─── Mute global d'une chaufferie ──────────────────────────────────────────
+# Rend une chaufferie muette pour TOUS les mails, recap comme client. Par
+# defaut le banc d'essai degrade 2610000001 (souvent sans carte PAC ni
+# capteurs -> defauts non representatifs). Vide = n'exclut rien.
+
+DEFAULT_EXCLUDE_DEVICES = "2610000001"
+
+
+def excluded_device_names() -> set[str]:
+    raw = os.environ.get("NOTIFY_EXCLUDE_DEVICES", DEFAULT_EXCLUDE_DEVICES)
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
+def filter_excluded(devices: list[dict], excluded: set[str]) -> tuple[list[dict], list[str]]:
+    """Retire les devices dont le `name` est dans `excluded`. Retourne
+    (gardes, noms_retires) pour que l'appelant journalise ce qui a ete retire
+    — jamais un drop silencieux."""
+    kept: list[dict] = []
+    dropped: list[str] = []
+    for d in devices:
+        if d.get("name") in excluded:
+            dropped.append(d.get("name"))
+        else:
+            kept.append(d)
+    return kept, dropped
+
+
 # ─── SMTP ──────────────────────────────────────────────────────────────────
 
 @dataclass

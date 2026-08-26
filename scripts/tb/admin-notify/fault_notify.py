@@ -13,7 +13,6 @@ Behavior:
 from __future__ import annotations
 
 import datetime as dt
-import json
 import os
 import sys
 import time
@@ -26,8 +25,8 @@ except ImportError:  # pragma: no cover
     fcntl = None
 
 from common import (
-    EVT_KEYS, TBClient, collect_records, label_device, label_fault, open_faults,
-    pair_events, send_mail, setup_logging,
+    EVT_KEYS, TBClient, collect_records, label_device, label_fault, load_int_map,
+    open_faults, pair_events, send_mail, setup_logging,
 )
 
 COALESCE_S = 60
@@ -92,22 +91,7 @@ def _plain(device_name: str, address: str | None, faults: list) -> str:
 
 
 def _load_cooldown(raw) -> dict[str, int]:
-    if not raw:
-        return {}
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, int] = {}
-    for k, v in raw.items():
-        try:
-            out[str(k)] = int(v)
-        except (TypeError, ValueError):
-            continue
-    return out
+    return load_int_map(raw)
 
 
 def _gc_cooldown(cooldown: dict[str, int], now_ms: int) -> dict[str, int]:

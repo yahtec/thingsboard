@@ -53,19 +53,20 @@ it does not pollute other devices' state.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import os
 import sys
 import time
 from html import escape
 
 from common import (
-    EVT_KEYS, Event, TBClient, collect_records, label_device, label_fault,
-    open_faults, pair_events, send_mail, setup_logging,
+    EVT_KEYS, Event, TBClient, collect_records, excluded_device_names,
+    filter_excluded, label_device, label_fault, load_int_map, open_faults,
+    pair_events, send_mail, setup_logging,
 )
 
 LOOKBACK_DAYS = 30  # how far back we scan to *discover* new open faults
 STATE_ATTR = "digest_open_faults"  # per-device SERVER_SCOPE memory, see module docstring (I7)
+
 log = setup_logging("fault_digest")
 
 
@@ -87,27 +88,9 @@ def get_admin_recipients(tb: TBClient) -> list[str]:
 
 
 def _load_open_state(raw) -> dict[str, int]:
-    """Parse the `digest_open_faults` attribute value. Mirrors
-    `fault_notify._load_cooldown`: accepts a dict (TB may hand back the
-    stored JSON object as-is) or a JSON-encoded string; anything else
-    (missing, corrupted, wrong type) is treated as an empty state — start
-    fresh rather than crash the digest."""
-    if not raw:
-        return {}
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, int] = {}
-    for k, v in raw.items():
-        try:
-            out[str(k)] = int(v)
-        except (TypeError, ValueError):
-            continue
-    return out
+    """Cf. common.load_int_map — conserve comme point d'entree nomme pour que
+    le docstring du module (I7) reste lisible."""
+    return load_int_map(raw)
 
 
 def _process_device(tb: TBClient, d: dict, start_ms: int, end_ms: int) -> dict | None:
@@ -287,6 +270,9 @@ def main() -> int:
         return 2
 
     devices = tb.list_devices_by_profile(profile)
+    devices, dropped = filter_excluded(devices, excluded_device_names())
+    if dropped:
+        log.info("digest: %d device(s) exclus du récap: %s", len(dropped), ", ".join(sorted(dropped)))
     now_ms = int(time.time() * 1000)
     log.info("scanning %d devices over last %dd", len(devices), LOOKBACK_DAYS)
     per, errors = collect_open_per_device(tb, devices, now_ms)
