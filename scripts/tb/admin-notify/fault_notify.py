@@ -25,8 +25,9 @@ except ImportError:  # pragma: no cover
     fcntl = None
 
 from common import (
-    EVT_KEYS, TBClient, collect_records, label_device, label_fault, load_int_map,
-    open_faults, pair_events, send_mail, setup_logging,
+    EVT_KEYS, Event, TBClient, collect_records, label_device, label_fault,
+    load_int_map, load_state_attr, mail_grace_ms, open_faults, pair_events,
+    send_mail, setup_logging,
 )
 
 COALESCE_S = 60
@@ -34,6 +35,7 @@ LOOKBACK_DEFAULT_S = 300        # cold start: only look at last 5 min
 LOOKBACK_MAX_S = 24 * 3600      # safety cap: never scan more than 24h in one shot
 COOLDOWN_S = 6 * 3600           # don't re-notify same (device, fault) within 6h
 COOLDOWN_GC_S = 24 * 3600       # drop cooldown entries older than this
+NOTIFY_STATE_ATTR = "notify_open_faults"
 LOCK_PATH = "/tmp/tb-notify-fault.lock"
 log = setup_logging("fault_notify")
 
@@ -99,73 +101,114 @@ def _gc_cooldown(cooldown: dict[str, int], now_ms: int) -> dict[str, int]:
     return {k: v for k, v in cooldown.items() if v >= threshold}
 
 
+def _load_notify_state(raw) -> dict[str, dict]:
+    """Memoire des defauts suivis par CE script, indexee "<device>|<fault>"
+    (meme convention que le cooldown, l'inverse de celle du digest).
+    Une entree inexploitable est ignoree seule ; un attribut corrompu vaut
+    memoire vide (spec §5.3)."""
+    out: dict[str, dict] = {}
+    for key, val in load_state_attr(raw).items():
+        if not isinstance(val, dict):
+            continue
+        try:
+            out[str(key)] = {
+                "appear_ts": int(val["appear_ts"]),
+                "mails": int(val.get("mails", 0)),
+                "last_mail_ts": int(val.get("last_mail_ts", 0)),
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _synthetic(key: str, entry: dict) -> Event | None:
+    """Reconstruit un Event affichable depuis une entree memorisee : le mail
+    part potentiellement bien apres le run qui a vu l'apparition, l'evenement
+    d'origine n'est donc plus dans la fenetre scannee."""
+    parts = key.split("|")
+    if len(parts) != 2:
+        return None
+    try:
+        device, fault = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    ts = entry["appear_ts"]
+    return Event(ts=ts, appear_ts=ts, type=1, fault=fault, device=device,
+                 status=0, fault_src=-1, evt_id=0)
+
+
 def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
                    users: list[dict] | None = None) -> None:
     dev_id = dev["id"]["id"]
     dev_name = dev["name"]
     attrs = tb.get_server_attrs("DEVICE", dev_id, [
-        "last_notified_evt_ts", "recent_fault_notifs",
+        "last_notified_evt_ts", "recent_fault_notifs", NOTIFY_STATE_ATTR,
         "nom_residence", "nom_alternatif", "adresse",
     ])
     cursor = int(attrs.get("last_notified_evt_ts") or (now_ms - LOOKBACK_DEFAULT_S * 1000))
     cursor = max(cursor, now_ms - LOOKBACK_MAX_S * 1000)
     cooldown = _load_cooldown(attrs.get("recent_fault_notifs"))
+    tracked = _load_notify_state(attrs.get(NOTIFY_STATE_ATTR))
 
-    if cursor >= cutoff_ms:
-        return  # nothing to scan yet
-
-    ts_data = tb.get_timeseries(dev_id, EVT_KEYS, cursor + 1, cutoff_ms)
-    records = collect_records(ts_data)
-    if not records:
-        tb.save_server_attrs("DEVICE", dev_id, {"last_notified_evt_ts": cutoff_ms})
-        return
-
-    events = pair_events(records)
-    new_appearances = [e for e in events if e.type == 1 and e.appear_ts and cursor < e.appear_ts <= cutoff_ms]
-    new_appearances.sort(key=lambda e: e.appear_ts)
-
-    to_notify, skipped = [], 0
-    cooldown_ms = COOLDOWN_S * 1000
-    for e in new_appearances:
-        key = f"{e.device}|{e.fault}"
-        last = int(cooldown.get(key, 0))
-        if e.appear_ts >= last + cooldown_ms:
-            to_notify.append(e)
-            cooldown[key] = e.appear_ts
+    # ── 1. Detection : inscrire les nouveautes, retirer les resolutions ──
+    advance = cursor
+    if cursor < cutoff_ms:
+        records = collect_records(tb.get_timeseries(dev_id, EVT_KEYS, cursor + 1, cutoff_ms))
+        if not records:
+            advance = cutoff_ms
         else:
-            skipped += 1
+            advance = max(r["ts"] for r in records)
+            events = pair_events(records)
+            for e in events:
+                if e.resolved_ts is not None:
+                    tracked.pop(f"{e.device}|{e.fault}", None)
+            new_appearances = [e for e in events
+                               if e.type == 1 and e.appear_ts
+                               and cursor < e.appear_ts <= cutoff_ms]
+            new_appearances.sort(key=lambda e: e.appear_ts)
+            skipped = 0
+            for e in new_appearances:
+                key = f"{e.device}|{e.fault}"
+                if key in tracked:
+                    continue  # deja suivi
+                if e.appear_ts < int(cooldown.get(key, 0)) + COOLDOWN_S * 1000:
+                    skipped += 1
+                    continue  # anti-rebond 6 h : pas de nouveau cycle
+                tracked[key] = {"appear_ts": e.appear_ts, "mails": 0, "last_mail_ts": 0}
+                cooldown[key] = e.appear_ts
+            if skipped:
+                log.info("device=%s %d apparition(s) dans le cooldown 6h", dev_name, skipped)
 
-    if skipped:
-        log.info("device=%s skipped %d apparitions within 6h cooldown", dev_name, skipped)
-
-    # M18 : le check destinataires vient APRES le calcul du curseur/records,
-    # et ne fait plus un `return` anticipe. Sinon un device sans destinataire
-    # (aucun CanView encore accorde) n'avancait JAMAIS son curseur -> le jour
-    # ou un CanView est enfin accorde, jusqu'a 24h de vieux defauts (le cap
-    # LOOKBACK_MAX_S) partaient en rafale dans un seul mail.
-    # Destinataires = users TB ayant accès à cette chaufferie (admins + ceux
-    # qui ont ce deviceId dans leur attribut `chaufferies`). Les comptes
-    # désactivés (userCredentialsEnabled=false) sont exclus en amont.
-    if to_notify:
+    # ── 2. Echeances : sursis ecoule -> mail d'apparition ──
+    grace_ms = mail_grace_ms()
+    fresh = sorted(k for k, v in tracked.items()
+                   if v["mails"] == 0 and now_ms - v["appear_ts"] >= grace_ms)
+    if fresh:
+        faults = [ev for ev in (_synthetic(k, tracked[k]) for k in fresh) if ev]
         emails = tb.get_recipients_for_device(dev_id, users)
-        if emails:
+        if emails and faults:
             display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
             addr = attrs.get("adresse") or ""
-            html, text = render_mail(display, addr, to_notify)
-            subject = (f"[TDUO] {display} — défaut: {label_fault(to_notify[0].fault)}"
-                       if len(to_notify) == 1
-                       else f"[TDUO] {display} — {len(to_notify)} nouveaux défauts")
+            html, text = render_mail(display, addr, faults)
+            subject = (f"[TDUO] {display} — défaut: {label_fault(faults[0].fault)}"
+                       if len(faults) == 1
+                       else f"[TDUO] {display} — {len(faults)} nouveaux défauts")
             send_mail(emails, subject, html, text)
-            log.info("device=%s sent %d faults to %s", dev_name, len(to_notify), ", ".join(emails))
+            log.info("device=%s %d defaut(s) envoye(s) a %s", dev_name, len(faults), ", ".join(emails))
         else:
-            log.info("device=%s %d new faults but no recipients — not sent, curseur avance quand même",
-                     dev_name, len(to_notify))
+            log.info("device=%s %d defaut(s) mur(s) mais aucun destinataire — non envoye",
+                     dev_name, len(fresh))
+        # L'echeance est consommee meme sans destinataire : sinon elle se
+        # redeclencherait a chaque run indefiniment (esprit de M18).
+        for key in fresh:
+            tracked[key]["mails"] = 1
+            tracked[key]["last_mail_ts"] = now_ms
 
     cooldown = _gc_cooldown(cooldown, now_ms)
-    advance = max((r["ts"] for r in records), default=cutoff_ms)
     tb.save_server_attrs("DEVICE", dev_id, {
         "last_notified_evt_ts": advance,
         "recent_fault_notifs": cooldown,
+        NOTIFY_STATE_ATTR: tracked,
     })
 
 
