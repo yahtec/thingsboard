@@ -324,7 +324,8 @@ class TBClient:
             # 1er login -> un intervenant activé mais jamais connecté était exclu à tort du
             # routage. Le routage repose désormais sur la seule vérité RBAC (CanView + is_admin).
             try:
-                attrs = self.get_server_attrs("USER", uid, ["is_admin", "deactivated"])
+                attrs = self.get_server_attrs(
+                    "USER", uid, ["is_admin", "deactivated", MAIL_EXCLUDE_ATTR])
             except Exception:
                 # I6 : fail-closed, pas fail-open. `attrs = {}` traiterait un
                 # `deactivated` comme actif (re-routage) et un `is_admin` comme
@@ -345,10 +346,12 @@ class TBClient:
             else:
                 chauff = []
             out.append({
+                "id": uid,
                 "email": email,
                 "authority": u.get("authority"),
                 "is_admin": bool(attrs.get("is_admin")),
                 "chaufferies": [str(x) for x in chauff],
+                "mail_exclude": load_exclude_list(attrs.get(MAIL_EXCLUDE_ATTR)),
             })
         return out
 
@@ -387,6 +390,34 @@ class TBClient:
                and u["email"].strip().lower() != self_email]
         seen = set()
         return [e for e in out if not (e in seen or seen.add(e))]
+
+    def get_admin_targets(self, users: list[dict] | None = None) -> list[dict]:
+        """Destinataires du recap avec ce qu'il faut pour evaluer leur cadence :
+        leur id (porteur de l'attribut d'etat) et leurs exclusions. Meme filtre
+        que get_admin_emails, compte de service inclus (M14)."""
+        if users is None:
+            users = self._collect_user_attrs()
+        self_email = (self.user or "").strip().lower()
+        out: list[dict] = []
+        seen: set[str] = set()
+        for u in users:
+            if not (u["authority"] == "TENANT_ADMIN" or u["is_admin"]):
+                continue
+            email = u["email"]
+            low = email.strip().lower()
+            if low == self_email or low in seen:
+                continue
+            seen.add(low)
+            out.append({"id": u["id"], "email": email,
+                        "exclude": set(u.get("mail_exclude") or ())})
+        return out
+
+    def get_digest_state(self, user_id: str) -> dict[str, int]:
+        attrs = self.get_server_attrs("USER", user_id, [DIGEST_STATE_ATTR])
+        return load_digest_state(attrs.get(DIGEST_STATE_ATTR))
+
+    def save_digest_state(self, user_id: str, state: dict[str, int]) -> None:
+        self.save_server_attrs("USER", user_id, {DIGEST_STATE_ATTR: state})
 
     def get_timeseries(self, device_id: str, keys: Iterable[str], start_ts: int, end_ts: int,
                        limit: int = 50000) -> dict[str, list[dict]]:
@@ -630,6 +661,36 @@ def reminder_steps_ms() -> list[int]:
         except ValueError:
             continue
     return out or [h * 3600 * 1000 for h in REMINDER_STEPS_DEFAULT]
+
+
+# ─── Etat de cadence du recap, porte par l'utilisateur (spec §5.1) ─────────
+
+MAIL_EXCLUDE_ATTR = "mail_exclude_devices"
+DIGEST_STATE_ATTR = "mail_digest_state"
+
+
+def load_digest_state(raw) -> dict[str, int]:
+    """Deux horodatages, toujours presents. `last_mail_ts` a 0 signifie
+    "episode non encore annonce" ; `last_fast_ts` est un limiteur de debit
+    qui survit a la fin d'un episode."""
+    st = load_int_map(raw)
+    return {"last_mail_ts": st.get("last_mail_ts", 0),
+            "last_fast_ts": st.get("last_fast_ts", 0)}
+
+
+def load_exclude_list(raw) -> list[str]:
+    """Liste d'ids de devices depuis un attribut USER. Accepte une liste ou
+    une chaine JSON ; tout le reste vaut liste vide (aucune exclusion), ce qui
+    est le repli sur pour un filtre de notification : un oubli de config
+    produit un mail de trop, jamais un silence."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw]
 
 
 # ─── SMTP ──────────────────────────────────────────────────────────────────
