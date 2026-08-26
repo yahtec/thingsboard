@@ -575,6 +575,63 @@ def filter_excluded(devices: list[dict], excluded: set[str]) -> tuple[list[dict]
     return kept, dropped
 
 
+# ─── Reglages de cadence (spec §8) ─────────────────────────────────────────
+# Lus a chaque appel (pas au chargement du module) pour que les tests
+# puissent les surcharger avec monkeypatch.setenv.
+
+def _env_int(name: str, default: int) -> int:
+    """Entier depuis l'environnement, avec repli silencieux sur le defaut :
+    une variable mal saisie ne doit pas empecher un cron de tourner."""
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def mail_grace_ms() -> int:
+    """Sursis entre l'apparition d'un defaut et le premier mail qui en parle.
+    Un defaut resolu pendant son sursis ne produit aucun mail."""
+    return _env_int("MAIL_GRACE_MIN", 60) * 60 * 1000
+
+
+def digest_recap_hour() -> int:
+    """Heure locale a laquelle le recap admin quotidien est du."""
+    return _env_int("DIGEST_RECAP_HOUR", 7)
+
+
+def digest_min_gap_ms() -> int:
+    """Ecart minimal entre deux mails admin : supprime le quotidien s'il
+    tombe juste apres un mail rapide."""
+    return _env_int("DIGEST_MIN_GAP_HOURS", 6) * 3600 * 1000
+
+
+def digest_fast_quota_ms() -> int:
+    """Intervalle minimal entre deux mails rapides. C'est le limiteur
+    anti-battement : une chaufferie qui bat de l'aile ne peut pas declencher
+    un mail rapide par cycle."""
+    return _env_int("DIGEST_FAST_QUOTA_HOURS", 24) * 3600 * 1000
+
+
+REMINDER_STEPS_DEFAULT = (24, 72, 168)
+
+
+def reminder_steps_ms() -> list[int]:
+    """Paliers d'escalade des rappels client, en millisecondes. Une entree
+    illisible est ignoree ; une liste vide retombe sur le defaut, sinon le
+    moteur de rappel n'aurait plus aucun palier a appliquer."""
+    raw = os.environ.get("NOTIFY_REMINDER_HOURS", "")
+    out: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part) * 3600 * 1000)
+        except ValueError:
+            continue
+    return out or [h * 3600 * 1000 for h in REMINDER_STEPS_DEFAULT]
+
+
 # ─── SMTP ──────────────────────────────────────────────────────────────────
 
 @dataclass
