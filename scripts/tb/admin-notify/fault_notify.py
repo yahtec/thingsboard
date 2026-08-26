@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
 from common import (
     EVT_KEYS, Event, TBClient, collect_records, label_device, label_fault,
     load_int_map, load_state_attr, mail_grace_ms, open_faults, pair_events,
-    send_mail, setup_logging,
+    reminder_steps_ms as common_reminder_steps, send_mail, setup_logging,
 )
 
 COALESCE_S = 60
@@ -92,6 +92,57 @@ def _plain(device_name: str, address: str | None, faults: list) -> str:
     return "\n".join(lines)
 
 
+def render_reminder(device_name: str, address: str | None, faults: list,
+                    now_ms: int) -> tuple[str, str]:
+    """Gabarit DISTINCT du mail d'apparition : bandeau ambre, mention de
+    l'anciennete. Un client ne doit pas confondre une relance avec un
+    nouveau defaut."""
+    rows, plain = [], [f"Défaut toujours ouvert sur {device_name}"]
+    if address:
+        plain.append(address)
+    plain.append("")
+    for e in faults:
+        days = max(0, (now_ms - (e.appear_ts or now_ms)) // 86400000)
+        age = "aujourd'hui" if days < 1 else f"depuis {days} jour{'s' if days > 1 else ''}"
+        rows.append(
+            "<tr>"
+            f"<td style='padding:8px 12px;border-bottom:1px solid #eee'>{fmt_ts(e.appear_ts)}</td>"
+            f"<td style='padding:8px 12px;border-bottom:1px solid #eee'>{escape(label_fault(e.fault))}</td>"
+            f"<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#555'>{escape(label_device(e.device))}</td>"
+            f"<td style='padding:8px 12px;border-bottom:1px solid #eee;color:#8a6d3b'>{escape(age)}</td>"
+            "</tr>"
+        )
+        plain.append(f"  {fmt_ts(e.appear_ts)}  {label_fault(e.fault)}  ({label_device(e.device)})  {age}")
+    plural = "s" if len(faults) > 1 else ""
+    addr_html = (f"<div style='color:#6b7280;font-size:13px;margin-top:3px'>{escape(address)}</div>"
+                 if address else "")
+    html = f"""<!doctype html><html><body style="font-family:-apple-system,Segoe UI,sans-serif;color:#222;background:#f6f7f9;margin:0;padding:24px">
+<div style="max-width:640px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);border-top:3px solid #e0a800">
+  <div style="padding:16px 20px;border-bottom:1px solid #eef0f2">
+    <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8a6d3b"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#e0a800;margin-right:7px;vertical-align:middle"></span>Rappel — défaut non résolu</div>
+    <div style="font-size:20px;font-weight:600;margin-top:5px;color:#1c2533">{escape(device_name)}</div>
+    {addr_html}
+  </div>
+  <div style="padding:18px 20px">
+    <p style="margin:0 0 14px">{len(faults)} défaut{plural} signalé{plural} précédemment {'est' if len(faults) == 1 else 'sont'} toujours ouvert{plural}&nbsp;:</p>
+    <table style="border-collapse:collapse;width:100%;font-size:14px">
+      <thead><tr style="background:#fafafa">
+        <th style="text-align:left;padding:8px 12px;color:#555;font-weight:600;border-bottom:1px solid #eee">Apparition</th>
+        <th style="text-align:left;padding:8px 12px;color:#555;font-weight:600;border-bottom:1px solid #eee">Défaut</th>
+        <th style="text-align:left;padding:8px 12px;color:#555;font-weight:600;border-bottom:1px solid #eee">Sous-équipement</th>
+        <th style="text-align:left;padding:8px 12px;color:#555;font-weight:600;border-bottom:1px solid #eee">Ouvert</th>
+      </tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+  </div>
+  <div style="background:#fafafa;color:#888;padding:12px 20px;font-size:12px;border-top:1px solid #eee">
+    Rappel automatique &middot; {fmt_ts(now_ms)}
+  </div>
+</div></body></html>"""
+    plain.append("")
+    return html, "\n".join(plain)
+
+
 def _load_cooldown(raw) -> dict[str, int]:
     return load_int_map(raw)
 
@@ -137,18 +188,92 @@ def _synthetic(key: str, entry: dict) -> Event | None:
                  status=0, fault_src=-1, evt_id=0)
 
 
+def reminder_due(entry: dict, now_ms: int, steps_ms: list[int]) -> bool:
+    """Un rappel est du si le defaut a deja ete annonce (`mails >= 1`) et que
+    le palier correspondant a son compteur est ecoule. Au-dela de la liste on
+    reste sur le dernier palier : un defaut chronique est relance a la
+    frequence la plus lente, indefiniment, jusqu'a resolution."""
+    mails = int(entry.get("mails", 0))
+    if mails < 1 or not steps_ms:
+        return False
+    step = steps_ms[min(mails, len(steps_ms)) - 1]
+    return now_ms - int(entry.get("last_mail_ts", 0)) >= step
+
+
+def _flip_key(key: str) -> str | None:
+    """`digest_open_faults` indexe "<fault>|<device>", la memoire de ce script
+    et le cooldown indexent "<device>|<fault>". L'amorcage doit donc inverser
+    — sinon les defauts amorces ne correspondent a aucune resolution observee
+    et ne seraient jamais effaces."""
+    parts = key.split("|")
+    if len(parts) != 2:
+        return None
+    return f"{parts[1]}|{parts[0]}"
+
+
+def _seed_from_digest(raw, now_ms: int) -> dict[str, dict]:
+    """Amorcage au premier run d'une chaufferie (spec §4.2) : les defauts
+    deja ouverts au deploiement n'ont pas d'entree et ne seraient donc jamais
+    relances — un angle mort permanent sur les defauts en cours. On les
+    reprend de la memoire du digest avec `mails=1` (ils ont deja ete annonces
+    en leur temps) et `last_mail_ts=now`, donc premier rappel a 24 h."""
+    out: dict[str, dict] = {}
+    for key, appear_ts in load_int_map(raw).items():
+        flipped = _flip_key(key)
+        if flipped is None:
+            continue
+        out[flipped] = {"appear_ts": appear_ts, "mails": 1, "last_mail_ts": now_ms}
+    return out
+
+
+def _mail_batch(emails: list[str], display: str, addr: str, tracked: dict,
+                keys: list[str], now_ms: int, reminder: bool) -> None:
+    """Un mail par lot (apparitions d'un cote, rappels de l'autre) : les deux
+    ne disent pas la meme chose, ils ne doivent pas etre fusionnes."""
+    if not keys:
+        return
+    built = {k: _synthetic(k, tracked[k]) for k in keys}
+    faults = [ev for ev in built.values() if ev]
+    # Une cle de memoire illisible ne doit pas disparaitre en silence : son
+    # echeance est consommee par l'appelant, donc sans cette trace le defaut
+    # serait jete sans qu'aucun log ne le dise. N'arrive que sur un attribut
+    # corrompu, le producteur formatant toujours "<int>|<int>".
+    bad = [k for k, ev in built.items() if ev is None]
+    if bad:
+        log.warning("device=%s cle(s) de memoire illisible(s), ignoree(s): %s",
+                    display, ", ".join(sorted(bad)))
+    if not faults:
+        return
+    if reminder:
+        html, text = render_reminder(display, addr, faults, now_ms)
+        subject = (f"[TDUO] {display} — défaut toujours ouvert: {label_fault(faults[0].fault)}"
+                   if len(faults) == 1
+                   else f"[TDUO] {display} — {len(faults)} défauts toujours ouverts")
+    else:
+        html, text = render_mail(display, addr, faults)
+        subject = (f"[TDUO] {display} — défaut: {label_fault(faults[0].fault)}"
+                   if len(faults) == 1
+                   else f"[TDUO] {display} — {len(faults)} nouveaux défauts")
+    send_mail(emails, subject, html, text)
+    log.info("device=%s %s: %d defaut(s) -> %s", display,
+             "rappel" if reminder else "apparition", len(faults), ", ".join(emails))
+
+
 def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
                    users: list[dict] | None = None) -> None:
     dev_id = dev["id"]["id"]
     dev_name = dev["name"]
     attrs = tb.get_server_attrs("DEVICE", dev_id, [
         "last_notified_evt_ts", "recent_fault_notifs", NOTIFY_STATE_ATTR,
-        "nom_residence", "nom_alternatif", "adresse",
+        "nom_residence", "nom_alternatif", "adresse", "digest_open_faults",
     ])
     cursor = int(attrs.get("last_notified_evt_ts") or (now_ms - LOOKBACK_DEFAULT_S * 1000))
     cursor = max(cursor, now_ms - LOOKBACK_MAX_S * 1000)
     cooldown = _load_cooldown(attrs.get("recent_fault_notifs"))
-    tracked = _load_notify_state(attrs.get(NOTIFY_STATE_ATTR))
+    if NOTIFY_STATE_ATTR in attrs:
+        tracked = _load_notify_state(attrs.get(NOTIFY_STATE_ATTR))
+    else:
+        tracked = _seed_from_digest(attrs.get("digest_open_faults"), now_ms)
 
     # ── 1. Detection : inscrire les nouveautes, retirer les resolutions ──
     advance = cursor
@@ -198,29 +323,27 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
             if skipped:
                 log.info("device=%s %d apparition(s) dans le cooldown 6h", dev_name, skipped)
 
-    # ── 2. Echeances : sursis ecoule -> mail d'apparition ──
+    # ── 2. Echeances : sursis ecoule -> mail d'apparition, ou rappel du ──
     grace_ms = mail_grace_ms()
+    steps = common_reminder_steps()
     fresh = sorted(k for k, v in tracked.items()
                    if v["mails"] == 0 and now_ms - v["appear_ts"] >= grace_ms)
-    if fresh:
-        faults = [ev for ev in (_synthetic(k, tracked[k]) for k in fresh) if ev]
+    due = sorted(k for k, v in tracked.items() if reminder_due(v, now_ms, steps))
+
+    if fresh or due:
         emails = tb.get_recipients_for_device(dev_id, users)
-        if emails and faults:
-            display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
-            addr = attrs.get("adresse") or ""
-            html, text = render_mail(display, addr, faults)
-            subject = (f"[TDUO] {display} — défaut: {label_fault(faults[0].fault)}"
-                       if len(faults) == 1
-                       else f"[TDUO] {display} — {len(faults)} nouveaux défauts")
-            send_mail(emails, subject, html, text)
-            log.info("device=%s %d defaut(s) envoye(s) a %s", dev_name, len(faults), ", ".join(emails))
+        display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
+        addr = attrs.get("adresse") or ""
+        if emails:
+            _mail_batch(emails, display, addr, tracked, fresh, now_ms, reminder=False)
+            _mail_batch(emails, display, addr, tracked, due, now_ms, reminder=True)
         else:
-            log.info("device=%s %d defaut(s) mur(s) mais aucun destinataire — non envoye",
-                     dev_name, len(fresh))
-        # L'echeance est consommee meme sans destinataire : sinon elle se
-        # redeclencherait a chaque run indefiniment (esprit de M18).
-        for key in fresh:
-            tracked[key]["mails"] = 1
+            log.info("device=%s %d apparition(s) / %d rappel(s) mais aucun destinataire",
+                     dev_name, len(fresh), len(due))
+        # Echeances consommees meme sans destinataire : sinon elles se
+        # redeclencheraient a chaque run indefiniment (esprit de M18).
+        for key in fresh + due:
+            tracked[key]["mails"] += 1
             tracked[key]["last_mail_ts"] = now_ms
 
     cooldown = _gc_cooldown(cooldown, now_ms)

@@ -162,3 +162,103 @@ def test_load_notify_state_is_defensive():
     assert fn._load_notify_state({"1|5": {"mails": 1}}) == {}   # appear_ts manquant
     assert fn._load_notify_state({"1|5": {"appear_ts": "7"}}) == {
         "1|5": {"appear_ts": 7, "mails": 0, "last_mail_ts": 0}}
+
+
+# ── Rappels en escalade (spec §4.2) ─────────────────────────────────────────
+
+H = 3600_000
+STEPS = [24 * H, 72 * H, 168 * H]
+
+
+def test_reminder_due_follows_the_escalation_ladder():
+    assert fn.reminder_due({"mails": 1, "last_mail_ts": 0}, 24 * H - 1, STEPS) is False
+    assert fn.reminder_due({"mails": 1, "last_mail_ts": 0}, 24 * H, STEPS) is True
+    assert fn.reminder_due({"mails": 2, "last_mail_ts": 0}, 72 * H - 1, STEPS) is False
+    assert fn.reminder_due({"mails": 2, "last_mail_ts": 0}, 72 * H, STEPS) is True
+    assert fn.reminder_due({"mails": 3, "last_mail_ts": 0}, 168 * H, STEPS) is True
+
+
+def test_reminder_due_stays_on_the_last_step_beyond_the_ladder():
+    assert fn.reminder_due({"mails": 9, "last_mail_ts": 0}, 167 * H, STEPS) is False
+    assert fn.reminder_due({"mails": 9, "last_mail_ts": 0}, 168 * H, STEPS) is True
+
+
+def test_reminder_due_never_fires_before_the_first_mail():
+    assert fn.reminder_due({"mails": 0, "last_mail_ts": 0}, 999 * H, STEPS) is False
+
+
+def test_unresolved_fault_is_reminded_at_24h_then_72h(monkeypatch):
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    t1 = NOW + GRACE
+    _run(cl, monkeypatch, t1)                                  # mail d'apparition
+    assert _run(cl, monkeypatch, t1 + 23 * H) == []
+    sent = _run(cl, monkeypatch, t1 + 24 * H)
+    assert len(sent) == 1 and "toujours" in sent[0][1].lower()
+    t2 = t1 + 24 * H
+    assert _run(cl, monkeypatch, t2 + 71 * H) == []
+    assert len(_run(cl, monkeypatch, t2 + 72 * H)) == 1
+
+
+def test_resolution_stops_the_reminders(monkeypatch):
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    t1 = NOW + GRACE
+    _run(cl, monkeypatch, t1)
+    _run(cl, monkeypatch, t1 + MIN, [(t1, 4, 5, 1)])
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR] == {}
+    assert _run(cl, monkeypatch, t1 + 48 * H) == []
+
+
+def test_appearance_and_reminder_are_two_distinct_mails(monkeypatch):
+    """Un defaut mur et un autre a relancer dans le meme run : deux mails,
+    deux sujets differents."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    t1 = NOW + GRACE
+    _run(cl, monkeypatch, t1)
+    # un second defaut apparait 24 h plus tard, murit, et le premier est du
+    t2 = t1 + 24 * H
+    _run(cl, monkeypatch, t2 - 30 * MIN, [(t2 - 35 * MIN, 1, 7, 1)])
+    # Le run final doit laisser au second defaut le temps de son sursis :
+    # t2 + 30 min lui donne 65 min depuis son apparition (t2 - 35 min), et
+    # 24 h 30 depuis le mail d'apparition du premier, donc son rappel est du.
+    sent = _run(cl, monkeypatch, t2 + 30 * MIN)
+    subjects = [s for _to, s in sent]
+    assert len(subjects) == 2
+    assert any("toujours" in s.lower() for s in subjects)
+    assert any("toujours" not in s.lower() for s in subjects)
+
+
+# ── Amorcage depuis la memoire du digest ────────────────────────────────────
+
+def test_flip_key_inverts_the_digest_convention():
+    assert fn._flip_key("15|50") == "50|15"
+    assert fn._flip_key("nawak") is None
+    assert fn._flip_key("a|b|c") is None
+
+
+def test_seed_from_digest_on_first_run(monkeypatch):
+    """Attribut absent : on reprend les defauts deja connus du digest avec
+    mails=1, pour qu'un defaut en cours au deploiement soit relance a 24 h."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW - MIN,
+                       "digest_open_faults": {"5|1": NOW - 5 * 24 * H}})
+    sent = _run(cl, monkeypatch, NOW)
+    assert sent == []                                          # pas de re-annonce
+    entry = cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]
+    assert entry["mails"] == 1 and entry["last_mail_ts"] == NOW
+    assert len(_run(cl, monkeypatch, NOW + 24 * H)) == 1        # relance a 24 h
+
+
+def test_no_reseed_once_the_attribute_exists(monkeypatch):
+    cl = Client(attrs={"last_notified_evt_ts": NOW - MIN,
+                       "digest_open_faults": {"5|1": NOW - 5 * 24 * H},
+                       fn.NOTIFY_STATE_ATTR: {}})
+    _run(cl, monkeypatch, NOW)
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR] == {}
+
+
+def test_seed_tolerates_a_missing_or_corrupt_digest_memory():
+    assert fn._seed_from_digest(None, NOW) == {}
+    assert fn._seed_from_digest("corrompu", NOW) == {}
+    assert fn._seed_from_digest({"nawak": 1}, NOW) == {}
