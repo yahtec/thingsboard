@@ -297,10 +297,12 @@ def decide_mail(per_device: list[dict], state: dict[str, int], now_ms: int,
     last_fast = int(state.get("last_fast_ts") or 0)
 
     if not per_device and not has_errors:
-        # Fin d'episode : on oublie la date du dernier mail pour qu'un nouvel
-        # episode ne soit pas baillonne par lui. `last_fast_ts` est un
-        # limiteur de debit, il survit volontairement (spec §4.1 point 1).
-        return None, {"last_mail_ts": 0, "last_fast_ts": last_fast}
+        # Fin d'episode : les DEUX horodatages survivent. Ce sont des limiteurs
+        # de debit, pas des etats d'episode (spec §4.1 point 1). Remettre
+        # last_mail_ts a 0 ici libererait d'un coup les deux freins du
+        # quotidien — ils lisent le meme horodatage — et un defaut qui bat de
+        # l'aile produirait plusieurs recaps dans la meme journee.
+        return None, {"last_mail_ts": last_mail, "last_fast_ts": last_fast}
 
     # Mail rapide : une chaufferie sans memoire au run precedent (`carried`
     # vide) vient d'entrer en defaut, et son sursis est ecoule. Un echec de

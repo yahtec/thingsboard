@@ -33,12 +33,40 @@ def _state(last_mail=0, last_fast=0):
 
 # ── Perimetre sain ──────────────────────────────────────────────────────────
 
-def test_clean_perimeter_sends_nothing_and_closes_episode():
+def test_clean_perimeter_sends_nothing_and_keeps_both_limiters():
+    """Les deux horodatages survivent a la fin d'un episode : ce sont des
+    limiteurs de debit, pas des etats d'episode."""
     kind, st = fd.decide_mail([], _state(last_mail=_at(10, 7), last_fast=_at(10, 7)),
                               _at(10, 12), CFG)
     assert kind is None
-    assert st["last_mail_ts"] == 0                      # episode clos
-    assert st["last_fast_ts"] == _at(10, 7)             # limiteur conserve
+    assert st == _state(last_mail=_at(10, 7), last_fast=_at(10, 7))
+
+
+def test_resolved_then_refaulted_same_day_gets_no_second_daily():
+    """Le cas qui casserait le plafond de 2 mails/jour si la fin d'episode
+    remettait last_mail_ts a 0 : les deux freins du quotidien lisent cet
+    horodatage, les liberer ferait repartir un recap toutes les 3 heures."""
+    st = _state(last_mail=_at(10, 10), last_fast=_at(9, 8))
+    # 11h : le defaut se resout, perimetre sain
+    kind, st = fd.decide_mail([], st, _at(10, 11), CFG)
+    assert kind is None
+    # 12h : nouveau defaut apparu a 11h30, sursis non ecoule, pas encore memorise
+    kind, st = fd.decide_mail([_info("d1", _at(10, 11, 30))], st, _at(10, 12), CFG)
+    assert kind is None
+    # 13h : l'episode a survecu a un run, il est donc "etabli" — mais le
+    # quotidien est deja parti a 10h aujourd'hui, il ne doit PAS repartir
+    kind, _ = fd.decide_mail([_info("d1", _at(10, 11, 30), carried={"15|50"})],
+                             st, _at(10, 13), CFG)
+    assert kind is None
+
+
+def test_new_episode_the_day_after_still_gets_its_daily():
+    """Contrepartie du test precedent : conserver last_mail_ts ne baillonne pas
+    un episode du lendemain, puisqu'un horodatage de la veille est bien
+    inferieur a l'ancre du jour."""
+    kind, _ = fd.decide_mail([_info("d1", _at(11, 5), carried={"15|50"})],
+                             _state(last_mail=_at(10, 10)), _at(11, 7), CFG)
+    assert kind == "daily"
 
 
 # ── Mail rapide ─────────────────────────────────────────────────────────────
@@ -85,6 +113,26 @@ def test_fast_quota_frees_after_24h():
     assert kind == "fast"
 
 
+def test_fast_quota_boundary_is_inclusive():
+    """Exactement 24 h depuis le dernier rapide : la borne doit passer."""
+    kind, _ = fd.decide_mail([_info("d1", _at(11, 13))],
+                             _state(last_mail=_at(10, 15), last_fast=_at(10, 15)),
+                             _at(11, 15), CFG)
+    assert kind == "fast"
+
+
+def test_fast_candidate_blocked_by_quota_falls_through_to_the_daily():
+    """La combinaison reelle : candidat rapide (sursis ecoule, jamais vu au run
+    precedent) PLUS quota consomme PLUS episode etabli par une autre
+    chaufferie. Sans ce cas, retirer la condition de quota ne ferait echouer
+    aucun test."""
+    per = [_info("d1", _at(10, 5), carried={"15|50"}),   # etablit l'episode
+           _info("d2", _at(10, 16))]                     # candidat rapide
+    kind, _ = fd.decide_mail(per, _state(last_mail=0, last_fast=_at(10, 15)),
+                             _at(10, 18), CFG)
+    assert kind == "daily"
+
+
 # ── Quotidien ancre ─────────────────────────────────────────────────────────
 
 def test_daily_fires_at_anchor_for_an_established_episode():
@@ -125,6 +173,23 @@ def test_daily_suppressed_when_a_fast_mail_just_went_out():
     kind, _ = fd.decide_mail(per, _state(last_mail=_at(10, 6, 30), last_fast=_at(10, 6, 30)),
                              _at(10, 7), CFG)
     assert kind is None
+
+
+def test_daily_still_goes_out_later_the_same_day_after_a_fast():
+    """Contrepartie : l'ecart minimal decale le quotidien, il ne l'annule pas.
+    « n'envoie plus rien pendant des jours » est le mode de defaillance a
+    exclure, il faut donc verifier la reprise et pas seulement la suppression."""
+    per = [_info("d1", _at(10, 5), carried={"15|50"})]
+    kind, _ = fd.decide_mail(per, _state(last_mail=_at(10, 6, 30), last_fast=_at(10, 6, 30)),
+                             _at(10, 13), CFG)
+    assert kind == "daily"
+
+
+def test_min_gap_boundary_is_inclusive():
+    """Exactement 6 h depuis le dernier mail : la borne doit passer."""
+    kind, _ = fd.decide_mail([_info("d1", _at(10, 1), carried={"15|50"})],
+                             _state(last_mail=_at(10, 2)), _at(10, 8), CFG)
+    assert kind == "daily"
 
 
 def test_brand_new_episode_after_anchor_waits_for_grace_not_the_anchor():
