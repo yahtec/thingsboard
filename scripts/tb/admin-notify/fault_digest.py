@@ -59,9 +59,11 @@ import time
 from html import escape
 
 from common import (
-    EVT_KEYS, Event, TBClient, collect_records, excluded_device_names,
-    filter_excluded, label_device, label_fault, load_int_map, open_faults,
-    pair_events, send_mail, setup_logging,
+    EVT_KEYS, Event, TBClient, collect_records, digest_fast_quota_ms,
+    digest_min_gap_ms, digest_recap_hour as common_recap_hour,
+    excluded_device_names, filter_excluded, label_device, label_fault,
+    load_int_map, mail_grace_ms, open_faults, pair_events, send_mail,
+    setup_logging,
 )
 
 LOOKBACK_DAYS = 30  # how far back we scan to *discover* new open faults
@@ -72,19 +74,6 @@ log = setup_logging("fault_digest")
 
 def fmt_ts(ms: int) -> str:
     return dt.datetime.fromtimestamp(ms / 1000).strftime("%d/%m/%Y %H:%M:%S")
-
-
-def get_admin_recipients(tb: TBClient) -> list[str]:
-    """Destinataires du digest 4h = comptes TENANT_ADMIN + CUSTOMER_USER+is_admin=true.
-    Fallback env PARC_ADMINS_FALLBACK uniquement si la liste TB est vide (filet
-    de sécurité pour éviter de perdre le récap si le tenant n'a pas d'admin)."""
-    try:
-        emails = tb.get_admin_emails()
-        if emails:
-            return emails
-    except Exception as exc:
-        log.warning("could not enumerate admin users: %s", exc)
-    return [s.strip() for s in os.environ.get("PARC_ADMINS_FALLBACK", "").split(",") if s.strip()]
 
 
 def _load_open_state(raw) -> dict[str, int]:
@@ -333,32 +322,90 @@ def decide_mail(per_device: list[dict], state: dict[str, int], now_ms: int,
     return None, {"last_mail_ts": last_mail, "last_fast_ts": last_fast}
 
 
+def send_for_target(tb: TBClient, target: dict, per_device: list[dict],
+                    errors: list[str], id_of_name: dict[str, str],
+                    now_ms: int, cfg: dict) -> str | None:
+    """Evalue la cadence d'UN destinataire, envoie si c'est du, persiste son
+    etat. L'etat est ecrit meme quand rien n'est envoye : c'est lui qui porte
+    la fin d'episode."""
+    excl = target["exclude"]
+    scope = [i for i in per_device if i["id"] not in excl]
+    # `errors` est une liste de NOMS de devices ; les exclusions sont des ids.
+    errs = [n for n in errors if id_of_name.get(n) not in excl]
+
+    kind, new_state = decide_mail(scope, tb.get_digest_state(target["id"]),
+                                  now_ms, cfg, has_errors=bool(errs))
+    if kind:
+        built = build_digest(scope, errs, now_ms)
+        if built is None:
+            # Defensif : decide_mail ne rend un kind que si scope ou errs est
+            # non vide, donc build_digest ne peut pas rendre None ici.
+            kind = None
+        else:
+            subject, html, text = built
+            send_mail([target["email"]], subject, html, text)
+            log.info("digest %s -> %s (%d chaufferie(s), %d erreur(s))",
+                     kind, target["email"], len(scope), len(errs))
+    tb.save_digest_state(target["id"], new_state)
+    return kind
+
+
+def fallback_daily(per_device: list[dict], errors: list[str], now_ms: int) -> int:
+    """Filet de securite : TB ne rend aucun admin (base cassee ou mal
+    configuree). Sans utilisateur il n'y a pas d'attribut d'etat, donc pas de
+    cadence persistee ; on s'appuie sur le fait que l'heure d'ancrage n'est
+    vraie qu'a un seul run horaire par jour, ce qui borne l'envoi a 1/jour
+    sans rien stocker. Pas de mail rapide dans ce mode degrade."""
+    emails = [s.strip() for s in os.environ.get("PARC_ADMINS_FALLBACK", "").split(",") if s.strip()]
+    if not emails:
+        log.error("aucun admin en base et PARC_ADMINS_FALLBACK vide — recap perdu")
+        return 2
+    if dt.datetime.fromtimestamp(now_ms / 1000).hour != common_recap_hour():
+        log.warning("aucun admin en base — envoi de secours reporte a %dh", common_recap_hour())
+        return 0
+    built = build_digest(per_device, errors, now_ms)
+    if built is None:
+        return 0
+    subject, html, text = built
+    send_mail(emails, subject, html, text)
+    log.warning("aucun admin en base — recap de secours envoye a %s", ", ".join(emails))
+    return 0
+
+
 def main() -> int:
     profile = os.environ.get("TB_DEVICE_PROFILE_NAME", "pac hybride")
     tb = TBClient()
-    admins = get_admin_recipients(tb)
-    if not admins:
-        log.error("no admin recipients (set parc_admins or PARC_ADMINS_FALLBACK)")
-        return 2
 
     devices = tb.list_devices_by_profile(profile)
     devices, dropped = filter_excluded(devices, excluded_device_names())
     if dropped:
-        log.info("digest: %d device(s) exclus du récap: %s", len(dropped), ", ".join(sorted(dropped)))
+        log.info("digest: %d chaufferie(s) muette(s): %s", len(dropped), ", ".join(sorted(dropped)))
+
     now_ms = int(time.time() * 1000)
     log.info("scanning %d devices over last %dd", len(devices), LOOKBACK_DAYS)
     per, errors = collect_open_per_device(tb, devices, now_ms)
+    id_of_name = {d["name"]: d["id"]["id"] for d in devices}
 
-    built = build_digest(per, errors, now_ms)
-    if built is None:
-        log.info("no open faults across parc and no collection errors — silent run")
-        return 0
+    try:
+        targets = tb.get_admin_targets()
+    except Exception as exc:
+        log.warning("could not enumerate admin users: %s", exc)
+        targets = []
+    if not targets:
+        return fallback_daily(per, errors, now_ms)
 
-    subject, html, text = built
-    send_mail(admins, subject, html, text)
-    total = sum(len(v["faults"]) for v in per)
-    log.info("digest sent to %s (%d devices, %d faults, %d errors)",
-              ", ".join(admins), len(per), total, len(errors))
+    cfg = {"grace_ms": mail_grace_ms(), "recap_hour": common_recap_hour(),
+           "min_gap_ms": digest_min_gap_ms(), "fast_quota_ms": digest_fast_quota_ms()}
+    sent = 0
+    for target in targets:
+        try:
+            if send_for_target(tb, target, per, errors, id_of_name, now_ms, cfg):
+                sent += 1
+        except Exception as exc:
+            # Isolation par destinataire, dans le meme esprit que I8 : un
+            # destinataire en echec ne prive pas les autres de leur recap.
+            log.exception("destinataire=%s echec — ignore ce run: %s", target["email"], exc)
+    log.info("run termine : %d mail(s) envoye(s) sur %d destinataire(s)", sent, len(targets))
     return 0
 
 
