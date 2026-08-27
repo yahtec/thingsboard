@@ -401,6 +401,16 @@ def main() -> int:
     tb = TBClient()
 
     devices = tb.list_devices_by_profile(profile)
+    if not devices:
+        # I8 au niveau de la FLOTTE. Le silence etait jusqu'ici anormal (6
+        # mails/jour garantis) ; il devient l'etat normal d'un parc sain, donc
+        # plus rien ne distingue un dispositif mort d'un parc calme. Un profil
+        # renomme, une page vide ou un glitch TB rendraient `[]` -> aucun
+        # perimetre, aucun mail, aucune erreur, indefiniment. On sort en erreur
+        # pour que la supervision (code de sortie, cf. guard_check.py) le voie.
+        log.error("aucune chaufferie pour le profil %r — parc introuvable, "
+                  "run abandonne (ne pas conclure a un parc sain)", profile)
+        return 3
     devices, dropped = filter_excluded(devices, excluded_device_names())
     if dropped:
         log.info("digest: %d chaufferie(s) muette(s): %s", len(dropped), ", ".join(sorted(dropped)))

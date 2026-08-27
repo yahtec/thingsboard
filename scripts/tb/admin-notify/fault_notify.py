@@ -56,7 +56,7 @@ except ImportError:  # pragma: no cover
 from common import (
     EVT_KEYS, Event, TBClient, collect_records, excluded_device_names,
     label_device, label_fault, load_int_map, load_state_attr, mail_grace_ms,
-    open_faults, pair_events, reminder_steps_ms as common_reminder_steps,
+    pair_events, reminder_steps_ms as common_reminder_steps,
     send_mail, setup_logging,
 )
 
@@ -372,6 +372,12 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
                 log.info("device=%s %d apparition(s) dans le cooldown 6h", dev_name, skipped)
 
     # ── 2. Echeances : sursis ecoule -> mail d'apparition, ou rappel du ──
+    # M18 : le curseur est calcule en phase 1 et persiste en fin de fonction,
+    # quoi qu'il arrive ici. Aucun `return` anticipe dans cette phase, aucune
+    # condition sur les destinataires : un device sans destinataire (CanView
+    # pas encore accorde) ou muet doit avancer son curseur comme les autres.
+    # Sinon, le jour ou un CanView est enfin accorde, jusqu'a 24 h de vieux
+    # defauts (le cap LOOKBACK_MAX_S) partent en rafale dans un seul mail.
     grace_ms = mail_grace_ms()
     steps = common_reminder_steps()
     fresh = sorted(k for k, v in tracked.items()

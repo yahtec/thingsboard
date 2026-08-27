@@ -1,6 +1,7 @@
 """main() du digest : un envoi par destinataire, filtre par ses exclusions,
 etat persiste par utilisateur (spec §4.1, §6.2, §7)."""
 import datetime as dt
+import logging
 
 import common
 import fault_digest as fd
@@ -248,3 +249,19 @@ def test_global_mute_and_per_recipient_exclusions_apply_together(monkeypatch):
     assert "111" in body                       # ni muette, ni exclue
     assert "222" not in body                   # mute global, par nom
     assert "333" not in body                   # exclusion du destinataire, par id
+
+
+def test_main_treats_an_empty_fleet_as_an_anomaly(monkeypatch, caplog):
+    """I4 : avec la nouvelle cadence, le silence est l'etat NORMAL d'un parc
+    sain — un cron qui ne voit plus aucune chaufferie (profil renomme, page
+    vide, glitch TB) produirait donc exactement la meme boite mail qu'un parc
+    calme. Il doit ressortir par son code de sortie et un log d'erreur, pas se
+    taire : c'est l'esprit d'I8 porte au niveau de la flotte."""
+    tb = MainTB([{"id": "u1", "email": "a@yahtec.com", "exclude": set()}], devices=[])
+    _install_main_tb(monkeypatch, tb)
+    with caplog.at_level(logging.ERROR):
+        assert fd.main() == 3
+    assert any(r.levelname == "ERROR" for r in caplog.records)
+    # Aucun destinataire evalue : sur un parc introuvable, "rien a signaler"
+    # n'est pas une conclusion qu'on a le droit de tirer.
+    assert tb.states == {}

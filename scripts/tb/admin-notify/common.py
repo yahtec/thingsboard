@@ -395,7 +395,8 @@ class TBClient:
     def get_admin_targets(self, users: list[dict] | None = None) -> list[dict]:
         """Destinataires du recap avec ce qu'il faut pour evaluer leur cadence :
         leur id (porteur de l'attribut d'etat) et leurs exclusions. Meme filtre
-        que get_admin_emails, compte de service inclus (M14)."""
+        que get_admin_emails, compte de service EXCLU (M14) : svc-tbnotify@ est
+        TENANT_ADMIN mais ne doit pas se spammer."""
         if users is None:
             users = self._collect_user_attrs()
         self_email = (self.user or "").strip().lower()
@@ -682,7 +683,7 @@ def load_digest_state(raw) -> dict[str, int]:
 def load_exclude_list(raw) -> list[str]:
     """Liste d'ids de devices depuis un attribut USER. Accepte une liste ou
     une chaine JSON ; tout le reste vaut liste vide (aucune exclusion), ce qui
-    est le repli sur pour un filtre de notification : un oubli de config
+    est le repli prudent pour un filtre de notification : un oubli de config
     produit un mail de trop, jamais un silence."""
     if isinstance(raw, str):
         try:
