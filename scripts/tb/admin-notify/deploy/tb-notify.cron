@@ -5,8 +5,11 @@ PATH=/usr/bin:/bin
 # Notify managers when new faults appear (1/min, ~60s coalesce window inside).
 *  *    * * *   root  cd /home/dump/tb-notify && .venv/bin/python fault_notify.py >> /var/log/tb-notify-cron.log 2>&1
 
-# Digest to parc admins every 4 hours, only if open faults exist.
-0  */4  * * *   root  cd /home/dump/tb-notify && .venv/bin/python fault_digest.py >> /var/log/tb-notify-cron.log 2>&1
+# Recap admin : run HORAIRE, mais l'envoi est decide par la machine a etats
+# (mail rapide a T+1h si une chaufferie du perimetre entre en defaut, sinon
+# quotidien ancre sur DIGEST_RECAP_HOUR). Un run sans rien a dire est muet.
+# L'heure est la granularite minimale pour honorer un sursis de 1 h.
+0  *    * * *   root  cd /home/dump/tb-notify && .venv/bin/python fault_digest.py >> /var/log/tb-notify-cron.log 2>&1
 
 # Vérifie la présence de la garde site_assigned (rule-chain) toutes les 15 min ; alerte par transition.
 */15 *  * * *   root  cd /home/dump/tb-notify && .venv/bin/python guard_check.py >> /var/log/tb-notify-cron.log 2>&1
