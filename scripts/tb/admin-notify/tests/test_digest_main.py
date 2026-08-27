@@ -42,8 +42,12 @@ def _capture(monkeypatch):
 
 
 def test_recipient_only_sees_his_own_perimeter(monkeypatch):
+    # Etat non vierge a dessein : avec `last_mail_ts` a 0 tout defaut ouvert
+    # est "jamais couvert" et part en RAPIDE (spec §4.1, cas du premier run
+    # apres deploiement). Ici on veut exercer le quotidien, donc un dernier
+    # mail de la veille et un quota rapide encore consomme.
     sent = _capture(monkeypatch)
-    tb = FakeTB()
+    tb = FakeTB({"u1": {"last_mail_ts": _at(9, 21), "last_fast_ts": _at(9, 21)}})
     per = [_info("d1", "111", _at(9, 20), carried={"15|50"}),
            _info("d2", "222", _at(9, 20), carried={"15|50"})]
     target = {"id": "u1", "email": "a@yahtec.com", "exclude": {"d2"}}
@@ -137,32 +141,42 @@ def test_fallback_without_addresses_returns_error_code(monkeypatch):
 # et le fait que la collecte ne soit pas rejouee par destinataire.
 
 class MainTB:
-    """TBClient minimal pour main() : deux devices, N destinataires, et un
-    compteur d'appels pour prouver qu'on ne collecte qu'une fois."""
+    """TBClient minimal pour main() : N devices, N destinataires, et un
+    compteur d'appels pour prouver qu'on ne collecte qu'une fois.
 
-    def __init__(self, targets, raise_for=()):
+    Les lectures d'attributs voient les ecritures (I1) : sans ce couplage, un
+    second appel a main() repartirait d'une memoire vierge et la continuite
+    entre deux runs serait intestable a ce niveau aussi. Les defauts sont mis
+    en scene par la memoire `digest_open_faults` (l'evenement est alors
+    reconstruit par `_process_device`), ce qui evite de fabriquer une
+    telemetrie complete pour un test de main()."""
+
+    def __init__(self, targets, raise_for=(), devices=None, attrs=None):
         self.targets = list(targets)
         self.raise_for = set(raise_for)
+        self.devices = list(devices) if devices is not None else [
+            {"id": {"id": "d1"}, "name": "111"},
+            {"id": {"id": "d2"}, "name": "222"}]
+        self.attrs = {eid: dict(v) for eid, v in (attrs or {}).items()}
         self.states = {}
         self.calls = {"list_devices": 0, "attrs": 0}
 
     def list_devices_by_profile(self, profile):
         self.calls["list_devices"] += 1
-        return [{"id": {"id": "d1"}, "name": "111"},
-                {"id": {"id": "d2"}, "name": "222"}]
+        return [dict(d) for d in self.devices]
 
     def get_admin_targets(self):
         return [dict(t) for t in self.targets]
 
     def get_server_attrs(self, etype, eid, keys=None):
         self.calls["attrs"] += 1
-        return {}
+        return dict(self.attrs.get(eid, {}))
 
     def get_timeseries(self, dev_id, keys, start_ts, end_ts, limit=50000):
         return {}
 
     def save_server_attrs(self, etype, eid, kv):
-        pass
+        self.attrs.setdefault(eid, {}).update(kv)
 
     def get_digest_state(self, uid):
         if uid in self.raise_for:
@@ -205,3 +219,32 @@ def test_main_collects_once_whatever_the_number_of_recipients(monkeypatch):
     # passent par get_digest_state, qui ne touche pas ce compteur.
     assert tb.calls["attrs"] == 2
     assert len(tb.states) == 5
+
+
+def test_global_mute_and_per_recipient_exclusions_apply_together(monkeypatch):
+    """Les deux filtres du perimetre portent sur des espaces de noms
+    DIFFERENTS : le mute global sur des noms `entityName`
+    (NOTIFY_EXCLUDE_DEVICES), les exclusions par destinataire sur des ids TB
+    (`mail_exclude_devices`). Il faut donc les croiser pour prouver qu'ils
+    s'appliquent ensemble sans se confondre — trois chaufferies en defaut, une
+    mise au silence par son NOM, une autre exclue par son ID, une seule
+    survit."""
+    sent = _capture(monkeypatch)
+    appear = _at(9, 20)
+    tb = MainTB([{"id": "u1", "email": "a@yahtec.com", "exclude": {"d3"}}],
+                devices=[{"id": {"id": "d1"}, "name": "111"},
+                         {"id": {"id": "d2"}, "name": "222"},
+                         {"id": {"id": "d3"}, "name": "333"}],
+                attrs={"d1": {fd.STATE_ATTR: {"15|50": appear}},
+                       "d2": {fd.STATE_ATTR: {"16|50": appear}},
+                       "d3": {fd.STATE_ATTR: {"17|50": appear}}})
+    monkeypatch.setattr(fd, "TBClient", lambda *a, **k: tb)
+    monkeypatch.setenv("NOTIFY_EXCLUDE_DEVICES", "222")   # par NOM
+    monkeypatch.setenv("DIGEST_RECAP_HOUR", "7")
+    monkeypatch.setattr(fd.time, "time", lambda: _at(10, 7) / 1000)
+
+    assert fd.main() == 0
+    body = sent[0][2]
+    assert "111" in body                       # ni muette, ni exclue
+    assert "222" not in body                   # mute global, par nom
+    assert "333" not in body                   # exclusion du destinataire, par id

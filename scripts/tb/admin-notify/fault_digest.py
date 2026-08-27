@@ -134,10 +134,13 @@ def _process_device(tb: TBClient, d: dict, start_ms: int, end_ms: int) -> dict |
     if not synthetic:
         return None
     opens = sorted(synthetic.values(), key=lambda e: e.appear_ts or 0)
-    # `carried` = memoire telle qu'elle etait AVANT l'ecriture de ce run.
-    # Vide => la chaufferie etait saine au run precedent, ce qui la rend
-    # candidate au mail rapide (spec §4.1). On garde meme les cles resolues
-    # ce run : la chaufferie etait bel et bien en defaut au run precedent.
+    # `carried` = memoire telle qu'elle etait AVANT l'ecriture de ce run. Non
+    # vide => l'episode a survecu a un run, ce qui le rend "etabli" au sens de
+    # la condition 4 du quotidien (spec §4.1) ; c'est son seul role. La
+    # candidature au mail RAPIDE ne se lit PAS ici mais sur
+    # `appear_ts > last_mail_ts`, cf. `decide_mail`. On garde meme les cles
+    # resolues ce run : la chaufferie etait bel et bien en defaut au run
+    # precedent, l'episode est donc bien etabli.
     return {"id": dev_id, "name": dev_name, "display": display, "address": addr,
             "faults": opens, "carried": set(carried)}
 
@@ -298,17 +301,26 @@ def decide_mail(per_device: list[dict], state: dict[str, int], now_ms: int,
         # l'aile produirait plusieurs recaps dans la meme journee.
         return None, {"last_mail_ts": last_mail, "last_fast_ts": last_fast}
 
-    # Mail rapide : une chaufferie sans memoire au run precedent (`carried`
-    # vide) vient d'entrer en defaut, et son sursis est ecoule. Un echec de
-    # collecte n'est jamais une apparition de defaut : il n'entre pas ici.
-    fast_candidate = False
-    for info in per_device:
-        if info.get("carried"):
-            continue
-        appears = [e.appear_ts for e in info["faults"] if e.appear_ts]
-        if appears and now_ms - min(appears) >= cfg["grace_ms"]:
-            fast_candidate = True
-            break
+    # Mail rapide : il existe dans le perimetre un defaut ouvert que ce
+    # destinataire n'a JAMAIS recu, et dont le sursis est ecoule. "Jamais recu"
+    # se lit sur `appear_ts > last_mail`, pas sur `carried`.
+    #
+    # Pourquoi pas `carried` : une version anterieure exigeait une chaufferie
+    # "sans memoire au run precedent". La revue transverse a montre que ca
+    # rendait cette branche INATTEIGNABLE en regime normal, et l'a prouve en
+    # executant le vrai pipeline sur 48 runs horaires. Le premier run qui
+    # observe un defaut est au plus une heure apres son apparition, donc son
+    # sursis n'est pas ecoule ; ce meme run ecrit la memoire, et au run suivant
+    # `carried` n'est plus vide. Les deux conditions ne pouvaient jamais etre
+    # vraies ensemble : la fenetre etait de mesure nulle.
+    #
+    # Un echec de collecte n'est jamais une apparition de defaut : il n'entre
+    # pas ici, `has_errors` ne nourrit que `established` plus bas.
+    fast_candidate = any(
+        e.appear_ts and e.appear_ts > last_mail
+        and now_ms - e.appear_ts >= cfg["grace_ms"]
+        for info in per_device for e in info["faults"]
+    )
     if fast_candidate and now_ms - last_fast >= cfg["fast_quota_ms"]:
         return "fast", {"last_mail_ts": now_ms, "last_fast_ts": now_ms}
 

@@ -46,7 +46,10 @@ def test_resolved_then_refaulted_same_day_gets_no_second_daily():
     """Le cas qui casserait le plafond de 2 mails/jour si la fin d'episode
     remettait last_mail_ts a 0 : les deux freins du quotidien lisent cet
     horodatage, les liberer ferait repartir un recap toutes les 3 heures."""
-    st = _state(last_mail=_at(10, 10), last_fast=_at(9, 8))
+    # `last_fast` pose au meme instant que `last_mail` : le quota rapide est
+    # consomme, ce qui isole ce que ce test veut prouver — l'absence d'un SECOND
+    # quotidien. Le rapide, lui, a son propre test.
+    st = _state(last_mail=_at(10, 10), last_fast=_at(10, 10))
     # 11h : le defaut se resout, perimetre sain
     kind, st = fd.decide_mail([], st, _at(10, 11), CFG)
     assert kind is None
@@ -63,9 +66,16 @@ def test_resolved_then_refaulted_same_day_gets_no_second_daily():
 def test_new_episode_the_day_after_still_gets_its_daily():
     """Contrepartie du test precedent : conserver last_mail_ts ne baillonne pas
     un episode du lendemain, puisqu'un horodatage de la veille est bien
-    inferieur a l'ancre du jour."""
+    inferieur a l'ancre du jour.
+
+    `last_fast` pose au meme instant que `last_mail` (donc quota rapide encore
+    consomme a 7 h le lendemain) pour la meme raison que dans le test
+    precedent : c'est la branche QUOTIDIENNE qu'il s'agit d'isoler. Un defaut
+    apparu apres le dernier mail est desormais candidat au rapide (spec §4.1),
+    qui gagnerait sinon la main."""
     kind, _ = fd.decide_mail([_info("d1", _at(11, 5), carried={"15|50"})],
-                             _state(last_mail=_at(10, 10)), _at(11, 7), CFG)
+                             _state(last_mail=_at(10, 10), last_fast=_at(10, 10)),
+                             _at(11, 7), CFG)
     assert kind == "daily"
 
 
@@ -83,11 +93,25 @@ def test_fast_mail_once_grace_elapsed():
     assert st == _state(last_mail=_at(10, 15), last_fast=_at(10, 15))
 
 
-def test_device_already_open_last_run_is_not_a_fast_candidate():
-    """Deuxieme defaut sur une chaufferie deja en defaut : pas de mail rapide."""
-    kind, _ = fd.decide_mail([_info("d1", _at(10, 14), carried={"15|50"})],
+def test_fault_already_covered_by_a_mail_is_not_a_fast_candidate():
+    """Un defaut dont l'apparition PRECEDE le dernier mail a deja ete annonce a
+    ce destinataire : il ne doit pas redeclencher un rapide."""
+    kind, _ = fd.decide_mail([_info("d1", _at(10, 5), carried={"15|50"})],
                              _state(last_mail=_at(10, 7)), _at(10, 15), CFG)
     assert kind is None
+
+
+def test_fast_fires_for_a_fault_born_after_the_days_recap():
+    """Regression du defaut principal trouve en revue transverse : la branche
+    rapide etait inatteignable parce qu'elle exigeait une chaufferie "sans
+    memoire au run precedent", condition incompatible avec un sursis d'une
+    heure et un cron horaire. Un defaut apparu apres le recap du jour doit
+    partir a T+1h, pas attendre le lendemain 7 h."""
+    per = [_info("d1", _at(10, 9, 10), carried={"15|50"})]
+    kind, st = fd.decide_mail(per, _state(last_mail=_at(10, 7), last_fast=_at(9, 8)),
+                              _at(10, 11), CFG)
+    assert kind == "fast"
+    assert st == _state(last_mail=_at(10, 11), last_fast=_at(10, 11))
 
 
 def test_second_site_falling_triggers_fast_mail_mid_episode():

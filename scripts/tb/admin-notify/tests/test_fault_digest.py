@@ -4,7 +4,14 @@ disparaitre du digest — memorise via l'attribut SERVER_SCOPE par device
 fault_notify : cf. fault_notify._load_cooldown / save_server_attrs).
 
 I8 : une erreur HTTP sur UN device ne doit plus tuer la collecte du parc
-entier — try/except par device, comme fault_notify.main()."""
+entier — try/except par device, comme fault_notify.main().
+
+I1 : le faux TBClient de ce fichier est REJOUABLE — lectures couplees aux
+ecritures et fenetre de requete honoree — de sorte qu'un enchainement de runs
+horaires soit observable de bout en bout (cf. `make_client` et la derniere
+section)."""
+import datetime as dt
+
 import common
 import fault_digest as fd
 
@@ -34,23 +41,42 @@ def _ts_payload(events):
 
 
 def make_client(attrs_by_dev, ts_by_dev, raise_on=None):
-    """TBClient reel, attrs/timeseries mockes par device id.
+    """TBClient reel, attrs/timeseries mockes par entite (device OU user).
+
+    Deux proprietes rendent ce faux capable de rejouer une chronologie, ce
+    que la premiere version ne savait pas faire (revue transverse I1) :
+
+    - **les lectures voient les ecritures** : `_get_attrs` lit le meme dict que
+      `_save_attrs` alimente. Sans ce couplage, aucun test ne pouvait faire
+      dependre le `carried` d'un run de ce que le run precedent avait ecrit —
+      or c'est TOUTE la semantique de `carried`, et c'est ce trou qui a laisse
+      passer le defaut de fond de la branche rapide (C1). Meme forme que le
+      harnais client, `tests/test_notify_cadence.py`.
+    - **la fenetre de requete est honoree** : un run anterieur a l'apparition
+      d'un defaut ne doit pas deja le voir, sinon la chronologie est fausse.
+
+    `attrs_by_dev` est indexe par id d'entite : les etats d'utilisateur
+    (`mail_digest_state`, via get_digest_state/save_digest_state) passent par
+    le meme dict, ce qui rend `send_for_target` rejouable tel quel.
     raise_on = {"attrs": {dev_id, ...}, "ts": {dev_id, ...}} -> RuntimeError."""
     raise_on = raise_on or {}
     c = common.TBClient(url="http://test", user="svc", password="x")
+    attrs = {eid: dict(v) for eid, v in (attrs_by_dev or {}).items()}
     saved: dict[str, dict] = {}
 
     def _get_attrs(etype, eid, keys=None):
         if eid in raise_on.get("attrs", ()):
             raise RuntimeError("network down")
-        return dict(attrs_by_dev.get(eid, {}))
+        return dict(attrs.get(eid, {}))
 
     def _get_ts(dev_id, keys, start_ts, end_ts, limit=50000):
         if dev_id in raise_on.get("ts", ()):
             raise RuntimeError("network down")
-        return ts_by_dev.get(dev_id, {})
+        return {k: [p for p in pts if start_ts <= p["ts"] <= end_ts]
+                for k, pts in ts_by_dev.get(dev_id, {}).items()}
 
     def _save_attrs(etype, eid, kv):
+        attrs.setdefault(eid, {}).update(kv)
         saved.setdefault(eid, {}).update(kv)
 
     c.get_server_attrs = _get_attrs
@@ -215,7 +241,9 @@ def test_build_digest_sent_when_faults_present():
 
 def test_process_device_reports_id_and_empty_carried_for_fresh_fault():
     """Chaufferie saine au run precedent (pas de memoire) qui tombe en defaut :
-    `carried` vide, c'est ce qui la rend candidate au mail rapide."""
+    `carried` vide, donc l'episode n'est pas encore "etabli" au sens du
+    quotidien (spec §4.1 condition 4). La candidature au mail RAPIDE, elle, ne
+    se lit pas sur `carried` mais sur `appear_ts > last_mail_ts`."""
     c = make_client({"dev-1": {}},
                     {"dev-1": _ts_payload([(NOW - 3600_000, 1, 15, 50)])})
     info = fd._process_device(c, DEV, NOW - 30 * DAY_MS, NOW)
@@ -225,8 +253,8 @@ def test_process_device_reports_id_and_empty_carried_for_fresh_fault():
 
 
 def test_process_device_reports_carried_from_previous_run():
-    """Defaut deja memorise et jamais resolu : `carried` non vide, la
-    chaufferie n'est donc pas "nouvellement en defaut"."""
+    """Defaut deja memorise et jamais resolu : `carried` non vide, l'episode a
+    donc survecu a un run et le quotidien peut partir."""
     c = make_client({"dev-1": {fd.STATE_ATTR: {"15|50": NOW - 5 * DAY_MS}}},
                     {"dev-1": {}})
     info = fd._process_device(c, DEV, NOW - 30 * DAY_MS, NOW)
@@ -236,12 +264,82 @@ def test_process_device_reports_carried_from_previous_run():
 
 def test_process_device_carried_keeps_faults_resolved_this_run():
     """Un defaut memorise ET resolu ce run laisse quand meme une trace dans
-    `carried` : la chaufferie etait bien en defaut au run precedent, donc un
-    nouveau defaut apparu en meme temps ne doit pas passer pour une entree en
-    defaut depuis un etat sain."""
+    `carried` : la chaufferie etait bien en defaut au run precedent, l'episode
+    compte donc comme etabli pour le quotidien."""
     c = make_client({"dev-1": {fd.STATE_ATTR: {"15|50": NOW - 5 * DAY_MS}}},
                     {"dev-1": _ts_payload([(NOW - 7200_000, 4, 15, 50),
                                            (NOW - 3600_000, 1, 16, 50)])})
     info = fd._process_device(c, DEV, NOW - 30 * DAY_MS, NOW)
     assert info["carried"] == {"15|50"}
     assert [e.fault for e in info["faults"]] == [16]
+
+
+# ─── I1 : rejeu de plusieurs runs horaires a travers le vrai pipeline ───────
+# Ce que le harnais d'origine ne permettait pas d'ecrire : des runs enchaines
+# ou le `carried` d'un run provient de ce que le run precedent a REELLEMENT
+# persiste. C'est a ce niveau, et pas sur `decide_mail` seule, que se voit le
+# fonctionnement (ou non) de la branche rapide.
+
+CADENCE_CFG = {"grace_ms": 60 * 60 * 1000, "recap_hour": 7,
+               "min_gap_ms": 6 * 3600 * 1000, "fast_quota_ms": 24 * 3600 * 1000}
+TARGET = {"id": "u1", "email": "a@yahtec.com", "exclude": set()}
+
+
+def _at(day, hour, minute=0):
+    """2026-08-<day> <hour>:<minute> heure LOCALE, en ms. L'ancre du quotidien
+    est une heure locale : les horodatages doivent etre construits comme tels
+    pour que le test passe quel que soit le fuseau de la machine."""
+    return int(dt.datetime(2026, 8, day, hour, minute).timestamp() * 1000)
+
+
+def _replay(c, hours, monkeypatch, target=None):
+    """Joue un run de digest complet (collecte + cadence + envoi) par element
+    de `hours`, et retourne la liste des (jour, heure, kind) envoyes."""
+    target = dict(target or TARGET)
+    sent = []
+    monkeypatch.setattr(fd, "send_mail", lambda to, subject, html, text=None: None)
+    for day, hour in hours:
+        now = _at(day, hour)
+        per, errors = fd.collect_open_per_device(c, [DEV], now)
+        kind = fd.send_for_target(c, target, per, errors,
+                                  {DEV["name"]: "dev-1"}, now, CADENCE_CFG)
+        if kind:
+            sent.append((day, hour, kind))
+    return sent
+
+
+def test_a_fault_born_after_the_recap_gets_its_fast_mail_end_to_end(monkeypatch):
+    """Regression du defaut principal de la revue transverse (C1), prouvee sur
+    le vrai pipeline : un defaut apparu a 06 h 10 doit partir en mail RAPIDE au
+    run de 08 h — premier run ou son sursis d'une heure est ecoule — et non
+    attendre le quotidien du lendemain 7 h. Au run de 08 h la memoire du device
+    est deja ecrite (run de 07 h), donc `carried` est non vide : c'est
+    exactement la situation ou l'ancienne regle rendait cette branche
+    inatteignable."""
+    c = make_client({}, {"dev-1": _ts_payload([(_at(10, 6, 10), 1, 15, 50)])})
+    hours = [(10, h) for h in range(5, 24)] + [(11, h) for h in range(0, 9)]
+    assert _replay(c, hours, monkeypatch) == [(10, 8, "fast"), (11, 7, "daily")]
+
+
+def test_at_most_two_mails_per_calendar_day_over_24_hourly_runs(monkeypatch):
+    """Le plafond que l'utilisateur a valide, verifie comme tel : au plus DEUX
+    mails par jour calendaire et par destinataire — un quotidien plus au plus
+    un rapide — malgre 24 runs horaires. Mise en scene : un defaut deja ouvert
+    depuis la veille (episode etabli, quotidien du a 7 h) et un second defaut
+    qui apparait a 09 h 10 (candidat rapide, quota libre)."""
+    c = make_client({"dev-1": {fd.STATE_ATTR: {"15|50": _at(9, 20)}},
+                     "u1": {common.DIGEST_STATE_ATTR: {
+                         "last_mail_ts": _at(9, 21), "last_fast_ts": _at(9, 8)}}},
+                    {"dev-1": _ts_payload([(_at(10, 9, 10), 1, 16, 50)])})
+    sent = _replay(c, [(10, h) for h in range(24)], monkeypatch)
+    assert sent == [(10, 7, "daily"), (10, 11, "fast")]
+
+
+def test_a_transient_fault_produces_no_mail_at_all_end_to_end(monkeypatch):
+    """Contrepartie : le sursis doit tenir sur le pipeline complet. Un defaut
+    apparu a 09 h 10 et resolu a 09 h 40 traverse deux runs horaires sans
+    jamais produire de mail, et la memoire du device se vide."""
+    c = make_client({}, {"dev-1": _ts_payload([(_at(10, 9, 10), 1, 15, 50),
+                                               (_at(10, 9, 40), 4, 15, 50)])})
+    assert _replay(c, [(10, h) for h in range(8, 24)], monkeypatch) == []
+    assert c.calls["save_server_attrs"]["dev-1"][fd.STATE_ATTR] == {}
