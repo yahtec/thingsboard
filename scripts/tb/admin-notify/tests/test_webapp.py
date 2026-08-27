@@ -525,3 +525,48 @@ def test_accounts_index_computes_fleet_data_once(monkeypatch):
     assert fake.device_attr_calls <= 3
     # canview_site_ids reste per-user (attendu : CanView differe par party).
     assert fake.canview_calls == 6
+
+
+# ── Filtrage des mails par destinataire (spec §6.2) ─────────────────────────
+
+def _fleet(fake, ids):
+    fake.list_devices_by_profile = lambda profile: [
+        {"id": {"id": i}, "name": i} for i in ids]
+
+
+def test_edit_save_writes_mail_exclusions_for_a_tenant_admin(monkeypatch):
+    """Coche d1 seulement -> d2 et d3 sont exclus des mails."""
+    fake = FakeTB()
+    fake.users["u1"] = user_obj("u1", "a@yahtec.com", "TENANT_ADMIN")
+    _fleet(fake, ["d1", "d2", "d3"])
+    install_tb(monkeypatch, fake)
+    form = FakeForm([("first_name", "A"), ("last_name", "B"),
+                     ("email", "a@yahtec.com"), ("droit_acces", "admin"),
+                     ("mail_devices", "d1")])
+    asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
+    (_etype, _eid, kv) = [s for s in fake.saved if "mail_exclude_devices" in s[2]][-1]
+    assert sorted(kv["mail_exclude_devices"]) == ["d2", "d3"]
+
+
+def test_unchecking_everything_mutes_the_account(monkeypatch):
+    """Aucune chaufferie cochee = perimetre vide = mails coupes."""
+    fake = FakeTB()
+    fake.users["u1"] = user_obj("u1", "a@yahtec.com", "TENANT_ADMIN")
+    _fleet(fake, ["d1", "d2"])
+    install_tb(monkeypatch, fake)
+    form = FakeForm([("email", "a@yahtec.com"), ("droit_acces", "admin")])
+    asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
+    (_etype, _eid, kv) = [s for s in fake.saved if "mail_exclude_devices" in s[2]][-1]
+    assert sorted(kv["mail_exclude_devices"]) == ["d1", "d2"]
+
+
+def test_non_admin_account_never_gets_mail_exclusions(monkeypatch):
+    """Le champ est absent du formulaire d'un non-admin : ne rien ecrire,
+    sinon on le rendrait muet par accident."""
+    fake = FakeTB()
+    fake.users["u1"] = user_obj("u1", "p@example.com", "CUSTOMER_USER")
+    _fleet(fake, ["d1", "d2"])
+    install_tb(monkeypatch, fake)
+    form = FakeForm([("email", "p@example.com"), ("droit_acces", "lecture")])
+    asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
+    assert not any("mail_exclude_devices" in kv for _e, _i, kv in fake.saved)

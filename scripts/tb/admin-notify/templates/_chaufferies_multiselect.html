@@ -2,8 +2,10 @@
    Variables :
      chaufferies   liste {id, name, display, address}
      selected_ids  ids cochés (liste, peut être vide)
-   Soumet toujours name="chaufferies" (multi). Le panneau s'ouvre inline
-   (non absolu) → fonctionne dans n'importe quel parent avec overflow:hidden.
+     field_name    nom du champ soumis (defaut "chaufferies")
+   Soumet name="{{ field_name|default('chaufferies') }}" (multi). Le panneau
+   s'ouvre inline (non absolu) → fonctionne dans n'importe quel parent avec
+   overflow:hidden.
 #}
 <style>
 .ms-host{width:100%;max-width:640px;position:relative}
@@ -40,7 +42,7 @@
 .ms-footer{padding:6px 12px;border-top:1px solid #eef0f2;font-size:12px;color:#666;background:#fafbfc}
 </style>
 
-<div class="ms-host" data-ms="chaufferies">
+<div class="ms-host" data-ms="{{ field_name | default('chaufferies') }}">
   <div class="ms-chips" data-ms-chips></div>
   <button type="button" class="ms-trigger" data-ms-trigger aria-expanded="false">
     <span class="ms-lbl empty" data-ms-label>—</span>
@@ -57,7 +59,7 @@
     <div class="ms-list" data-ms-list>
       {% for c in chaufferies %}
       <label class="ms-opt" data-search="{{ ((c.display ~ ' ' ~ c.name ~ ' ' ~ (c.address or '')) | lower) }}">
-        <input type="checkbox" name="chaufferies" value="{{ c.id }}"{% if selected_ids and c.id in selected_ids %} checked{% endif %}>
+        <input type="checkbox" name="{{ field_name | default('chaufferies') }}" value="{{ c.id }}"{% if selected_ids and c.id in selected_ids %} checked{% endif %}>
         <span class="ms-name">{{ c.display }}</span>
         {% if c.name and c.name != c.display %}<span class="ms-sn">n° {{ c.name }}</span>{% endif %}
       </label>
@@ -71,7 +73,7 @@
 
 <script>
 (function(){
-  document.querySelectorAll('[data-ms="chaufferies"]').forEach(function(host){
+  document.querySelectorAll('[data-ms]').forEach(function(host){
     if (host._wired) return; host._wired = true;
     var trig = host.querySelector('[data-ms-trigger]');
     var panel = host.querySelector('[data-ms-panel]');

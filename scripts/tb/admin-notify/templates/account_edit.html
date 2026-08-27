@@ -73,6 +73,19 @@
             {% with selected_ids = row.chaufferies %}{% include "_chaufferies_multiselect.html" %}{% endwith %}
           </div>
         </div>
+        {% if row.is_admin %}
+        <div class="field">
+          <label>Chaufferies suivies par mail</label>
+          <div class="chaufferies-all" style="margin-bottom:8px">
+            N'affecte <b>que les mails de défaut</b> — les droits d'accès au dashboard
+            restent inchangés. Décocher <b>toutes</b> les chaufferies coupe complètement
+            les mails de ce compte.
+          </div>
+          {% with selected_ids = mail_followed, field_name = 'mail_devices' %}
+            {% include "_chaufferies_multiselect.html" %}
+          {% endwith %}
+        </div>
+        {% endif %}
         <div class="checks">
           <label><input type="checkbox" name="access_rapport" {% if row.access_rapport %}checked{% endif %}> Accès au rapport</label>
           <label><input type="checkbox" name="access_retroview" {% if row.access_retroview %}checked{% endif %}> Accès au retroview</label>
