@@ -36,7 +36,8 @@ class Client:
         self.c = common.TBClient(url="http://test", user="svc", password="x")
         self.attrs = dict(attrs or {})
         self.payload = {}
-        self.c.get_server_attrs = lambda etype, eid, keys=None: dict(self.attrs)
+        self.c.get_server_attrs = lambda etype, eid, keys=None: {
+            k: v for k, v in self.attrs.items() if not keys or k in keys}
         self.c.save_server_attrs = lambda etype, eid, kv: self.attrs.update(kv)
         self.c.get_recipients_for_device = lambda dev_id, users=None: list(recipients)
         self.c.get_timeseries = lambda *a, **k: self.payload
@@ -46,7 +47,8 @@ def _run(cl, monkeypatch, now_ms, events=()):
     """Un run de process_device. Retourne la liste des envois captures."""
     sent = []
     monkeypatch.setattr(fn, "send_mail",
-                        lambda to, subject, html, text=None: sent.append((to, subject)))
+                        lambda to, subject, html, text=None:
+                            sent.append((to, subject, html, text)))
     cl.payload = _ts_payload(events)
     fn.process_device(cl.c, DEV, now_ms, now_ms - MIN)
     return sent
@@ -65,7 +67,7 @@ def test_mail_goes_out_once_grace_elapsed(monkeypatch):
     cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
     _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
     sent = _run(cl, monkeypatch, NOW + GRACE)
-    assert [to for to, _ in sent] == [["gerant@example.com"]]
+    assert [to for to, _s, _h, _t in sent] == [["gerant@example.com"]]
     assert cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]["mails"] == 1
 
 
@@ -116,7 +118,7 @@ def test_new_appearance_rearms_a_stuck_entry_instead_of_being_swallowed(monkeypa
     entry = cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]
     assert entry == {"appear_ts": NOW - 5 * MIN, "mails": 0, "last_mail_ts": 0}
     sent = _run(cl, monkeypatch, NOW + GRACE)
-    assert [to for to, _s in sent] == [["gerant@example.com"]]
+    assert [to for to, _s, _h, _t in sent] == [["gerant@example.com"]]
 
 
 def test_cursor_still_advances_when_there_is_nothing_to_scan(monkeypatch):
@@ -224,7 +226,7 @@ def test_appearance_and_reminder_are_two_distinct_mails(monkeypatch):
     # t2 + 30 min lui donne 65 min depuis son apparition (t2 - 35 min), et
     # 24 h 30 depuis le mail d'apparition du premier, donc son rappel est du.
     sent = _run(cl, monkeypatch, t2 + 30 * MIN)
-    subjects = [s for _to, s in sent]
+    subjects = [s for _to, s, _h, _t in sent]
     assert len(subjects) == 2
     assert any("toujours" in s.lower() for s in subjects)
     assert any("toujours" not in s.lower() for s in subjects)
@@ -262,3 +264,60 @@ def test_seed_tolerates_a_missing_or_corrupt_digest_memory():
     assert fn._seed_from_digest(None, NOW) == {}
     assert fn._seed_from_digest("corrompu", NOW) == {}
     assert fn._seed_from_digest({"nawak": 1}, NOW) == {}
+    assert fn._seed_from_digest({"a|b": 1}, NOW) == {}          # pas des entiers
+    assert fn._seed_from_digest({"5|1": 0}, NOW) == {}          # borne basse
+    assert fn._seed_from_digest({"5|1": NOW + 1}, NOW) == {}    # dans le futur
+
+
+# ── Le gabarit de relance lui-meme ──────────────────────────────────────────
+
+def test_render_reminder_cannot_be_mistaken_for_a_new_fault():
+    """L'exigence phare de la tache. Sans ce test, une implementation qui
+    rendrait le gabarit d'apparition sous un sujet de rappel passerait tout."""
+    ev = common.Event(ts=NOW - 3 * 24 * 3600_000, appear_ts=NOW - 3 * 24 * 3600_000,
+                      type=1, fault=5, device=1, status=0, fault_src=-1, evt_id=0)
+    html, text = fn.render_reminder("Site <x>", None, [ev], NOW)
+    assert "Rappel" in html
+    assert "Nouveau défaut" not in html
+    assert "depuis 3 jours" in html
+    assert "Site &lt;x&gt;" in html          # le nom du site est bien echappe
+    assert "toujours ouvert" in text.lower()
+
+
+def test_reminder_mail_body_is_the_reminder_template(monkeypatch):
+    """Le corps reellement envoye au client, pas seulement le sujet."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    t1 = NOW + GRACE
+    first = _run(cl, monkeypatch, t1)
+    assert "Nouveau défaut" in first[0][2]
+    again = _run(cl, monkeypatch, t1 + 24 * H)
+    assert "Rappel" in again[0][2]
+    assert "Nouveau défaut" not in again[0][2]
+
+
+# ── Cas degrades de la memoire ──────────────────────────────────────────────
+
+def test_unreadable_key_is_purged_not_escalated_forever(monkeypatch):
+    """Une cle illisible ne partira jamais en mail : la purger, plutot que de
+    consommer son echeance et de re-journaliser un avertissement a chaque
+    palier sans jamais la faire sortir de la memoire."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW,
+                       fn.NOTIFY_STATE_ATTR: {"nawak": {"appear_ts": NOW - 2 * GRACE,
+                                                        "mails": 0, "last_mail_ts": 0}}})
+    assert _run(cl, monkeypatch, NOW) == []
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR] == {}
+
+
+def test_escalation_walks_the_whole_ladder_end_to_end(monkeypatch):
+    """24 h -> 72 h -> hebdo -> hebdo a travers process_device, et pas
+    seulement en appelant reminder_due avec un compteur pose a la main."""
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    t = NOW + GRACE
+    assert len(_run(cl, monkeypatch, t)) == 1            # apparition
+    for step in (24, 72, 168, 168):
+        t += step * H
+        assert len(_run(cl, monkeypatch, t - MIN)) == 0  # juste avant l'echeance
+        assert len(_run(cl, monkeypatch, t)) == 1        # palier atteint
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]["mails"] == 5

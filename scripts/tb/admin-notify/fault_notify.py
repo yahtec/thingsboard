@@ -197,16 +197,28 @@ def reminder_due(entry: dict, now_ms: int, steps_ms: list[int]) -> bool:
     if mails < 1 or not steps_ms:
         return False
     step = steps_ms[min(mails, len(steps_ms)) - 1]
-    return now_ms - int(entry.get("last_mail_ts", 0)) >= step
+    # Repli sur `appear_ts` si `last_mail_ts` manque : le lire a 0 ferait
+    # tomber le rappel immediatement apres le mail d'apparition. Aucun
+    # producteur de ce depot n'ecrit l'un sans l'autre, mais un attribut
+    # edite a la main ou herite ne doit pas declencher une rafale.
+    last = int(entry.get("last_mail_ts") or entry.get("appear_ts", 0))
+    return now_ms - last >= step
 
 
 def _flip_key(key: str) -> str | None:
     """`digest_open_faults` indexe "<fault>|<device>", la memoire de ce script
     et le cooldown indexent "<device>|<fault>". L'amorcage doit donc inverser
     — sinon les defauts amorces ne correspondent a aucune resolution observee
-    et ne seraient jamais effaces."""
+    et ne seraient jamais effaces. On rejette ici ce qui n'est pas une paire
+    d'entiers, plutot que de laisser passer une cle que `_synthetic` refusera
+    plus tard : une cle illisible en memoire coute une purge et un
+    avertissement, autant ne pas l'y mettre."""
     parts = key.split("|")
     if len(parts) != 2:
+        return None
+    try:
+        int(parts[0]), int(parts[1])
+    except ValueError:
         return None
     return f"{parts[1]}|{parts[0]}"
 
@@ -222,26 +234,31 @@ def _seed_from_digest(raw, now_ms: int) -> dict[str, dict]:
         flipped = _flip_key(key)
         if flipped is None:
             continue
+        # Premier chemin ou un `appear_ts` vient d'un attribut ETRANGER et non
+        # de `pair_events`. Une valeur absurde afficherait 1970 au client, et
+        # une valeur hors bornes ferait lever `fmt_ts` -> `process_device`
+        # s'interromprait avant `save_server_attrs`, figeant le curseur de
+        # cette chaufferie. On borne donc a un instant passe plausible.
+        if not 0 < appear_ts <= now_ms:
+            log.warning("device: amorcage ignore, appear_ts hors bornes pour %s: %r",
+                        flipped, appear_ts)
+            continue
         out[flipped] = {"appear_ts": appear_ts, "mails": 1, "last_mail_ts": now_ms}
     return out
 
 
-def _mail_batch(emails: list[str], display: str, addr: str, tracked: dict,
-                keys: list[str], now_ms: int, reminder: bool) -> None:
+def _mail_batch(emails: list[str], dev_name: str, display: str, addr: str,
+                tracked: dict, keys: list[str], now_ms: int,
+                reminder: bool) -> None:
     """Un mail par lot (apparitions d'un cote, rappels de l'autre) : les deux
-    ne disent pas la meme chose, ils ne doivent pas etre fusionnes."""
+    ne disent pas la meme chose, ils ne doivent pas etre fusionnes.
+    `dev_name` est le numero de serie, utilise pour les logs : tous les autres
+    logs de ce script identifient les chaufferies par la, et un operateur qui
+    grep par serie ne doit pas rater ces lignes. `display` est le nom du site,
+    destine au contenu du mail."""
     if not keys:
         return
-    built = {k: _synthetic(k, tracked[k]) for k in keys}
-    faults = [ev for ev in built.values() if ev]
-    # Une cle de memoire illisible ne doit pas disparaitre en silence : son
-    # echeance est consommee par l'appelant, donc sans cette trace le defaut
-    # serait jete sans qu'aucun log ne le dise. N'arrive que sur un attribut
-    # corrompu, le producteur formatant toujours "<int>|<int>".
-    bad = [k for k, ev in built.items() if ev is None]
-    if bad:
-        log.warning("device=%s cle(s) de memoire illisible(s), ignoree(s): %s",
-                    display, ", ".join(sorted(bad)))
+    faults = [ev for ev in (_synthetic(k, tracked[k]) for k in keys) if ev]
     if not faults:
         return
     if reminder:
@@ -255,7 +272,7 @@ def _mail_batch(emails: list[str], display: str, addr: str, tracked: dict,
                    if len(faults) == 1
                    else f"[TDUO] {display} — {len(faults)} nouveaux défauts")
     send_mail(emails, subject, html, text)
-    log.info("device=%s %s: %d defaut(s) -> %s", display,
+    log.info("device=%s %s: %d defaut(s) -> %s", dev_name,
              "rappel" if reminder else "apparition", len(faults), ", ".join(emails))
 
 
@@ -330,13 +347,27 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
                    if v["mails"] == 0 and now_ms - v["appear_ts"] >= grace_ms)
     due = sorted(k for k, v in tracked.items() if reminder_due(v, now_ms, steps))
 
+    # Une cle illisible ne pourra JAMAIS etre notifiee. On la purge au lieu de
+    # consommer son echeance : la consommer la ferait re-journaliser un
+    # avertissement a chaque palier, indefiniment, sans jamais la faire sortir
+    # de la memoire. Purger est strictement mieux que faire escalader quelque
+    # chose qui ne partira jamais.
+    bad = sorted(k for k in set(fresh) | set(due) if _synthetic(k, tracked[k]) is None)
+    if bad:
+        log.warning("device=%s cle(s) de memoire illisible(s), purgee(s): %s",
+                    dev_name, ", ".join(bad))
+        for key in bad:
+            tracked.pop(key, None)
+        fresh = [k for k in fresh if k not in set(bad)]
+        due = [k for k in due if k not in set(bad)]
+
     if fresh or due:
         emails = tb.get_recipients_for_device(dev_id, users)
         display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
         addr = attrs.get("adresse") or ""
         if emails:
-            _mail_batch(emails, display, addr, tracked, fresh, now_ms, reminder=False)
-            _mail_batch(emails, display, addr, tracked, due, now_ms, reminder=True)
+            _mail_batch(emails, dev_name, display, addr, tracked, fresh, now_ms, reminder=False)
+            _mail_batch(emails, dev_name, display, addr, tracked, due, now_ms, reminder=True)
         else:
             log.info("device=%s %d apparition(s) / %d rappel(s) mais aucun destinataire",
                      dev_name, len(fresh), len(due))
