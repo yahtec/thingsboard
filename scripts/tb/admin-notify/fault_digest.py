@@ -235,7 +235,7 @@ def render_digest(per_device: list[dict], generated_ms: int,
   </div>
   <div style="padding:6px 22px 22px">{error_html}{''.join(sections)}</div>
   <div style="background:#fafafa;color:#888;padding:12px 22px;font-size:12px;border-top:1px solid #eee">
-    Digest automatique &middot; généré toutes les 4&nbsp;heures s'il y a au moins un défaut actif.
+    Récap automatique &middot; au plus 2&nbsp;envois par jour, et uniquement s'il y a un défaut actif ou une collecte incomplète.
   </div>
 </div></body></html>"""
     text = (f"Récap parc TDUO — {len(per_device)} chaufferie(s) en défaut, {total} défaut(s)\n"
@@ -245,11 +245,12 @@ def render_digest(per_device: list[dict], generated_ms: int,
 
 def build_digest(per_device: list[dict], errors: list[str],
                  generated_ms: int) -> tuple[str, str, str] | None:
-    """Decide whether the 4h cron has anything to report and build the mail.
-    Returns (subject, html, text), or None only when there is truly nothing
-    to say (no open fault AND no collection error) — a run with errors but
-    zero known-open faults still sends, so a collection failure is never
-    mistaken for "parc clean" (see module docstring, I8)."""
+    """Build the mail for one recipient's scope. Whether a mail is DUE is
+    decided upstream by `decide_mail` (per-recipient state machine); this
+    returns (subject, html, text), or None only when there is truly nothing to
+    say (no open fault AND no collection error) — a scope with errors but zero
+    known-open faults still sends, so a collection failure is never mistaken
+    for "parc clean" (see module docstring, I8)."""
     if not per_device and not errors:
         return None
     html, text = render_digest(per_device, generated_ms, errors)

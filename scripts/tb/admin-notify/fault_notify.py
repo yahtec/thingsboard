@@ -1,14 +1,43 @@
 #!/usr/bin/env python3
-"""Cron 1/min: send mail to chaufferie managers when new faults appear.
+"""Cron 1/min: mails de defaut aux gestionnaires d'une chaufferie.
 
-Behavior:
-  - For each `pac hybride` device, read evt_* telemetry between
-    `last_notified_evt_ts` (cursor) and now-COALESCE_S (so rafales group).
-  - Pair appearance/resolution as the dashboard widget does.
-  - For each new appearance whose ts ∈ (cursor, now-COALESCE], notify the
-    `gestionnaires` server-attribute of that device.
-  - Coalesce all faults of one device into a single mail.
-  - Advance the cursor only on success.
+Detection et envoi sont SEPARES (spec §4.2). La detection reste dans la
+fenetre etroite du curseur `last_notified_evt_ts` et ne fait qu'inscrire ce
+qu'elle voit ; ce sont les echeances lues sur la memoire qui declenchent les
+envois. Une entree a trois ages de vie : `mails=0` (en sursis), `mails=1`
+(annoncee), `mails>=2` (relancee).
+
+  - Pour chaque device du profil, lire les evt_* entre le curseur et
+    now-COALESCE_S (les rafales se regroupent), puis apparier apparition et
+    resolution comme le widget du dashboard.
+  - Une apparition nouvelle cree une entree dans `notify_open_faults`
+    (attribut DEVICE, SERVER_SCOPE, `{"<device>|<fault>": {...}}`) ; une
+    resolution observee la supprime, quel que soit son age de vie. Le cooldown
+    6 h (`recent_fault_notifs`) filtre desormais la CREATION d'entree et non
+    l'envoi : une re-apparition dans les 6 h ne relance pas de cycle.
+  - Sursis : une entree resolue avant `appear_ts + MAIL_GRACE_MIN` ne produit
+    AUCUN mail. C'est le gain principal du chantier — un defaut de
+    communication qui bat de l'aile ne reveille plus personne.
+  - Rappels : sursis ecoule -> mail "nouveau defaut" ; puis relances "toujours
+    ouvert" aux paliers NOTIFY_REMINDER_HOURS (24/72/168 h) avec un gabarit
+    DISTINCT (`render_reminder`), pour qu'un client ne confonde jamais une
+    relance avec une nouveaute. Aucun plafond au nombre de relances (decision
+    utilisateur) : elles s'arretent a la resolution observee.
+  - Destinataires = CUSTOMER_USER non-admin ayant un CanView sur la chaufferie
+    (`get_recipients_for_device`). Le routage par l'attribut `gestionnaires`
+    n'existe plus. Les defauts d'une meme chaufferie sont regroupes en un seul
+    mail ; les admins, eux, passent par `fault_digest.py`.
+  - Mute global (NOTIFY_EXCLUDE_DEVICES) : porte sur l'ENVOI, jamais sur la
+    liste scannee (spec §6.1).
+  - Amorcage : au premier run d'une chaufferie (attribut absent), les entrees
+    sont amorcees depuis `digest_open_faults` avec `mails=1, last_mail_ts=now`,
+    sinon les defauts deja ouverts au moment du deploiement ne seraient jamais
+    relances.
+
+Invariant M18 : le curseur avance a CHAQUE run — sans destinataire, sans rien a
+scanner, sur chaufferie muette, et meme quand une echeance n'a pu etre envoyee.
+S'il se figeait, la reprise recracherait jusqu'a LOOKBACK_MAX_S (24 h) de vieux
+defauts dans un seul mail.
 """
 from __future__ import annotations
 

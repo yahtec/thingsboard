@@ -362,8 +362,9 @@ class TBClient:
 
         - CUSTOMER_USER **non-admin** ayant `device_id` dans son attribut
           `chaufferies` → inclus.
-        - TENANT_ADMIN et CUSTOMER_USER+is_admin → **EXCLUS** (ils ne reçoivent
-          que le digest 4h via get_admin_emails()).
+        - TENANT_ADMIN et CUSTOMER_USER+is_admin → **EXCLUS** : ils passent par
+          le recap admin de `fault_digest.py`, dont les destinataires et la
+          cadence viennent de `get_admin_targets()` (au plus 2 mails/jour).
         """
         if users is None:
             users = self._collect_user_attrs()
