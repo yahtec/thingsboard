@@ -1,4 +1,6 @@
 """Parseur d'attribut d'etat + mute global (spec §5.3 et §6.1)."""
+import logging
+
 import common
 
 
@@ -79,3 +81,33 @@ def test_reminder_steps_skips_bad_entries_and_never_returns_empty(monkeypatch):
     assert common.reminder_steps_ms() == [12 * H, 48 * H]
     monkeypatch.setenv("NOTIFY_REMINDER_HOURS", "zzz,,")
     assert common.reminder_steps_ms() == [24 * H, 72 * H, 168 * H]
+
+
+def test_recap_hour_out_of_range_falls_back_and_shouts(monkeypatch, caplog):
+    """Seul reglage de cadence a alimenter un constructeur `datetime` : hors de
+    0..23, `_local_anchor_ms` ferait lever `day.replace(hour=...)`, donc
+    `decide_mail` leverait pour TOUS les destinataires (isolation par
+    destinataire de main()) — zero mail admin chaque heure sur une faute de
+    frappe. Repli sur le defaut, mais JAMAIS en silence : le silence est
+    devenu l'etat normal du dispositif (I4), il ne peut plus porter cette
+    information a lui seul."""
+    for raw in ("25", "24", "-1", "99"):
+        monkeypatch.setenv("DIGEST_RECAP_HOUR", raw)
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="tb_notify.common"):
+            assert common.digest_recap_hour() == 7, raw
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert errors, raw
+        # la valeur recue est nommee : sans elle le log ne sert a rien
+        assert raw.lstrip("-") in errors[0].getMessage()
+
+
+def test_recap_hour_accepts_both_bounds(monkeypatch, caplog):
+    """0 et 23 sont des heures valides : le clamp ne doit pas les rejeter (0
+    est en plus falsy, un `or` a la place du test de plage les mangerait)."""
+    for hour in (0, 23):
+        monkeypatch.setenv("DIGEST_RECAP_HOUR", str(hour))
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="tb_notify.common"):
+            assert common.digest_recap_hour() == hour
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]

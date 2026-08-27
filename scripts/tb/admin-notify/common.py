@@ -628,8 +628,33 @@ def mail_grace_ms() -> int:
 
 
 def digest_recap_hour() -> int:
-    """Heure locale a laquelle le recap admin quotidien est du."""
-    return _env_int("DIGEST_RECAP_HOUR", 7)
+    """Heure locale a laquelle le recap admin quotidien est du, clampee a 0..23.
+
+    C'est le SEUL reglage de cadence qui alimente un constructeur `datetime` :
+    hors bornes, `fault_digest._local_anchor_ms` fait lever
+    `day.replace(hour=...)`, donc `decide_mail` leve, donc TOUS les
+    destinataires tombent dans l'isolation par destinataire de `main()` — zero
+    mail admin, chaque heure, sur une faute de frappe dans `.env`.
+
+    On pourrait defendre que ce plantage est plus honnete qu'un repli
+    silencieux sur 7 h. C'est precisement l'argument qu'I4 demonte : dans ce
+    dispositif le silence est devenu l'etat NORMAL, et personne ne lit
+    /var/log/tb-notify-cron.log tant qu'il n'y a pas de raison de le lire. Un
+    plantage total qui ressemble a un parc calme est le pire des deux mondes.
+    D'ou : repli sur le defaut ET `log.error` nommant la valeur recue. Le recap
+    continue de partir a 7 h, et la faute de frappe reste visible.
+
+    Les quatre autres lecteurs de reglages ne sont pas clampes a dessein : une
+    valeur absurde de sursis ou de quota degrade la cadence, elle ne fait pas
+    lever."""
+    default = 7
+    hour = _env_int("DIGEST_RECAP_HOUR", default)
+    if not 0 <= hour <= 23:
+        logger.error("DIGEST_RECAP_HOUR=%d hors de 0..23 — repli sur %dh "
+                     "(corriger le .env : le recap part a une heure par defaut)",
+                     hour, default)
+        return default
+    return hour
 
 
 def digest_min_gap_ms() -> int:
