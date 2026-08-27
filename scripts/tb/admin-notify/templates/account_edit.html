@@ -74,6 +74,12 @@
           </div>
         </div>
         {% if row.is_admin %}
+        {# Sentinelle : prouve au handler que ce POST portait bien le bloc de
+           cases ci-dessous. Une promotion lecture -> admin est postee depuis
+           une fiche servie AVANT la promotion, donc sans ce bloc : sans la
+           sentinelle, "aucune case cochee" et "bloc absent" produisent le meme
+           POST, et on excluait tout le parc en silence. #}
+        <input type="hidden" name="mail_devices_present" value="1">
         <div class="field">
           <label>Chaufferies suivies par mail</label>
           <div class="chaufferies-all" style="margin-bottom:8px">

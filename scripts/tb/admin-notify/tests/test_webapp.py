@@ -11,8 +11,10 @@ assertions tiennent (RedirectResponse.status_code / .headers['location']).
 """
 import asyncio
 import os
+import re
 import sys
 import types
+from pathlib import Path
 
 # ── env requis a l'import de webapp ──────────────────────────────────────────
 os.environ.setdefault("TB_URL", "http://test")
@@ -542,19 +544,24 @@ def test_edit_save_writes_mail_exclusions_for_a_tenant_admin(monkeypatch):
     install_tb(monkeypatch, fake)
     form = FakeForm([("first_name", "A"), ("last_name", "B"),
                      ("email", "a@yahtec.com"), ("droit_acces", "admin"),
-                     ("mail_devices", "d1")])
+                     ("mail_devices_present", "1"), ("mail_devices", "d1")])
     asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
     (_etype, _eid, kv) = [s for s in fake.saved if "mail_exclude_devices" in s[2]][-1]
     assert sorted(kv["mail_exclude_devices"]) == ["d2", "d3"]
 
 
 def test_unchecking_everything_mutes_the_account(monkeypatch):
-    """Aucune chaufferie cochee = perimetre vide = mails coupes."""
+    """Aucune chaufferie cochee = perimetre vide = mails coupes. Le POST porte
+    la sentinelle : le bloc de cases ETAIT bien dans le formulaire, l'operateur
+    a donc vraiment voulu le silence. Sans elle, c'est le cas "bloc absent" du
+    test suivant — deux intentions opposees qui produisaient jusqu'ici le meme
+    POST (I2)."""
     fake = FakeTB()
     fake.users["u1"] = user_obj("u1", "a@yahtec.com", "TENANT_ADMIN")
     _fleet(fake, ["d1", "d2"])
     install_tb(monkeypatch, fake)
-    form = FakeForm([("email", "a@yahtec.com"), ("droit_acces", "admin")])
+    form = FakeForm([("email", "a@yahtec.com"), ("droit_acces", "admin"),
+                     ("mail_devices_present", "1")])
     asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
     (_etype, _eid, kv) = [s for s in fake.saved if "mail_exclude_devices" in s[2]][-1]
     assert sorted(kv["mail_exclude_devices"]) == ["d1", "d2"]
@@ -570,3 +577,41 @@ def test_non_admin_account_never_gets_mail_exclusions(monkeypatch):
     form = FakeForm([("email", "p@example.com"), ("droit_acces", "lecture")])
     asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
     assert not any("mail_exclude_devices" in kv for _e, _i, kv in fake.saved)
+
+
+def test_promoting_an_account_to_admin_does_not_mute_it(monkeypatch):
+    """I2 : la fiche servie AVANT la promotion n'affichait pas le bloc de
+    cases (il est conditionne a `row.is_admin`), donc le POST qui promeut
+    lecture -> admin ne porte ni `mail_devices` ni la sentinelle. Sans la
+    sentinelle on ecrivait "tout le parc exclu" : le compte fraichement promu
+    ne recevait plus jamais rien, sans message ni log. Bloc absent = ne rien
+    ecrire, l'operateur reglera ses chaufferies a la reouverture."""
+    fake = FakeTB()
+    fake.users["u1"] = user_obj("u1", "p@example.com", "CUSTOMER_USER")
+    _fleet(fake, ["d1", "d2"])
+    install_tb(monkeypatch, fake)
+    form = FakeForm([("email", "p@example.com"), ("droit_acces", "admin")])
+    asyncio.run(webapp.account_edit_save("u1", FakeRequest(form), user={"u": "ops@yahtec.com"}))
+    assert not any("mail_exclude_devices" in kv for _e, _i, kv in fake.saved)
+    # ... et le compte est bien devenu admin : c'est la promotion qui a eu lieu,
+    # pas un abandon du POST.
+    assert [kv for _e, _i, kv in fake.saved if "is_admin" in kv][-1]["is_admin"] is True
+
+
+def test_the_mail_block_sentinel_lives_inside_the_admin_only_block():
+    """La sentinelle ne vaut que si elle est DANS le `{% if row.is_admin %}` :
+    posee en dehors, elle serait toujours postee et le cas "bloc absent"
+    redeviendrait indistinguable de "rien coche". C'est le seul couplage entre
+    le gabarit et le handler, il merite d'etre epingle."""
+    tpl = (Path(webapp.__file__).parent / "templates" / "account_edit.html").read_text(encoding="utf-8")
+    start = tpl.index("{% if row.is_admin %}")
+    depth, end = 0, None
+    for m in re.finditer(r"{%-?\s*(endif|if)[\s%]", tpl[start:]):
+        depth += 1 if m.group(1) == "if" else -1
+        if depth == 0:
+            end = start + m.start()
+            break
+    assert end is not None, "bloc {% if row.is_admin %} non ferme"
+    sentinel = 'name="mail_devices_present"'
+    assert sentinel in tpl[start:end]
+    assert sentinel not in tpl[:start] + tpl[end:]
