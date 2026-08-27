@@ -25,9 +25,10 @@ except ImportError:  # pragma: no cover
     fcntl = None
 
 from common import (
-    EVT_KEYS, Event, TBClient, collect_records, label_device, label_fault,
-    load_int_map, load_state_attr, mail_grace_ms, open_faults, pair_events,
-    reminder_steps_ms as common_reminder_steps, send_mail, setup_logging,
+    EVT_KEYS, Event, TBClient, collect_records, excluded_device_names,
+    label_device, label_fault, load_int_map, load_state_attr, mail_grace_ms,
+    open_faults, pair_events, reminder_steps_ms as common_reminder_steps,
+    send_mail, setup_logging,
 )
 
 COALESCE_S = 60
@@ -223,7 +224,7 @@ def _flip_key(key: str) -> str | None:
     return f"{parts[1]}|{parts[0]}"
 
 
-def _seed_from_digest(raw, now_ms: int) -> dict[str, dict]:
+def _seed_from_digest(raw, now_ms: int, dev_name: str) -> dict[str, dict]:
     """Amorcage au premier run d'une chaufferie (spec §4.2) : les defauts
     deja ouverts au deploiement n'ont pas d'entree et ne seraient donc jamais
     relances — un angle mort permanent sur les defauts en cours. On les
@@ -240,8 +241,8 @@ def _seed_from_digest(raw, now_ms: int) -> dict[str, dict]:
         # s'interromprait avant `save_server_attrs`, figeant le curseur de
         # cette chaufferie. On borne donc a un instant passe plausible.
         if not 0 < appear_ts <= now_ms:
-            log.warning("device: amorcage ignore, appear_ts hors bornes pour %s: %r",
-                        flipped, appear_ts)
+            log.warning("device=%s amorcage ignore, appear_ts hors bornes pour %s: %r",
+                        dev_name, flipped, appear_ts)
             continue
         out[flipped] = {"appear_ts": appear_ts, "mails": 1, "last_mail_ts": now_ms}
     return out
@@ -277,7 +278,8 @@ def _mail_batch(emails: list[str], dev_name: str, display: str, addr: str,
 
 
 def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
-                   users: list[dict] | None = None) -> None:
+                   users: list[dict] | None = None,
+                   muted: set[str] | frozenset = frozenset()) -> None:
     dev_id = dev["id"]["id"]
     dev_name = dev["name"]
     attrs = tb.get_server_attrs("DEVICE", dev_id, [
@@ -290,7 +292,7 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
     if NOTIFY_STATE_ATTR in attrs:
         tracked = _load_notify_state(attrs.get(NOTIFY_STATE_ATTR))
     else:
-        tracked = _seed_from_digest(attrs.get("digest_open_faults"), now_ms)
+        tracked = _seed_from_digest(attrs.get("digest_open_faults"), now_ms, dev_name)
 
     # ── 1. Detection : inscrire les nouveautes, retirer les resolutions ──
     advance = cursor
@@ -362,17 +364,25 @@ def process_device(tb: TBClient, dev: dict, now_ms: int, cutoff_ms: int,
         due = [k for k in due if k not in set(bad)]
 
     if fresh or due:
-        emails = tb.get_recipients_for_device(dev_id, users)
         display = attrs.get("nom_residence") or attrs.get("nom_alternatif") or dev_name
         addr = attrs.get("adresse") or ""
-        if emails:
-            _mail_batch(emails, dev_name, display, addr, tracked, fresh, now_ms, reminder=False)
-            _mail_batch(emails, dev_name, display, addr, tracked, due, now_ms, reminder=True)
+        if dev_name in muted:
+            # Mute a l'ENVOI seulement : le curseur et les echeances continuent
+            # d'avancer, sinon une reactivation recracherait jusqu'a 24 h de
+            # defauts d'un coup (LOOKBACK_MAX_S, esprit de M18).
+            log.info("device=%s muet (NOTIFY_EXCLUDE_DEVICES) — %d apparition(s) / "
+                     "%d rappel(s) non envoyes", dev_name, len(fresh), len(due))
         else:
-            log.info("device=%s %d apparition(s) / %d rappel(s) mais aucun destinataire",
-                     dev_name, len(fresh), len(due))
-        # Echeances consommees meme sans destinataire : sinon elles se
-        # redeclencheraient a chaque run indefiniment (esprit de M18).
+            emails = tb.get_recipients_for_device(dev_id, users)
+            if emails:
+                _mail_batch(emails, dev_name, display, addr, tracked, fresh, now_ms, reminder=False)
+                _mail_batch(emails, dev_name, display, addr, tracked, due, now_ms, reminder=True)
+            else:
+                log.info("device=%s %d apparition(s) / %d rappel(s) mais aucun destinataire",
+                         dev_name, len(fresh), len(due))
+        # Echeances consommees meme sans destinataire ou chaufferie muette :
+        # sinon elles se redeclencheraient a chaque run indefiniment (esprit
+        # de M18).
         for key in fresh + due:
             tracked[key]["mails"] += 1
             tracked[key]["last_mail_ts"] = now_ms
@@ -400,11 +410,14 @@ def main() -> int:
     devices = tb.list_devices_by_profile(profile)
     # On précharge la liste users une fois (au lieu d'un appel par device).
     users = tb._collect_user_attrs()
+    muted = excluded_device_names()
+    if muted:
+        log.info("chaufferies muettes (NOTIFY_EXCLUDE_DEVICES): %s", ", ".join(sorted(muted)))
     log.info("scanning %d devices (profile=%r) — %d users TB connus", len(devices), profile, len(users))
     errors = 0
     for d in devices:
         try:
-            process_device(tb, d, now_ms, cutoff, users)
+            process_device(tb, d, now_ms, cutoff, users, muted)
         except Exception as exc:
             errors += 1
             log.exception("device=%s failed: %s", d["name"], exc)

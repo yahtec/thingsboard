@@ -261,12 +261,12 @@ def test_no_reseed_once_the_attribute_exists(monkeypatch):
 
 
 def test_seed_tolerates_a_missing_or_corrupt_digest_memory():
-    assert fn._seed_from_digest(None, NOW) == {}
-    assert fn._seed_from_digest("corrompu", NOW) == {}
-    assert fn._seed_from_digest({"nawak": 1}, NOW) == {}
-    assert fn._seed_from_digest({"a|b": 1}, NOW) == {}          # pas des entiers
-    assert fn._seed_from_digest({"5|1": 0}, NOW) == {}          # borne basse
-    assert fn._seed_from_digest({"5|1": NOW + 1}, NOW) == {}    # dans le futur
+    assert fn._seed_from_digest(None, NOW, "111") == {}
+    assert fn._seed_from_digest("corrompu", NOW, "111") == {}
+    assert fn._seed_from_digest({"nawak": 1}, NOW, "111") == {}
+    assert fn._seed_from_digest({"a|b": 1}, NOW, "111") == {}          # pas des entiers
+    assert fn._seed_from_digest({"5|1": 0}, NOW, "111") == {}          # borne basse
+    assert fn._seed_from_digest({"5|1": NOW + 1}, NOW, "111") == {}    # dans le futur
 
 
 # ── Le gabarit de relance lui-meme ──────────────────────────────────────────
@@ -321,3 +321,34 @@ def test_escalation_walks_the_whole_ladder_end_to_end(monkeypatch):
         assert len(_run(cl, monkeypatch, t - MIN)) == 0  # juste avant l'echeance
         assert len(_run(cl, monkeypatch, t)) == 1        # palier atteint
     assert cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]["mails"] == 5
+
+
+# ── Mute global (spec §6.1) ─────────────────────────────────────────────────
+
+def test_muted_device_sends_nothing_but_advances_its_cursor(monkeypatch):
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    sent = []
+    monkeypatch.setattr(fn, "send_mail",
+                        lambda to, subject, html, text=None: sent.append(to))
+    cl.payload = _ts_payload([(NOW - 5 * MIN, 1, 5, 1)])
+    fn.process_device(cl.c, DEV, NOW, NOW - MIN, muted={"111"})
+    assert sent == []
+    assert cl.attrs["last_notified_evt_ts"] == NOW - 5 * MIN
+
+    cl.payload = {}
+    later = NOW + GRACE
+    fn.process_device(cl.c, DEV, later, later - MIN, muted={"111"})
+    assert sent == []
+    # L'echeance est consommee : elle ne se redeclenchera pas a chaque run.
+    assert cl.attrs[fn.NOTIFY_STATE_ATTR]["1|5"]["mails"] == 1
+
+
+def test_unmuted_device_is_unaffected(monkeypatch):
+    cl = Client(attrs={"last_notified_evt_ts": NOW - 10 * MIN})
+    _run(cl, monkeypatch, NOW, [(NOW - 5 * MIN, 1, 5, 1)])
+    sent = []
+    monkeypatch.setattr(fn, "send_mail",
+                        lambda to, subject, html, text=None: sent.append(to))
+    cl.payload = {}
+    fn.process_device(cl.c, DEV, NOW + GRACE, NOW + GRACE - MIN, muted={"999"})
+    assert sent == [["gerant@example.com"]]
