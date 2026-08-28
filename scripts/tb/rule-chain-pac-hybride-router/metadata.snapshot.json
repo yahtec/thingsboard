@@ -188,9 +188,9 @@
         "layoutY": 100
       },
       "configuration": {
-        "jsScript": "metadata.targetDeviceName = String(msg.id); return {msg: msg, metadata: metadata, msgType: msgType};",
+        "jsScript": "metadata.targetDeviceName = String(msg.id).trim();\nreturn {msg: msg, metadata: metadata, msgType: msgType};",
         "scriptLang": "JS",
-        "tbelScript": "metadata.targetDeviceName = msg.id + ''; return {msg: msg, metadata: metadata, msgType: msgType};"
+        "tbelScript": "metadata.targetDeviceName = (msg.id + '').trim();\nreturn {msg: msg, metadata: metadata, msgType: msgType};"
       },
       "configurationVersion": 0,
       "createdTime": 1777287069676,
@@ -830,5 +830,5 @@
     "entityType": "RULE_CHAIN",
     "id": "b6af0570-4226-11f1-bbfe-e1395562cba0"
   },
-  "version": 33
+  "version": 34
 }
