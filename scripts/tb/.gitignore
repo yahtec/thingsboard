@@ -24,3 +24,7 @@ __pycache__/
 dashboards/audit-*.md
 dashboards/audit-*.json
 dashboards/deleted/
+
+# Identifiants des services deployes (tb-dispatcher/provision_watcher...).
+# Le depot yahtec/thingsboard est PUBLIC : aucun secret ne doit y entrer.
+.env
