@@ -468,9 +468,18 @@ def _to_int(v: Any, default: int = 0) -> int:
 
 def pair_events(records: list[dict]) -> list[Event]:
     """Pair appearance(1)/resolution(4), dedup retransmissions within 12s.
-    Mirrors the dashboard widget so UI and notifications stay consistent."""
+    Mirrors the dashboard widget so UI and notifications stay consistent.
+
+    Une resolution ferme TOUTES les apparitions ouvertes de sa cle, pas
+    seulement la derniere. `open_by_key` porte donc une LISTE par cle.
+    Auparavant il n'en gardait qu'une : une reapparition avant resolution
+    ecrasait la precedente, qui restait ouverte pour toujours — la resolution
+    ne pouvait plus la fermer, et rien dans les donnees ne permettait de la
+    rattraper. Constate en production le 2026-08-31 (defaut 112 apparu deux
+    fois puis resolu une fois, affiche actif trois jours plus tard). Le JS du
+    widget events-history porte la meme correction."""
     events: list[Event] = []
-    open_by_key: dict[str, Event] = {}
+    open_by_key: dict[str, list[Event]] = {}
     last_ts_by_key: dict[str, int] = {}
 
     for r in records:
@@ -494,7 +503,7 @@ def pair_events(records: list[dict]) -> list[Event]:
             if r["ts"] - last_ts_by_key.get(dk, 0) < DEDUP_MS:
                 continue
             last_ts_by_key[dk] = r["ts"]
-            open_by_key[k] = rec
+            open_by_key.setdefault(k, []).append(rec)
             events.append(rec)
         elif typ == 4:
             k = f"{fault}|{dev}"
@@ -502,12 +511,15 @@ def pair_events(records: list[dict]) -> list[Event]:
             if r["ts"] - last_ts_by_key.get(dk, 0) < DEDUP_MS:
                 continue
             last_ts_by_key[dk] = r["ts"]
-            o = open_by_key.pop(k, None)
-            if o is not None:
-                o.resolved_ts = r["ts"]
-                o.resolved_date = rec.date
-                o.resolved_time = rec.time
-                o.status = 0
+            opens = open_by_key.pop(k, [])
+            if opens:
+                # Toutes les apparitions ouvertes de cette cle, pas seulement
+                # la derniere : sinon les precedentes ne se refermeront jamais.
+                for o in opens:
+                    o.resolved_ts = r["ts"]
+                    o.resolved_date = rec.date
+                    o.resolved_time = rec.time
+                    o.status = 0
             else:
                 rec.resolved_ts = r["ts"]
                 rec.resolved_date = rec.date
