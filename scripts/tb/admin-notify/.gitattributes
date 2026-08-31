@@ -1,0 +1,10 @@
+# Fichiers expedies tels quels sur un serveur Linux : ils doivent garder des
+# fins de ligne LF meme sur un poste Windows, ou git convertit sinon en CRLF.
+#
+# Ce n'est pas cosmetique. Un CRLF dans /etc/cron.d/tb-notify fait rejeter le
+# fichier ENTIER par cron avec "Error: bad minute" — donc plus AUCUNE tache
+# planifiee ne tourne : ni les mails de defaut, ni guard_check, ni
+# cleanup_expired. Le service reste actif, rien n'alerte, et le symptome
+# ressemble a un parc calme. C'est arrive en production le 2026-08-31.
+deploy/*  text eol=lf
+setup.sh  text eol=lf
