@@ -27,7 +27,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
 
-from common import TBClient, MailConfig, send_mail  # noqa: E402
+from common import (MAIL_EXCLUDE_ATTR, MailConfig, TBClient,  # noqa: E402
+                    load_exclude_list, send_mail)
 
 TB_URL = os.environ["TB_URL"].rstrip("/")
 TB_PUBLIC_URL = os.environ.get("TB_PUBLIC_URL", "https://thingsboard.tsmart.fr").rstrip("/")
@@ -53,7 +54,7 @@ ROOT_PATH = os.environ.get("WEB_ROOT_PATH", "/admin-notify")
 USER_ATTRS = [
     "is_admin", "societe", "droit_acces",
     "access_rapport", "access_retroview", "access_spherys",
-    "chaufferies", "expiration_ts", "deactivated",
+    "chaufferies", "expiration_ts", "deactivated", MAIL_EXCLUDE_ATTR,
 ]
 ROLES = [
     ("lecture", "Lecture"),
@@ -391,6 +392,7 @@ def _user_row(tb: TBClient, u: dict, chaufferies: list[dict] | None = None,
         "access_spherys": bool(attrs.get("access_spherys")),
         "chaufferies": chaufferies_ids,
         "deactivated": bool(attrs.get("deactivated")),
+        "mail_exclude": load_exclude_list(attrs.get(MAIL_EXCLUDE_ATTR)),
     }
 
 
@@ -461,9 +463,13 @@ def account_edit(uid: str, request: Request, saved: int = 0, error: str | None =
     chaufferies = _list_chaufferies(tb)
     site_of_dev = tb.site_of_devices(PROFILE)
     row = _user_row(tb, u, chaufferies=chaufferies, site_of_dev=site_of_dev)
+    # On stocke les EXCLUSIONS mais on affiche les chaufferies SUIVIES : une
+    # chaufferie ajoutee plus tard est donc suivie par defaut (spec §6.2).
+    excluded = set(row["mail_exclude"])
+    mail_followed = [c["id"] for c in chaufferies if c["id"] not in excluded]
     return templates.TemplateResponse("account_edit.html", {
         "request": request, "user": user, "root": ROOT_PATH,
-        "row": row, "chaufferies": chaufferies,
+        "row": row, "chaufferies": chaufferies, "mail_followed": mail_followed,
         "roles": ROLES, "saved": bool(saved), "error": error,
     })
 
@@ -520,6 +526,21 @@ async def account_edit_save(uid: str, request: Request, user: dict = Depends(req
     elif exp_raw == "":
         # explicit clear
         attrs["expiration_ts"] = 0
+
+    # Filtrage des mails : reserve aux comptes admin (les non-admins sont
+    # deja filtres par CanView) ET conditionne a la sentinelle du gabarit.
+    # Le role ne suffit pas : le bloc de cases n'est rendu que si `row.is_admin`
+    # etait deja vrai a l'affichage, donc un POST qui PROMEUT un compte en
+    # admin arrive sans aucun `mail_devices` — `followed` vide, tout le parc
+    # exclu, compte muet a jamais et sans trace. La sentinelle distingue
+    # "l'operateur a tout decoche" (intention) de "le formulaire ne portait pas
+    # ce bloc" (artefact) : deux intentions opposees, meme POST sans elle.
+    if (droit == "admin" or is_tenant_admin) and form.get("mail_devices_present"):
+        followed = set(form.getlist("mail_devices") if hasattr(form, "getlist") else
+                       [v for k, v in form.multi_items() if k == "mail_devices"])
+        attrs[MAIL_EXCLUDE_ATTR] = [c["id"] for c in _list_chaufferies(tb)
+                                    if c["id"] not in followed]
+
     tb.save_server_attrs("USER", uid, attrs)
     # Yahtec RBAC : reconcilier CanView (party-customer du user -> site-customers)
     fresh = tb.get_user(uid)

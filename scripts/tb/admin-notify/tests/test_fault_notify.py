@@ -47,12 +47,19 @@ def test_no_recipients_still_advances_cursor(monkeypatch):
     assert c.calls["save_server_attrs"].get("last_notified_evt_ts") == APPEAR_TS
 
 
-def test_with_recipients_still_sends_and_advances(monkeypatch):
+def test_with_recipients_sends_after_grace_and_advances(monkeypatch):
+    """Le mail part au run qui suit l'ecoulement du sursis, pas a la
+    detection. Le curseur, lui, avance des le premier run."""
     c = make_client(["syndic@ex.com"])
     sent = []
     monkeypatch.setattr(fn, "send_mail", lambda to, subject, html, text=None: sent.append(to))
 
     fn.process_device(c, DEV, NOW, CUTOFF)
-
-    assert sent == [["syndic@ex.com"]]
+    assert sent == []                                     # sursis en cours
     assert c.calls["save_server_attrs"].get("last_notified_evt_ts") == APPEAR_TS
+
+    later = APPEAR_TS + 61 * 60_000
+    c.get_server_attrs = lambda etype, eid, keys=None: dict(c.calls["save_server_attrs"])
+    c.get_timeseries = lambda *a, **k: {}
+    fn.process_device(c, DEV, later, later - 60_000)
+    assert sent == [["syndic@ex.com"]]

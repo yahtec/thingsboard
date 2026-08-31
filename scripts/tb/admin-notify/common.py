@@ -324,7 +324,8 @@ class TBClient:
             # 1er login -> un intervenant activé mais jamais connecté était exclu à tort du
             # routage. Le routage repose désormais sur la seule vérité RBAC (CanView + is_admin).
             try:
-                attrs = self.get_server_attrs("USER", uid, ["is_admin", "deactivated"])
+                attrs = self.get_server_attrs(
+                    "USER", uid, ["is_admin", "deactivated", MAIL_EXCLUDE_ATTR])
             except Exception:
                 # I6 : fail-closed, pas fail-open. `attrs = {}` traiterait un
                 # `deactivated` comme actif (re-routage) et un `is_admin` comme
@@ -345,10 +346,12 @@ class TBClient:
             else:
                 chauff = []
             out.append({
+                "id": uid,
                 "email": email,
                 "authority": u.get("authority"),
                 "is_admin": bool(attrs.get("is_admin")),
                 "chaufferies": [str(x) for x in chauff],
+                "mail_exclude": load_exclude_list(attrs.get(MAIL_EXCLUDE_ATTR)),
             })
         return out
 
@@ -359,8 +362,9 @@ class TBClient:
 
         - CUSTOMER_USER **non-admin** ayant `device_id` dans son attribut
           `chaufferies` → inclus.
-        - TENANT_ADMIN et CUSTOMER_USER+is_admin → **EXCLUS** (ils ne reçoivent
-          que le digest 4h via get_admin_emails()).
+        - TENANT_ADMIN et CUSTOMER_USER+is_admin → **EXCLUS** : ils passent par
+          le recap admin de `fault_digest.py`, dont les destinataires et la
+          cadence viennent de `get_admin_targets()` (au plus 2 mails/jour).
         """
         if users is None:
             users = self._collect_user_attrs()
@@ -387,6 +391,35 @@ class TBClient:
                and u["email"].strip().lower() != self_email]
         seen = set()
         return [e for e in out if not (e in seen or seen.add(e))]
+
+    def get_admin_targets(self, users: list[dict] | None = None) -> list[dict]:
+        """Destinataires du recap avec ce qu'il faut pour evaluer leur cadence :
+        leur id (porteur de l'attribut d'etat) et leurs exclusions. Meme filtre
+        que get_admin_emails, compte de service EXCLU (M14) : svc-tbnotify@ est
+        TENANT_ADMIN mais ne doit pas se spammer."""
+        if users is None:
+            users = self._collect_user_attrs()
+        self_email = (self.user or "").strip().lower()
+        out: list[dict] = []
+        seen: set[str] = set()
+        for u in users:
+            if not (u["authority"] == "TENANT_ADMIN" or u["is_admin"]):
+                continue
+            email = u["email"]
+            low = email.strip().lower()
+            if low == self_email or low in seen:
+                continue
+            seen.add(low)
+            out.append({"id": u["id"], "email": email,
+                        "exclude": set(u.get("mail_exclude") or ())})
+        return out
+
+    def get_digest_state(self, user_id: str) -> dict[str, int]:
+        attrs = self.get_server_attrs("USER", user_id, [DIGEST_STATE_ATTR])
+        return load_digest_state(attrs.get(DIGEST_STATE_ATTR))
+
+    def save_digest_state(self, user_id: str, state: dict[str, int]) -> None:
+        self.save_server_attrs("USER", user_id, {DIGEST_STATE_ATTR: state})
 
     def get_timeseries(self, device_id: str, keys: Iterable[str], start_ts: int, end_ts: int,
                        limit: int = 50000) -> dict[str, list[dict]]:
@@ -516,6 +549,175 @@ def pair_events(records: list[dict]) -> list[Event]:
 
 def open_faults(events: list[Event]) -> list[Event]:
     return [e for e in events if e.type == 1 and e.resolved_ts is None]
+
+
+# ─── Attributs d'etat (memoires des crons) ─────────────────────────────────
+
+def load_state_attr(raw) -> dict:
+    """Parse la valeur d'un attribut SERVER_SCOPE servant de memoire a un cron.
+    TB peut rendre l'objet JSON deja deserialise ou une chaine. Tout ce qui
+    n'est pas un dict exploitable (absent, JSON invalide, mauvais type,
+    contenu corrompu) vaut etat vierge : on repart de zero plutot que de faire
+    tomber le cron (spec §5.3)."""
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_int_map(raw) -> dict[str, int]:
+    """`load_state_attr` + coercion des valeurs en int. Une entree
+    inexploitable est ignoree seule, sans invalider les autres."""
+    out: dict[str, int] = {}
+    for k, v in load_state_attr(raw).items():
+        try:
+            out[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+# ─── Mute global d'une chaufferie ──────────────────────────────────────────
+# Rend une chaufferie muette pour TOUS les mails, recap comme client. Par
+# defaut le banc d'essai degrade 2610000001 (souvent sans carte PAC ni
+# capteurs -> defauts non representatifs). Vide = n'exclut rien.
+
+DEFAULT_EXCLUDE_DEVICES = "2610000001"
+
+
+def excluded_device_names() -> set[str]:
+    raw = os.environ.get("NOTIFY_EXCLUDE_DEVICES", DEFAULT_EXCLUDE_DEVICES)
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
+def filter_excluded(devices: list[dict], excluded: set[str]) -> tuple[list[dict], list[str]]:
+    """Retire les devices dont le `name` est dans `excluded`. Retourne
+    (gardes, noms_retires) pour que l'appelant journalise ce qui a ete retire
+    — jamais un drop silencieux."""
+    kept: list[dict] = []
+    dropped: list[str] = []
+    for d in devices:
+        if d.get("name") in excluded:
+            dropped.append(d.get("name"))
+        else:
+            kept.append(d)
+    return kept, dropped
+
+
+# ─── Reglages de cadence (spec §8) ─────────────────────────────────────────
+# Lus a chaque appel (pas au chargement du module) pour que les tests
+# puissent les surcharger avec monkeypatch.setenv.
+
+def _env_int(name: str, default: int) -> int:
+    """Entier depuis l'environnement, avec repli silencieux sur le defaut :
+    une variable mal saisie ne doit pas empecher un cron de tourner."""
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def mail_grace_ms() -> int:
+    """Sursis entre l'apparition d'un defaut et le premier mail qui en parle.
+    Un defaut resolu pendant son sursis ne produit aucun mail."""
+    return _env_int("MAIL_GRACE_MIN", 60) * 60 * 1000
+
+
+def digest_recap_hour() -> int:
+    """Heure locale a laquelle le recap admin quotidien est du, clampee a 0..23.
+
+    C'est le SEUL reglage de cadence qui alimente un constructeur `datetime` :
+    hors bornes, `fault_digest._local_anchor_ms` fait lever
+    `day.replace(hour=...)`, donc `decide_mail` leve, donc TOUS les
+    destinataires tombent dans l'isolation par destinataire de `main()` — zero
+    mail admin, chaque heure, sur une faute de frappe dans `.env`.
+
+    On pourrait defendre que ce plantage est plus honnete qu'un repli
+    silencieux sur 7 h. C'est precisement l'argument qu'I4 demonte : dans ce
+    dispositif le silence est devenu l'etat NORMAL, et personne ne lit
+    /var/log/tb-notify-cron.log tant qu'il n'y a pas de raison de le lire. Un
+    plantage total qui ressemble a un parc calme est le pire des deux mondes.
+    D'ou : repli sur le defaut ET `log.error` nommant la valeur recue. Le recap
+    continue de partir a 7 h, et la faute de frappe reste visible.
+
+    Les quatre autres lecteurs de reglages ne sont pas clampes a dessein : une
+    valeur absurde de sursis ou de quota degrade la cadence, elle ne fait pas
+    lever."""
+    default = 7
+    hour = _env_int("DIGEST_RECAP_HOUR", default)
+    if not 0 <= hour <= 23:
+        logger.error("DIGEST_RECAP_HOUR=%d hors de 0..23 — repli sur %dh "
+                     "(corriger le .env : le recap part a une heure par defaut)",
+                     hour, default)
+        return default
+    return hour
+
+
+def digest_min_gap_ms() -> int:
+    """Ecart minimal entre deux mails admin : supprime le quotidien s'il
+    tombe juste apres un mail rapide."""
+    return _env_int("DIGEST_MIN_GAP_HOURS", 6) * 3600 * 1000
+
+
+def digest_fast_quota_ms() -> int:
+    """Intervalle minimal entre deux mails rapides. C'est le limiteur
+    anti-battement : une chaufferie qui bat de l'aile ne peut pas declencher
+    un mail rapide par cycle."""
+    return _env_int("DIGEST_FAST_QUOTA_HOURS", 24) * 3600 * 1000
+
+
+REMINDER_STEPS_DEFAULT = (24, 72, 168)
+
+
+def reminder_steps_ms() -> list[int]:
+    """Paliers d'escalade des rappels client, en millisecondes. Une entree
+    illisible est ignoree ; une liste vide retombe sur le defaut, sinon le
+    moteur de rappel n'aurait plus aucun palier a appliquer."""
+    raw = os.environ.get("NOTIFY_REMINDER_HOURS", "")
+    out: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part) * 3600 * 1000)
+        except ValueError:
+            continue
+    return out or [h * 3600 * 1000 for h in REMINDER_STEPS_DEFAULT]
+
+
+# ─── Etat de cadence du recap, porte par l'utilisateur (spec §5.1) ─────────
+
+MAIL_EXCLUDE_ATTR = "mail_exclude_devices"
+DIGEST_STATE_ATTR = "mail_digest_state"
+
+
+def load_digest_state(raw) -> dict[str, int]:
+    """Deux horodatages, toujours presents. `last_mail_ts` a 0 signifie
+    "episode non encore annonce" ; `last_fast_ts` est un limiteur de debit
+    qui survit a la fin d'un episode."""
+    st = load_int_map(raw)
+    return {"last_mail_ts": st.get("last_mail_ts", 0),
+            "last_fast_ts": st.get("last_fast_ts", 0)}
+
+
+def load_exclude_list(raw) -> list[str]:
+    """Liste d'ids de devices depuis un attribut USER. Accepte une liste ou
+    une chaine JSON ; tout le reste vaut liste vide (aucune exclusion), ce qui
+    est le repli prudent pour un filtre de notification : un oubli de config
+    produit un mail de trop, jamais un silence."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw]
 
 
 # ─── SMTP ──────────────────────────────────────────────────────────────────

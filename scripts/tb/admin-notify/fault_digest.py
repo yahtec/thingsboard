@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Cron every 4h: send a single digest mail to parc admins listing every
-chaufferie with at least one open fault.
+"""Cron horaire: recap des defauts, evalue et envoye destinataire par destinataire.
+
+L'envoi est decide par `decide_mail` (machine a etats par destinataire) : mail
+rapide a T+1h quand une chaufferie du perimetre du destinataire entre en defaut
+(quota 1/24h), sinon recap quotidien ancre sur DIGEST_RECAP_HOUR, et silence
+complet quand son perimetre est sain. Le perimetre d'un destinataire, c'est le
+parc moins le mute global moins ses exclusions personnelles.
 
 Source of truth = evt_* telemetry (NOT TB alarms — they may stay orphaned).
 
@@ -53,19 +58,22 @@ it does not pollute other devices' state.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import os
 import sys
 import time
 from html import escape
 
 from common import (
-    EVT_KEYS, Event, TBClient, collect_records, label_device, label_fault,
-    open_faults, pair_events, send_mail, setup_logging,
+    EVT_KEYS, Event, TBClient, collect_records, digest_fast_quota_ms,
+    digest_min_gap_ms, digest_recap_hour as common_recap_hour,
+    excluded_device_names, filter_excluded, label_device, label_fault,
+    load_int_map, mail_grace_ms, open_faults, pair_events, send_mail,
+    setup_logging,
 )
 
 LOOKBACK_DAYS = 30  # how far back we scan to *discover* new open faults
 STATE_ATTR = "digest_open_faults"  # per-device SERVER_SCOPE memory, see module docstring (I7)
+
 log = setup_logging("fault_digest")
 
 
@@ -73,41 +81,10 @@ def fmt_ts(ms: int) -> str:
     return dt.datetime.fromtimestamp(ms / 1000).strftime("%d/%m/%Y %H:%M:%S")
 
 
-def get_admin_recipients(tb: TBClient) -> list[str]:
-    """Destinataires du digest 4h = comptes TENANT_ADMIN + CUSTOMER_USER+is_admin=true.
-    Fallback env PARC_ADMINS_FALLBACK uniquement si la liste TB est vide (filet
-    de sécurité pour éviter de perdre le récap si le tenant n'a pas d'admin)."""
-    try:
-        emails = tb.get_admin_emails()
-        if emails:
-            return emails
-    except Exception as exc:
-        log.warning("could not enumerate admin users: %s", exc)
-    return [s.strip() for s in os.environ.get("PARC_ADMINS_FALLBACK", "").split(",") if s.strip()]
-
-
 def _load_open_state(raw) -> dict[str, int]:
-    """Parse the `digest_open_faults` attribute value. Mirrors
-    `fault_notify._load_cooldown`: accepts a dict (TB may hand back the
-    stored JSON object as-is) or a JSON-encoded string; anything else
-    (missing, corrupted, wrong type) is treated as an empty state — start
-    fresh rather than crash the digest."""
-    if not raw:
-        return {}
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, int] = {}
-    for k, v in raw.items():
-        try:
-            out[str(k)] = int(v)
-        except (TypeError, ValueError):
-            continue
-    return out
+    """Cf. common.load_int_map — conserve comme point d'entree nomme pour que
+    le docstring du module (I7) reste lisible."""
+    return load_int_map(raw)
 
 
 def _process_device(tb: TBClient, d: dict, start_ms: int, end_ms: int) -> dict | None:
@@ -157,7 +134,15 @@ def _process_device(tb: TBClient, d: dict, start_ms: int, end_ms: int) -> dict |
     if not synthetic:
         return None
     opens = sorted(synthetic.values(), key=lambda e: e.appear_ts or 0)
-    return {"name": dev_name, "display": display, "address": addr, "faults": opens}
+    # `carried` = memoire telle qu'elle etait AVANT l'ecriture de ce run. Non
+    # vide => l'episode a survecu a un run, ce qui le rend "etabli" au sens de
+    # la condition 4 du quotidien (spec §4.1) ; c'est son seul role. La
+    # candidature au mail RAPIDE ne se lit PAS ici mais sur
+    # `appear_ts > last_mail_ts`, cf. `decide_mail`. On garde meme les cles
+    # resolues ce run : la chaufferie etait bel et bien en defaut au run
+    # precedent, l'episode est donc bien etabli.
+    return {"id": dev_id, "name": dev_name, "display": display, "address": addr,
+            "faults": opens, "carried": set(carried)}
 
 
 def collect_open_per_device(tb: TBClient, devices: list[dict], end_ms: int) -> tuple[list[dict], list[str]]:
@@ -250,7 +235,7 @@ def render_digest(per_device: list[dict], generated_ms: int,
   </div>
   <div style="padding:6px 22px 22px">{error_html}{''.join(sections)}</div>
   <div style="background:#fafafa;color:#888;padding:12px 22px;font-size:12px;border-top:1px solid #eee">
-    Digest automatique &middot; généré toutes les 4&nbsp;heures s'il y a au moins un défaut actif.
+    Récap automatique &middot; au plus 2&nbsp;envois par jour, et uniquement s'il y a un défaut actif ou une collecte incomplète.
   </div>
 </div></body></html>"""
     text = (f"Récap parc TDUO — {len(per_device)} chaufferie(s) en défaut, {total} défaut(s)\n"
@@ -260,11 +245,12 @@ def render_digest(per_device: list[dict], generated_ms: int,
 
 def build_digest(per_device: list[dict], errors: list[str],
                  generated_ms: int) -> tuple[str, str, str] | None:
-    """Decide whether the 4h cron has anything to report and build the mail.
-    Returns (subject, html, text), or None only when there is truly nothing
-    to say (no open fault AND no collection error) — a run with errors but
-    zero known-open faults still sends, so a collection failure is never
-    mistaken for "parc clean" (see module docstring, I8)."""
+    """Build the mail for one recipient's scope. Whether a mail is DUE is
+    decided upstream by `decide_mail` (per-recipient state machine); this
+    returns (subject, html, text), or None only when there is truly nothing to
+    say (no open fault AND no collection error) — a scope with errors but zero
+    known-open faults still sends, so a collection failure is never mistaken
+    for "parc clean" (see module docstring, I8)."""
     if not per_device and not errors:
         return None
     html, text = render_digest(per_device, generated_ms, errors)
@@ -278,30 +264,197 @@ def build_digest(per_device: list[dict], errors: list[str],
     return subject, html, text
 
 
+# ─── Machine a etats du recap, par destinataire (spec §4.1) ────────────────
+
+def _local_anchor_ms(now_ms: int, hour: int) -> int:
+    """Ancre du jour de `now_ms` : ce jour-la a `hour`:00 en heure LOCALE.
+    Le quotidien est ancre sur une heure de la journee et non sur un delai
+    glissant : un delai glissant evalue par un cron horaire repousse chaque
+    envoi d'un peu plus de 24 h et finit par faire le tour du cadran."""
+    day = dt.datetime.fromtimestamp(now_ms / 1000)
+    anchor = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return int(anchor.timestamp() * 1000)
+
+
+def decide_mail(per_device: list[dict], state: dict[str, int], now_ms: int,
+                cfg: dict, has_errors: bool = False) -> tuple[str | None, dict[str, int]]:
+    """Decide s'il faut envoyer un mail a UN destinataire, et lequel.
+
+    per_device  chaufferies de SON perimetre ayant au moins un defaut ouvert,
+                telles que rendues par `_process_device` (cles `id`, `faults`,
+                `carried`). Liste vide = perimetre sain.
+    state       {"last_mail_ts", "last_fast_ts"} lu sur l'utilisateur.
+    cfg         {"grace_ms", "recap_hour", "min_gap_ms", "fast_quota_ms"}.
+    has_errors  au moins une chaufferie de son perimetre a echoue a la
+                collecte ce run (invariant I8).
+
+    Retourne (kind, new_state), kind ∈ {None, "fast", "daily"}.
+    Fonction pure : aucun I/O, tout le temps passe par now_ms.
+    """
+    last_mail = int(state.get("last_mail_ts") or 0)
+    last_fast = int(state.get("last_fast_ts") or 0)
+
+    if not per_device and not has_errors:
+        # Fin d'episode : les DEUX horodatages survivent. Ce sont des limiteurs
+        # de debit, pas des etats d'episode (spec §4.1 point 1). Remettre
+        # last_mail_ts a 0 ici libererait d'un coup les deux freins du
+        # quotidien — ils lisent le meme horodatage — et un defaut qui bat de
+        # l'aile produirait plusieurs recaps dans la meme journee.
+        return None, {"last_mail_ts": last_mail, "last_fast_ts": last_fast}
+
+    # Mail rapide : il existe dans le perimetre un defaut ouvert que ce
+    # destinataire n'a JAMAIS recu, et dont le sursis est ecoule. "Jamais recu"
+    # se lit sur `appear_ts > last_mail`, pas sur `carried`.
+    #
+    # Pourquoi pas `carried` : une version anterieure exigeait une chaufferie
+    # "sans memoire au run precedent". La revue transverse a montre que ca
+    # rendait cette branche INATTEIGNABLE en regime normal, et l'a prouve en
+    # executant le vrai pipeline sur 48 runs horaires. Le premier run qui
+    # observe un defaut est au plus une heure apres son apparition, donc son
+    # sursis n'est pas ecoule ; ce meme run ecrit la memoire, et au run suivant
+    # `carried` n'est plus vide. Les deux conditions ne pouvaient jamais etre
+    # vraies ensemble : la fenetre etait de mesure nulle.
+    #
+    # Un echec de collecte n'est jamais une apparition de defaut : il n'entre
+    # pas ici, `has_errors` ne nourrit que `established` plus bas.
+    fast_candidate = any(
+        e.appear_ts and e.appear_ts > last_mail
+        and now_ms - e.appear_ts >= cfg["grace_ms"]
+        for info in per_device for e in info["faults"]
+    )
+    if fast_candidate and now_ms - last_fast >= cfg["fast_quota_ms"]:
+        return "fast", {"last_mail_ts": now_ms, "last_fast_ts": now_ms}
+
+    # Quotidien ancre. `last_mail < ancre` interdit un deuxieme envoi aux runs
+    # suivants de la meme journee. `established` interdit au quotidien de
+    # court-circuiter le sursis : sans lui, un defaut apparu a 14 h un jour ou
+    # le perimetre etait sain partirait des le run de 14 h (ancre passee,
+    # last_mail a 0). Une chaufferie en echec de collecte compte comme
+    # etablie : une panne persistante doit ressortir une fois par jour (I8).
+    established = has_errors or any(info.get("carried") for info in per_device)
+    anchor = _local_anchor_ms(now_ms, cfg["recap_hour"])
+    if (established and now_ms >= anchor and last_mail < anchor
+            and now_ms - last_mail >= cfg["min_gap_ms"]):
+        return "daily", {"last_mail_ts": now_ms, "last_fast_ts": last_fast}
+
+    return None, {"last_mail_ts": last_mail, "last_fast_ts": last_fast}
+
+
+def send_for_target(tb: TBClient, target: dict, per_device: list[dict],
+                    errors: list[str], id_of_name: dict[str, str],
+                    now_ms: int, cfg: dict) -> str | None:
+    """Evalue la cadence d'UN destinataire, envoie si c'est du, persiste son
+    etat. L'etat est ecrit meme quand rien n'est envoye : c'est lui qui porte
+    la fin d'episode."""
+    excl = target["exclude"]
+    scope = [i for i in per_device if i["id"] not in excl]
+    # `errors` est une liste de NOMS de devices ; les exclusions sont des ids.
+    errs = [n for n in errors if id_of_name.get(n) not in excl]
+
+    state = tb.get_digest_state(target["id"])
+    kind, new_state = decide_mail(scope, state, now_ms, cfg, has_errors=bool(errs))
+    if kind:
+        built = build_digest(scope, errs, now_ms)
+        if built is None:
+            # Defensif et normalement inatteignable : decide_mail ne rend un
+            # kind que si scope ou errs est non vide, donc build_digest ne peut
+            # pas rendre None ici. Si ca arrivait quand meme, on rend l'ETAT
+            # D'ORIGINE : persister new_state brulerait le limiteur quotidien
+            # (last_mail_ts avance) sans qu'aucun mail ne soit parti, ce qui
+            # baillonnerait ce destinataire jusqu'au lendemain.
+            log.error("destinataire=%s kind=%s mais rien a rendre — echeance non consommee",
+                      target["email"], kind)
+            kind, new_state = None, state
+        else:
+            subject, html, text = built
+            send_mail([target["email"]], subject, html, text)
+            log.info("digest %s -> %s (%d chaufferie(s), %d erreur(s))",
+                     kind, target["email"], len(scope), len(errs))
+    tb.save_digest_state(target["id"], new_state)
+    return kind
+
+
+def fallback_daily(per_device: list[dict], errors: list[str], now_ms: int) -> int:
+    """Filet de securite : TB ne rend aucun admin (base cassee ou mal
+    configuree). Sans utilisateur il n'y a pas d'attribut d'etat, donc pas de
+    cadence persistee ; on s'appuie sur le fait que l'heure d'ancrage n'est
+    vraie qu'a un seul run horaire par jour, ce qui borne l'envoi a 1/jour
+    sans rien stocker. Pas de mail rapide dans ce mode degrade."""
+    emails = [s.strip() for s in os.environ.get("PARC_ADMINS_FALLBACK", "").split(",") if s.strip()]
+    if not emails:
+        log.error("aucun admin en base et PARC_ADMINS_FALLBACK vide — recap perdu")
+        return 2
+    if dt.datetime.fromtimestamp(now_ms / 1000).hour != common_recap_hour():
+        log.warning("aucun admin en base — envoi de secours reporte a %dh", common_recap_hour())
+        return 0
+    built = build_digest(per_device, errors, now_ms)
+    if built is None:
+        return 0
+    subject, html, text = built
+    send_mail(emails, subject, html, text)
+    log.warning("aucun admin en base — recap de secours envoye a %s", ", ".join(emails))
+    return 0
+
+
 def main() -> int:
     profile = os.environ.get("TB_DEVICE_PROFILE_NAME", "pac hybride")
     tb = TBClient()
-    admins = get_admin_recipients(tb)
-    if not admins:
-        log.error("no admin recipients (set parc_admins or PARC_ADMINS_FALLBACK)")
-        return 2
 
     devices = tb.list_devices_by_profile(profile)
+    if not devices:
+        # I8 au niveau de la FLOTTE. Le silence etait jusqu'ici anormal (6
+        # mails/jour garantis) ; il devient l'etat normal d'un parc sain, donc
+        # plus rien ne distingue un dispositif mort d'un parc calme. Un profil
+        # renomme, une page vide ou un glitch TB rendraient `[]` -> aucun
+        # perimetre, aucun mail, aucune erreur, indefiniment. On sort en erreur
+        # pour que la supervision (code de sortie, cf. guard_check.py) le voie.
+        log.error("aucune chaufferie pour le profil %r — parc introuvable, "
+                  "run abandonne (ne pas conclure a un parc sain)", profile)
+        return 3
+    devices, dropped = filter_excluded(devices, excluded_device_names())
+    if dropped:
+        log.info("digest: %d chaufferie(s) muette(s): %s", len(dropped), ", ".join(sorted(dropped)))
+
     now_ms = int(time.time() * 1000)
     log.info("scanning %d devices over last %dd", len(devices), LOOKBACK_DAYS)
     per, errors = collect_open_per_device(tb, devices, now_ms)
+    # Les deux voisins de cette table tolerent un device malforme
+    # (`filter_excluded` et `collect_open_per_device` utilisent `.get`) ; on
+    # fait pareil, sinon un seul dict incomplet tuerait le run pour TOUS les
+    # destinataires, hors de toute isolation.
+    id_of_name = {d["name"]: d["id"]["id"] for d in devices
+                  if d.get("name") and d.get("id")}
 
-    built = build_digest(per, errors, now_ms)
-    if built is None:
-        log.info("no open faults across parc and no collection errors — silent run")
-        return 0
+    try:
+        targets = tb.get_admin_targets()
+    except Exception as exc:
+        log.warning("could not enumerate admin users: %s", exc)
+        targets = []
+    if not targets:
+        return fallback_daily(per, errors, now_ms)
 
-    subject, html, text = built
-    send_mail(admins, subject, html, text)
-    total = sum(len(v["faults"]) for v in per)
-    log.info("digest sent to %s (%d devices, %d faults, %d errors)",
-              ", ".join(admins), len(per), total, len(errors))
-    return 0
+    cfg = {"grace_ms": mail_grace_ms(), "recap_hour": common_recap_hour(),
+           "min_gap_ms": digest_min_gap_ms(), "fast_quota_ms": digest_fast_quota_ms()}
+    sent = failed = 0
+    for target in targets:
+        try:
+            if send_for_target(tb, target, per, errors, id_of_name, now_ms, cfg):
+                sent += 1
+        except Exception as exc:
+            # Isolation par destinataire, dans le meme esprit que I8 : un
+            # destinataire en echec ne prive pas les autres de leur recap.
+            # `.get` sur l'email : si l'echec venait d'un target malforme,
+            # indexer ici releverait et casserait l'isolation qu'on implemente.
+            failed += 1
+            log.exception("destinataire=%s echec — ignore ce run: %s",
+                          target.get("email", "?"), exc)
+    log.info("run termine : %d mail(s) envoye(s), %d destinataire(s) en echec sur %d",
+             sent, failed, len(targets))
+    # Le code de sortie est la seule surface de supervision de ce cron : un
+    # echec persistant par destinataire (401 sur get_digest_state, `exclude`
+    # malforme) doit ressortir, pas se repeter chaque heure sous un statut
+    # vert. Meme convention que fault_notify.main().
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
