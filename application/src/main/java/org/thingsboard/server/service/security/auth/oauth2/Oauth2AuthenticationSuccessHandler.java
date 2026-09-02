@@ -45,7 +45,6 @@ import org.thingsboard.server.service.security.system.SystemSecurityService;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -83,23 +82,9 @@ public class Oauth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
                                         HttpServletResponse response,
                                         Authentication authentication) throws IOException {
         OAuth2AuthorizationRequest authorizationRequest = httpCookieOAuth2AuthorizationRequestRepository.loadAuthorizationRequest(request);
-        String callbackUrlScheme = authorizationRequest.getAttribute(TbOAuth2ParameterNames.CALLBACK_URL_SCHEME);
-        String baseUrl;
-        if (!StringUtils.isEmpty(callbackUrlScheme)) {
-            baseUrl = callbackUrlScheme + ":";
-        } else {
-            baseUrl = this.systemSecurityService.getBaseUrl(TenantId.SYS_TENANT_ID, new CustomerId(EntityId.NULL_UUID), request);
-            Optional<Cookie> prevUrlOpt = CookieUtils.getCookie(request, PREV_URI_COOKIE_NAME);
-            if (prevUrlOpt.isPresent()) {
-                String prev = prevUrlOpt.get().getValue();
-                if (isSafeRelativePath(prev)) {
-                    baseUrl += prev;
-                } else {
-                    log.warn("Discarding unsafe prev_uri cookie value: {}", prev);
-                }
-                CookieUtils.deleteCookie(request, response, PREV_URI_COOKIE_NAME);
-            }
-        }
+        String callbackUrlScheme = CallbackUrlSchemeValidator.getCallbackUrlScheme(authorizationRequest);
+        String baseUrl = getBaseUrl(request, callbackUrlScheme);
+        String prevUri = getPrevUri(request, response, callbackUrlScheme);
         try {
             OAuth2AuthenticationToken token = (OAuth2AuthenticationToken) authentication;
 
@@ -114,7 +99,7 @@ public class Oauth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
             clearAuthenticationAttributes(request, response);
 
             JwtPair tokenPair = tokenFactory.createTokenPair(securityUser);
-            getRedirectStrategy().sendRedirect(request, response, getRedirectUrl(baseUrl, tokenPair));
+            getRedirectStrategy().sendRedirect(request, response, getRedirectUrl(baseUrl + prevUri, tokenPair));
             systemSecurityService.logLoginAction(securityUser, new RestAuthenticationDetails(request), ActionType.LOGIN, oauth2Client.getName(), null);
         } catch (Exception e) {
             log.debug("Error occurred during processing authentication success result. " +
@@ -131,33 +116,41 @@ public class Oauth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
         }
     }
 
+    String getBaseUrl(HttpServletRequest request, String callbackUrlScheme) {
+        if (!StringUtils.isEmpty(callbackUrlScheme)) {
+            return callbackUrlScheme + ":";
+        }
+        return this.systemSecurityService.getBaseUrl(TenantId.SYS_TENANT_ID, new CustomerId(EntityId.NULL_UUID), request);
+    }
+
+    /**
+     * The in-app path the user was on before the login, or an empty string. A present cookie is dropped whether or
+     * not its value passes validation - it is only meant to survive a single login round trip. The path is kept out
+     * of the base URL so that the error redirect, which appends its own path, stays routable.
+     */
+    String getPrevUri(HttpServletRequest request, HttpServletResponse response, String callbackUrlScheme) {
+        if (!StringUtils.isEmpty(callbackUrlScheme)) {
+            return "";
+        }
+        Optional<Cookie> prevUriOpt = CookieUtils.getCookie(request, PREV_URI_COOKIE_NAME);
+        if (prevUriOpt.isEmpty()) {
+            return "";
+        }
+        String prevUri = prevUriOpt.get().getValue();
+        CookieUtils.deleteCookie(request, response, PREV_URI_COOKIE_NAME);
+        return PrevUriValidator.isValid(prevUri) ? prevUri : "";
+    }
+
     protected void clearAuthenticationAttributes(HttpServletRequest request, HttpServletResponse response) {
         super.clearAuthenticationAttributes(request);
         httpCookieOAuth2AuthorizationRequestRepository.removeAuthorizationRequestCookies(request, response);
     }
 
-    static boolean isSafeRelativePath(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        // Reject absolute URLs, protocol-relative URLs, any backslash, CR/LF.
-        // Single backslashes are forbidden because some browsers normalize them to '/'
-        // which can flip a path-relative URL into a host-relative one.
-        if (value.contains("://") || value.startsWith("//") || value.contains("\\")
-                || value.contains("\r") || value.contains("\n")) {
-            return false;
-        }
-        String lower = value.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) {
-            return false;
-        }
-        // Must begin with '/' to be appended to baseUrl as a relative path.
-        return value.startsWith("/") && !value.startsWith("//");
-    }
-
     String getRedirectUrl(String baseUrl, JwtPair tokenPair) {
         if (baseUrl.indexOf("?") > 0) {
             baseUrl += "&";
+        } else if (baseUrl.endsWith("/")) {
+            baseUrl += "?";
         } else {
             baseUrl += "/?";
         }
