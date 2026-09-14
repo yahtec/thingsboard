@@ -27,6 +27,7 @@ export enum YahtecUiRole { DEV, ADMIN_OPS, CUSTOMER }
 
 const PORTFOLIO_ROLE_KEY = 'portfolioRole';
 const ADMIN_OPS_VALUE = 'ADMIN_OPS';
+const DEV_VALUE = 'DEV';
 // Yahtec (I21) : préfixe de clé sessionStorage — la clé effective est scoppée
 // par userId (voir cacheKeyFor/cacheKey ci-dessous). Sans ce scoping, une
 // session PARTY qui suit (même onglet) une session admin expirée hérite du
@@ -59,6 +60,28 @@ export class YahtecRoleService {
 
     isDevTenant(): boolean {
         return this.isTenantAdmin() && !this.isAdminOps();
+    }
+
+    /**
+     * Gate du crayon « mode édition » des dashboards. Fail-closed : exige le
+     * marqueur serveur portfolioRole=DEV. L'absence de marqueur REFUSE.
+     *
+     * Ne pas confondre avec isDevTenant(), qui se définit par l'ABSENCE de
+     * ADMIN_OPS : ce predicat-là est satisfait par tout compte cree sans
+     * marqueur — un compte de service (svc-tbnotify), un compte livre par
+     * ThingsBoard, ou un compte cree a la main dans l'IHM. Pour un droit
+     * d'ecriture, ce defaut ouvert n'est pas acceptable.
+     *
+     * Pour ajouter un editeur : poser portfolioRole=DEV sur son compte. Aucune
+     * adresse n'apparait ici — ce fichier vit dans un depot public.
+     */
+    isDashboardEditor(): boolean {
+        if (!this.isTenantAdmin()) { return false; }
+        const info = this.authState()?.userDetails?.additionalInfo as Record<string, any> | undefined;
+        const role = info?.[PORTFOLIO_ROLE_KEY];
+        // Meme normalisation que isAdminOps() : insensible a la casse, null-safe,
+        // toute valeur absente ou inattendue echoue vers false.
+        return role != null && String(role).toUpperCase() === DEV_VALUE;
     }
 
     resolveRole(): YahtecUiRole {

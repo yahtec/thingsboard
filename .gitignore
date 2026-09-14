@@ -39,14 +39,7 @@ rebuild-docker.sh
 .run
 .claude
 .planning
-yahtec-ota.ppk
-deploy.ps1
-scripts/server/__pycache__/
 # Yahtec : notes internes hors git (checklists, snippets, etc.)
 notes/
-# Yahtec : plans/specs/notes superpowers (artefacts IA, hors appli TB)
-docs/superpowers/
 # Yahtec : scratchpad IA (backups, snapshots, copies de travail tb-notify, tests jetables, tokens) — hors git
 scratchpad/
-# Yahtec : backups de recuperation migrate_legacy_to_rbac.py (donnees prod post-delete, ephemeres) — hors git
-scripts/tb/rbac/migration-backup/

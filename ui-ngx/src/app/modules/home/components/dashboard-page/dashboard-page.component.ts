@@ -144,6 +144,7 @@ import { catchError, distinctUntilChanged, map, skip, tap } from 'rxjs/operators
 import { LayoutFixedSize, LayoutWidthType } from '@home/components/dashboard-page/layout/layout.models';
 import { TbPopoverComponent } from '@shared/components/popover.component';
 import { HasDirtyFlag } from '@core/guards/confirm-on-exit.guard';
+import { YahtecRoleService } from '@core/auth/yahtec-role.service';
 import {
   MoveWidgetsDialogComponent,
   MoveWidgetsDialogResult
@@ -374,7 +375,8 @@ export class DashboardPageComponent extends PageComponent implements IDashboardC
               private viewContainerRef: ViewContainerRef,
               private cd: ChangeDetectorRef,
               public elRef: ElementRef,
-              private injector: Injector) {
+              private injector: Injector,
+              private yahtecRole: YahtecRoleService) {
     super(store);
     if (isDefinedAndNotNull(this.embeddedValue)) {
       this.embedded = this.embeddedValue;
@@ -867,13 +869,14 @@ export class DashboardPageComponent extends PageComponent implements IDashboardC
     return this.authUser.authority === Authority.SYS_ADMIN;
   }
 
-  // Fork Yahtec : le crayon "mode edition" du dashboard est reserve aux admins
-  // Yahtec designes. Les autres comptes TENANT_ADMIN (ex. ADMIN_OPS cote client)
-  // ne doivent pas modifier la structure des dashboards -> edition via les scripts
-  // du toolkit (scripts/tb/dashboards). Pour ajouter un editeur : completer la liste.
+  // Fork Yahtec : le crayon "mode edition" du dashboard exige le marqueur
+  // serveur portfolioRole=DEV. Fail-closed : un compte sans marqueur est refuse,
+  // qu'il s'agisse d'un ADMIN_OPS cote client, d'un compte de service ou d'un
+  // compte cree a la main. L'edition passe alors par le toolkit (depot prive).
+  // Aucune adresse n'apparait ici : pour ajouter un editeur, poser
+  // portfolioRole=DEV sur son compte. Voir YahtecRoleService.isDashboardEditor().
   public canEditDashboards(): boolean {
-    const allowed = ['je@example.com', 'af@example.com'];
-    return allowed.includes((this.authUser.sub || '').toLowerCase());
+    return this.yahtecRole.isDashboardEditor();
   }
 
   public exportDashboard($event: Event) {
