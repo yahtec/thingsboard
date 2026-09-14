@@ -43,3 +43,14 @@ rebuild-docker.sh
 notes/
 # Yahtec : scratchpad IA (backups, snapshots, copies de travail tb-notify, tests jetables, tokens) — hors git
 scratchpad/
+
+# Yahtec : artefacts locaux, jamais versionnes
+MEMORY.md
+NUL
+conformite.html
+.claude-flow/
+
+# Yahtec : clones jetables poses par erreur a la racine du depot.
+# L'outillage vit desormais dans le depot prive yahtec/tb-ops.
+/clone-public/
+/tb-ops/
