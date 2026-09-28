@@ -24,11 +24,13 @@ import { Authority } from '@shared/models/authority.enum';
 import { filter } from 'rxjs/operators';
 import { AuthService } from '@core/auth/auth.service';
 import { YahtecRoleService } from '@core/auth/yahtec-role.service';
+import {
+  YAHTEC_MES_INSTALLATIONS_V1_ID,
+  YAHTEC_SUPERVISION_ID,
+  yahtecLandingDashboardId
+} from '@core/auth/yahtec-dashboards';
 
-// Yahtec : dashboard "Mes Installations" custom navigation
-const YAHTEC_DASHBOARD_ID = '0964da30-3e56-11f1-bbfe-e1395562cba0';
-// Yahtec : dashboard "Supervision flotte" (admin only : TENANT_ADMIN ou is_admin=true)
-const YAHTEC_SUPERVISION_ID = '4aa4ccd0-422a-11f1-bbfe-e1395562cba0';
+// Yahtec : etats de la V1, les seuls que la barre yahtec sait viser
 type YahtecState = 'menu' | 'default' | 'donnees_HP1' | 'depart_chauffage' | 'ecs'
                  | 'historique' | 'fault_diagnostic' | 'configuration' | 'profil'
                  | 'notifications_admin';
@@ -58,7 +60,8 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
   forceFullscreen = !this.isAdmin;
 
   // Yahtec : navbar TB native customisee pour le dashboard "Mes Installations"
-  yahtecOnDashboard = false;           // true quand l'URL pointe sur Mes Installations
+  yahtecOnDashboard = false;           // true quand l'URL pointe sur Mes Installations V1
+  yahtecOnLanding = false;             // true sur le dashboard d'atterrissage du compte (v2 : sa propre navigation)
   yahtecOnSupervision = false;         // true quand l'URL pointe sur Supervision flotte
   yahtecStateId: YahtecState = 'menu'; // state actuel dans l'URL ?state=...
   yahtecCanAccessComptes = false;      // TENANT_ADMIN OU CUSTOMER_USER avec is_admin=true
@@ -178,12 +181,15 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
     this.authState = state;
     this.isAdmin = this.computeIsAdmin(state);
     this.forceFullscreen = !this.isAdmin;
+    this.updateYahtecNavState();   // le dashboard d'atterrissage suit le compte
   }
 
   private updateYahtecNavState() {
     try {
       const url = this.window.location.pathname;
-      this.yahtecOnDashboard = url.includes(YAHTEC_DASHBOARD_ID);
+      this.yahtecOnDashboard = url.includes(YAHTEC_MES_INSTALLATIONS_V1_ID);
+      const landing = yahtecLandingDashboardId(this.authState);
+      this.yahtecOnLanding = !!landing && url.includes(landing);
       this.yahtecOnSupervision = url.includes(YAHTEC_SUPERVISION_ID);
       const raw = new URL(this.window.location.href).searchParams.get('state');
       if (!raw) { this.yahtecStateId = 'menu'; return; }
@@ -258,9 +264,18 @@ export class HomeComponent extends PageComponent implements AfterViewInit, OnIni
     if (t) this.yahtecNavTo(t);
   }
 
-  // Yahtec : retour vers Mes Installations
+  // Yahtec : bouton « Tableau de bord » des pages TB natives (/profile, etc.),
+  // pour les comptes au chrome TSmart. Masque sur les dashboards qui ont deja
+  // leur navigation : la V1 (barre yahtec), le dashboard d'atterrissage (ses
+  // onglets) et Supervision.
+  get yahtecShowGoToDashboard(): boolean {
+    return !this.isAdmin && !this.yahtecOnDashboard && !this.yahtecOnLanding && !this.yahtecOnSupervision;
+  }
+
+  // Yahtec : retour au dashboard d'atterrissage du compte ; a defaut, l'accueil TB.
   yahtecGoToDashboard() {
-    this.window.location.assign('/dashboards/' + YAHTEC_DASHBOARD_ID);
+    const landing = yahtecLandingDashboardId(this.authState);
+    this.window.location.assign(landing ? '/dashboards/' + landing : '/home');
   }
 
   // Yahtec : navigation vers Supervision flotte (admin only)

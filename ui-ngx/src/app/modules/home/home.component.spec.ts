@@ -26,6 +26,7 @@ import { WINDOW } from '@core/services/window.service';
 import { ActiveComponentService } from '@core/services/active-component.service';
 import { AuthService } from '@core/auth/auth.service';
 import { YahtecRoleService } from '@core/auth/yahtec-role.service';
+import { YAHTEC_MES_INSTALLATIONS_V1_ID } from '@core/auth/yahtec-dashboards';
 
 // I20 : réactivité du chrome au changement d'utilisateur (impersonation « Login
 // as user »). HomeComponent est instancié comme fournisseur DI (sans rendu de
@@ -115,5 +116,107 @@ describe('HomeComponent — chrome réactif (I20)', () => {
         // distinctUntilChanged bloque, aucun re-fetch is_admin.
         store.setState(authWrap(Authority.TENANT_ADMIN, 'devUser'));
         expect(recheckSpy).toHaveBeenCalledTimes(1);
+    });
+});
+
+// Bouton « Tableau de bord » : il vise le dashboard d'atterrissage du COMPTE
+// (additionalInfo.defaultDashboardId). En dur sur la V1, il donnait un 403 aux
+// portefeuilles dont la V1 avait été décrochée (2026-09-11).
+describe('HomeComponent — bouton « Tableau de bord »', () => {
+
+    let component: HomeComponent;
+    let store: MockStore;
+    const assignSpy = jasmine.createSpy('assign');
+    const location: any = { pathname: '/', href: 'http://localhost/', assign: assignSpy };
+    const windowStub: any = {
+        location,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        history: { back: () => {} }
+    };
+    const bpStub: any = { isMatched: () => true, observe: () => of({ matches: true, breakpoints: {} }) };
+
+    const LANDING = 'dashboard-atterrissage-du-compte';
+
+    function customerState(defaultDashboardId: string | undefined = LANDING) {
+        const additionalInfo: Record<string, any> = { portfolioRole: 'PARTY' };
+        if (defaultDashboardId) { additionalInfo.defaultDashboardId = defaultDashboardId; }
+        return {
+            auth: {
+                isAuthenticated: true,
+                isUserLoaded: true,
+                authUser: { authority: Authority.CUSTOMER_USER, userId: 'partyUser', customerId: 'c1' },
+                userDetails: { additionalInfo }
+            }
+        };
+    }
+
+    function openAt(path: string) {
+        location.pathname = path;
+        location.href = 'http://localhost' + path;
+        component.ngOnInit();
+    }
+
+    beforeEach(() => {
+        assignSpy.calls.reset();
+        TestBed.configureTestingModule({
+            imports: [ReactiveFormsModule],
+            providers: [
+                HomeComponent,
+                provideMockStore({ initialState: customerState() }),
+                { provide: WINDOW, useValue: windowStub },
+                { provide: Router, useValue: { events: of(), url: '/' } },
+                { provide: BreakpointObserver, useValue: bpStub },
+                { provide: ActiveComponentService, useValue: {} },
+                { provide: AuthService, useValue: {} },
+                { provide: YahtecRoleService, useValue: { recheck: () => of(false) } }
+            ]
+        });
+        store = TestBed.inject(MockStore);
+        component = TestBed.inject(HomeComponent);
+    });
+
+    it("mène au dashboard d'atterrissage du compte, pas à la V1", () => {
+        openAt('/profile');
+        expect(component.yahtecShowGoToDashboard).toBeTrue();
+        component.yahtecGoToDashboard();
+        expect(assignSpy).toHaveBeenCalledWith('/dashboards/' + LANDING);
+    });
+
+    it("sans dashboard d'atterrissage, il mène à l'accueil ThingsBoard", () => {
+        store.setState(customerState(undefined));
+        openAt('/profile');
+        component.yahtecGoToDashboard();
+        expect(assignSpy).toHaveBeenCalledWith('/home');
+    });
+
+    it("est masqué sur le dashboard d'atterrissage, qui porte sa propre navigation", () => {
+        openAt('/dashboards/' + LANDING);
+        expect(component.yahtecOnLanding).toBeTrue();
+        expect(component.yahtecShowGoToDashboard).toBeFalse();
+        // La barre yahtec ne connaît que les états V1 : elle reste éteinte sur la v2.
+        expect(component.yahtecOnDashboard).toBeFalse();
+        expect(component.yahtecShowAccueil).toBeFalse();
+        expect(component.yahtecShowProfil).toBeFalse();
+    });
+
+    it('est masqué sur la V1, dont la barre yahtec a son bouton Accueil', () => {
+        openAt('/dashboards/' + YAHTEC_MES_INSTALLATIONS_V1_ID);
+        expect(component.yahtecOnDashboard).toBeTrue();
+        expect(component.yahtecShowGoToDashboard).toBeFalse();
+    });
+
+    it('n\'est jamais montré à un admin « dev » (chrome TB natif)', () => {
+        store.setState({
+            auth: {
+                isAuthenticated: true,
+                isUserLoaded: true,
+                authUser: { authority: Authority.TENANT_ADMIN, userId: 'devUser', customerId: null },
+                userDetails: { additionalInfo: { portfolioRole: 'DEV' } }
+            }
+        });
+        openAt('/profile');
+        expect(component.isAdmin).toBeTrue();
+        expect(component.yahtecShowGoToDashboard).toBeFalse();
     });
 });

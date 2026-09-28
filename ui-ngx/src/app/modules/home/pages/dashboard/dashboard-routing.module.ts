@@ -18,15 +18,14 @@ import { UserSettingsService } from '@core/http/user-settings.service';
 import { UserDashboardAction } from '@shared/models/user-settings.models';
 import { Store } from '@ngrx/store';
 import { AppState } from '@core/core.state';
-import { getCurrentAuthUser } from '@core/auth/auth.selectors';
+import { getCurrentAuthState, getCurrentAuthUser } from '@core/auth/auth.selectors';
 import { ConfirmOnExitGuard } from '@core/guards/confirm-on-exit.guard';
 import { MenuId } from '@core/services/menu.models';
 import { YahtecRoleService } from '@core/auth/yahtec-role.service';
+import { YAHTEC_SUPERVISION_ID, yahtecLandingDashboardId } from '@core/auth/yahtec-dashboards';
 
 // Yahtec : dashboards reserves aux admins (TENANT_ADMIN OR CUSTOMER_USER avec is_admin=true)
-const YAHTEC_SUPERVISION_DASHBOARD_ID = '4aa4ccd0-422a-11f1-bbfe-e1395562cba0';
-const YAHTEC_MES_INSTALLATIONS_ID     = '0964da30-3e56-11f1-bbfe-e1395562cba0';
-const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>([YAHTEC_SUPERVISION_DASHBOARD_ID]);
+const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>([YAHTEC_SUPERVISION_ID]);
 
 @Injectable()
 export class DashboardResolver  {
@@ -50,7 +49,9 @@ export class DashboardResolver  {
         return this.yahtecRole.canAccessAdminFeatures$().pipe(
           mergeMap(isAdmin => {
             if (!isAdmin) {
-              this.router.navigate(['dashboards', YAHTEC_MES_INSTALLATIONS_ID]);
+              // Renvoi vers le dashboard d'atterrissage du compte ; a defaut, l'accueil TB.
+              const landing = yahtecLandingDashboardId(getCurrentAuthState(this.store));
+              this.router.navigate(landing ? ['dashboards', landing] : ['home']);
               return throwError(() => new Error('Yahtec admin-only dashboard'));
             }
             return this.loadDashboard(dashboardId);

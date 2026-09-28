@@ -69,9 +69,10 @@ import {
   ImportDashboardFileDialogComponent
 } from "@home/pages/dashboard/import-dashboard-file-dialog.component";
 import { PageLink } from "@shared/models/page/page-link";
+import { YAHTEC_SUPERVISION_ID } from '@core/auth/yahtec-dashboards';
 
 // Yahtec : dashboards admin-only (cf dashboard-routing.module.ts)
-const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>(['4aa4ccd0-422a-11f1-bbfe-e1395562cba0']);
+const YAHTEC_ADMIN_RESTRICTED_DASHBOARDS = new Set<string>([YAHTEC_SUPERVISION_ID]);
 
 @Injectable()
 export class DashboardsTableConfigResolver {

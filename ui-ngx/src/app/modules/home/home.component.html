@@ -59,8 +59,9 @@
           </mat-form-field>
         </div>
         <!-- Yahtec : bouton "Retour au tableau de bord" visible sur pages TB natives
-             (/profile, etc.) pour les CUSTOMER_USER (qui n'ont pas la sidebar). -->
-        <button *ngIf="!yahtecOnDashboard && !yahtecOnSupervision && !isAdmin" type="button"
+             (/profile, etc.) pour les CUSTOMER_USER (qui n'ont pas la sidebar).
+             Masque sur la V1, la v2 et Supervision (cf. yahtecShowGoToDashboard). -->
+        <button *ngIf="yahtecShowGoToDashboard" type="button"
                 class="tb-yahtec-btn tb-yahtec-standalone" (click)="yahtecGoToDashboard()"
                 [attr.aria-label]="'Tableau de bord'" [class.!hidden]="displaySearchMode()">
           <mat-icon class="material-icons">home</mat-icon>
