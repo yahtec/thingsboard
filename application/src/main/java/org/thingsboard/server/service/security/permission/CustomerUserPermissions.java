@@ -87,7 +87,10 @@ public class CustomerUserPermissions extends AbstractPermissions {
                 if (accessScopeService.isReadOnly(user)) {
                     return READ_OPS.contains(operation) && accessScopeService.canView(user, entityCustomerId);
                 }
-                return operation.equals(Operation.CLAIM_DEVICES) || accessScopeService.canView(user, entityCustomerId);
+                if (operation.equals(Operation.CLAIM_DEVICES) && (entityCustomerId == null || entityCustomerId.isNullUid())) {
+                    return true;
+                }
+                return accessScopeService.canView(user, entityCustomerId);
             }
         };
     }
